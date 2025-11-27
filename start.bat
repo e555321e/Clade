@@ -1,97 +1,97 @@
 @echo off
 setlocal enabledelayedexpansion
-title Clade Launcher
+title Clade 启动器
 color 0A
 
 echo.
 echo  ============================================================
-echo                    Clade Launcher
+echo                    Clade 启动器
 echo  ============================================================
 echo.
 
-:: Check Python
-echo [1/6] Checking Python...
+:: 检查 Python
+echo [1/6] 检查 Python...
 python --version >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo     [ERROR] Python not found! Please install Python 3.11+
+    echo     [错误] 未找到 Python！请安装 Python 3.11+
     pause
     exit /b 1
 )
 for /f "tokens=2" %%i in ('python --version 2^>^&1') do set PYTHON_VERSION=%%i
-echo     [OK] Python %PYTHON_VERSION%
+echo     [完成] Python %PYTHON_VERSION%
 
-:: Check Node.js
-echo [2/6] Checking Node.js...
+:: 检查 Node.js
+echo [2/6] 检查 Node.js...
 node --version >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo     [ERROR] Node.js not found! Please install Node.js 18+
+    echo     [错误] 未找到 Node.js！请安装 Node.js 18+
     pause
     exit /b 1
 )
 for /f %%i in ('node --version') do set NODE_VERSION=%%i
-echo     [OK] Node.js %NODE_VERSION%
+echo     [完成] Node.js %NODE_VERSION%
 
-:: Setup backend virtual environment
-echo [3/6] Setting up backend...
+:: 配置后端虚拟环境
+echo [3/6] 配置后端环境...
 cd backend
 if not exist "venv" (
-    echo     Creating virtual environment...
+    echo     正在创建虚拟环境...
     python -m venv venv
 )
 
-:: Activate venv and install dependencies
+:: 激活虚拟环境并安装依赖
 call venv\Scripts\activate.bat
 pip show fastapi >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo     Installing backend dependencies...
+    echo     正在安装后端依赖...
     pip install -e ".[dev]" -q
 ) else (
-    echo     [OK] Backend dependencies ready
+    echo     [完成] 后端依赖已就绪
 )
 
-:: Install frontend dependencies
-echo [4/6] Setting up frontend...
+:: 安装前端依赖
+echo [4/6] 配置前端环境...
 cd ..\frontend
 if not exist "node_modules" (
-    echo     Installing frontend dependencies...
+    echo     正在安装前端依赖...
     call npm install --silent
 ) else (
-    echo     [OK] Frontend dependencies ready
+    echo     [完成] 前端依赖已就绪
 )
 
-:: Return to project root
+:: 返回项目根目录
 cd ..
 
-echo [5/6] Starting services...
+echo [5/6] 启动服务...
 echo.
-echo     Starting backend (port 8000)...
+echo     正在启动后端 (端口 8000)...
 start "Clade-Backend" cmd /k "cd backend && call venv\Scripts\activate.bat && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
-:: Wait for backend
+:: 等待后端启动
 timeout /t 3 /nobreak >nul
 
-echo     Starting frontend (port 5173)...
+echo     正在启动前端 (端口 5173)...
 start "Clade-Frontend" cmd /k "cd frontend && npm run dev"
 
-:: Wait for frontend
+:: 等待前端启动
 echo.
-echo [6/6] Waiting for services to start...
+echo [6/6] 等待服务启动...
 timeout /t 5 /nobreak >nul
 
-:: Open browser
+:: 打开浏览器
 echo.
 echo  ============================================================
-echo                      Launch Complete!
+echo                      启动完成！
 echo.
-echo    Frontend: http://localhost:5173
-echo    Backend:  http://localhost:8000
-echo    API Docs: http://localhost:8000/docs
+echo    前端地址: http://localhost:5173
+echo    后端地址: http://localhost:8000
+echo    API文档:  http://localhost:8000/docs
 echo.
-echo    Opening browser...
+echo    正在打开浏览器...
 echo  ============================================================
 echo.
 
 start "" "http://localhost:5173"
 
-echo Press any key to close this window (services will keep running)...
+echo 按任意键关闭此窗口（服务将继续运行）...
 pause >nul

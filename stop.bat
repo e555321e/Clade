@@ -1,25 +1,25 @@
 @echo off
-title Clade - Stop Services
+title Clade - 停止服务
 color 0C
 
 echo.
 echo  ============================================================
-echo               Stop Clade Services
+echo               停止 Clade 服务
 echo  ============================================================
 echo.
 
-echo Stopping services...
+echo 正在停止服务...
 
-:: Stop Node.js processes (frontend)
-echo   Stopping frontend...
+:: 停止 Node.js 进程（前端）
+echo   正在停止前端...
 taskkill /F /IM node.exe >nul 2>&1
 
-:: Stop Python/uvicorn processes (backend)
-echo   Stopping backend...
+:: 停止 Python/uvicorn 进程（后端）
+echo   正在停止后端...
 taskkill /F /FI "WINDOWTITLE eq Clade-Backend*" >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Clade-Frontend*" >nul 2>&1
 
-:: Find and kill processes by port
+:: 通过端口查找并终止进程
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do (
     taskkill /F /PID %%a >nul 2>&1
 )
@@ -29,7 +29,7 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr :5173 ^| findstr LISTENING') 
 
 echo.
 echo  ============================================================
-echo               All services stopped
+echo               所有服务已停止
 echo  ============================================================
 echo.
 
