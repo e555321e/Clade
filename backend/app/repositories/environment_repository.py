@@ -95,9 +95,14 @@ class EnvironmentRepository:
                 print("[环境仓储] 添加 map_seed 列...")
                 session.exec(text("ALTER TABLE map_state ADD COLUMN map_seed INTEGER DEFAULT NULL"))
 
+    def _get_env_path(self) -> Path:
+        """获取 .env 文件路径（项目根目录）"""
+        # 从 config.py 同目录往上3层到项目根目录
+        return Path(__file__).resolve().parents[3] / ".env"
+    
     def _load_env_config(self) -> dict:
         """从 .env 文件加载 AI 配置"""
-        env_path = Path(".env")
+        env_path = self._get_env_path()
         if not env_path.exists():
             return {}
         
@@ -122,8 +127,8 @@ class EnvironmentRepository:
         return env_vars
     
     def _save_env_config(self, config: UIConfig) -> None:
-        """将主要 AI 配置保存到 .env 文件"""
-        env_path = Path(".env")
+        """将主要 AI 配置保存到 .env 文件（项目根目录）"""
+        env_path = self._get_env_path()
         
         # 读取现有配置
         existing_lines = []

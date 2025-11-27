@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     log_to_console: bool = Field(default=True, alias="LOG_TO_CONSOLE")
 
     model_config = {
-        "env_file": ".env",
+        "env_file": str(PROJECT_ROOT / ".env"),
         "env_file_encoding": "utf-8",  # 明确指定UTF-8编码
         "extra": "ignore",
     }
