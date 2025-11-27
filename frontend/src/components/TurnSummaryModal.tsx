@@ -1,6 +1,7 @@
 import type { TurnReport } from "../services/api.types";
 import { X } from "lucide-react";
 import { useState } from "react";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface Props {
   report: TurnReport;
@@ -217,11 +218,10 @@ export function TurnSummaryModal({ report, previousReport, onClose }: Props) {
                 borderRadius: "12px",
                 padding: "20px",
                 fontSize: "1rem",
-                lineHeight: "1.8",
-                color: "rgba(255, 255, 255, 0.9)",
-                whiteSpace: "pre-wrap"
+                overflow: "hidden",
+                maxWidth: "100%"
               }}>
-                {report.narrative}
+                <MarkdownRenderer content={report.narrative} />
               </div>
             )}
           </section>
@@ -276,14 +276,15 @@ export function TurnSummaryModal({ report, previousReport, onClose }: Props) {
                           {species.tier || ""} · 死亡率 {(species.death_rate * 100).toFixed(1)}%
                         </span>
                       </div>
-                      <p style={{
+                      <div style={{
                         margin: 0,
-                        fontSize: "0.95rem",
-                        lineHeight: "1.7",
-                        color: "rgba(255, 255, 255, 0.85)",
+                        fontSize: "0.95rem"
                       }}>
-                        {species.ai_narrative}
-                      </p>
+                        <MarkdownRenderer 
+                          content={species.ai_narrative || ""} 
+                          style={{ lineHeight: "1.7", color: "rgba(255, 255, 255, 0.85)" }}
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>

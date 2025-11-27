@@ -1,4 +1,5 @@
 import type { TurnReport } from "../services/api.types";
+import { MarkdownRenderer, MarkdownCompact } from "./MarkdownRenderer";
 
 interface Props {
   reports: TurnReport[];
@@ -46,14 +47,12 @@ export function HistoryTimeline({ reports, variant = "bar" }: Props) {
                 <span>回合 #{report.turn_index + 1}</span>
                 <small>{report.pressures_summary || "平稳"}</small>
               </header>
-              <p style={{ 
-                whiteSpace: 'pre-wrap', 
-                lineHeight: '1.6',
+              <div style={{ 
                 maxHeight: '300px',
                 overflow: 'auto'
               }}>
-                {report.narrative}
-              </p>
+                <MarkdownRenderer content={report.narrative} />
+              </div>
             </article>
           ))}
       </div>
@@ -77,7 +76,7 @@ export function HistoryTimeline({ reports, variant = "bar" }: Props) {
                   <span>回合 #{report.turn_index + 1}</span>
                   <small>{report.pressures_summary || "平稳"}</small>
                 </header>
-                <p style={{ 
+                <div style={{ 
                   lineHeight: '1.5',
                   display: '-webkit-box',
                   WebkitLineClamp: 3,
@@ -85,8 +84,8 @@ export function HistoryTimeline({ reports, variant = "bar" }: Props) {
                   overflow: 'hidden',
                   textOverflow: 'ellipsis'
                 }} title={report.narrative}>
-                  {report.narrative}
-                </p>
+                  <MarkdownCompact content={report.narrative} />
+                </div>
               </article>
             ))}
         </div>
