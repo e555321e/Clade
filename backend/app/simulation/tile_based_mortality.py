@@ -529,13 +529,27 @@ class TileBasedMortalityEngine:
         
         logger.debug(f"[地块死亡率] 按地块计算 {n} 个物种的死亡率 (tier={tier})")
         
+        # ========== 【关键修复】创建当前批次对应的population子矩阵 ==========
+        # 当前批次的物种可能是build_matrices时全部物种的子集
+        # 需要正确映射以避免矩阵维度不匹配
+        n_tiles = len(self._tiles)
+        batch_population_matrix = np.zeros((n_tiles, n), dtype=np.float64)
+        
+        for sp_idx, sp in enumerate(species_list):
+            if sp.id is not None and sp.id in self._species_id_to_idx:
+                # 物种在原始矩阵中，提取对应的列
+                global_idx = self._species_id_to_idx[sp.id]
+                batch_population_matrix[:, sp_idx] = self._population_matrix[:, global_idx]
+            # else: 新分化的物种，保持零值（没有历史种群数据）
+        
         # ========== 阶段1: 提取物种属性为向量 ==========
         species_arrays = self._extract_species_arrays(species_list, niche_metrics)
         
         # ========== 阶段2: 计算各地块的死亡率矩阵 ==========
         # 死亡率矩阵 (num_tiles × num_species)
         mortality_matrix = self._compute_tile_mortality_matrix(
-            species_list, species_arrays, pressure_modifiers, trophic_interactions
+            species_list, species_arrays, pressure_modifiers, trophic_interactions,
+            batch_population_matrix  # 传递正确维度的population矩阵
         )
         
         # 【新增】保存死亡率矩阵供其他服务使用
@@ -607,14 +621,28 @@ class TileBasedMortalityEngine:
         species_arrays: dict[str, np.ndarray],
         pressure_modifiers: dict[str, float],
         trophic_interactions: dict[str, float],
+        batch_population_matrix: np.ndarray | None = None,
     ) -> np.ndarray:
         """计算每个地块上每个物种的死亡率
+        
+        Args:
+            species_list: 当前批次的物种列表
+            species_arrays: 物种属性数组
+            pressure_modifiers: 压力修饰符
+            trophic_interactions: 营养级互动
+            batch_population_matrix: 【关键】当前批次对应的population子矩阵，
+                                     维度为 (n_tiles × len(species_list))
         
         Returns:
             (num_tiles × num_species) 的死亡率矩阵
         """
         n_tiles = len(self._tiles)
         n_species = len(species_list)
+        
+        # 【关键修复】如果提供了batch_population_matrix，使用它；否则使用全局矩阵
+        # 这确保了矩阵维度与当前species_list匹配
+        if batch_population_matrix is None:
+            batch_population_matrix = self._population_matrix
         
         # 初始化死亡率矩阵
         mortality = np.zeros((n_tiles, n_species), dtype=np.float64)
@@ -628,19 +656,19 @@ class TileBasedMortalityEngine:
         # ========== 2. 计算地块内竞争压力 ==========
         # 竞争因子 (num_tiles × num_species)
         competition_pressure = self._compute_tile_competition_pressure(
-            species_list, species_arrays
+            species_list, species_arrays, batch_population_matrix
         )
         
         # ========== 3. 计算地块内营养级互动 ==========
         # 营养级因子 (num_tiles × num_species)
         trophic_pressure = self._compute_tile_trophic_pressure(
-            species_list, species_arrays, trophic_interactions
+            species_list, species_arrays, trophic_interactions, batch_population_matrix
         )
         
         # ========== 4. 计算地块资源压力 ==========
         # 资源因子 (num_tiles × num_species)
         resource_pressure = self._compute_tile_resource_pressure(
-            species_list, species_arrays
+            species_list, species_arrays, batch_population_matrix
         )
         
         # ========== 5. 组合所有因子 ==========
@@ -736,16 +764,22 @@ class TileBasedMortalityEngine:
         self,
         species_list: list[Species],
         species_arrays: dict[str, np.ndarray],
+        batch_population_matrix: np.ndarray,
     ) -> np.ndarray:
         """计算每个地块内的竞争压力（矩阵优化版）
         
         【核心改进】只有同一地块上的物种才会竞争
         【性能优化】使用矩阵运算代替嵌套循环
+        
+        Args:
+            species_list: 当前批次的物种列表
+            species_arrays: 物种属性数组
+            batch_population_matrix: 【关键】当前批次对应的population子矩阵
         """
         n_tiles = len(self._tiles)
         n_species = len(species_list)
         
-        if self._population_matrix is None:
+        if batch_population_matrix is None:
             return np.zeros((n_tiles, n_species))
         
         # 营养级 (n_species,)
@@ -771,7 +805,8 @@ class TileBasedMortalityEngine:
         
         # 对每个地块批量计算
         for tile_idx in range(n_tiles):
-            tile_pop = self._population_matrix[tile_idx, :]  # (n_species,)
+            # 【关键修复】使用batch_population_matrix而不是self._population_matrix
+            tile_pop = batch_population_matrix[tile_idx, :]  # (n_species,) - 现在维度匹配
             
             # 获取有种群的物种掩码
             present_mask = tile_pop > 0
@@ -786,7 +821,7 @@ class TileBasedMortalityEngine:
             pop_ratio = tile_pop[np.newaxis, :] / safe_pop[:, np.newaxis]  # (n_species × n_species)
             
             # 竞争强度 = 竞争系数 × 种群比例
-            comp_strength = comp_coef_matrix * pop_ratio  # (n_species × n_species)
+            comp_strength = comp_coef_matrix * pop_ratio  # (n_species × n_species) - 维度现在匹配！
             
             # 限制单个竞争者的贡献
             comp_strength = np.minimum(comp_strength, 0.2)
@@ -809,30 +844,37 @@ class TileBasedMortalityEngine:
         species_list: list[Species],
         species_arrays: dict[str, np.ndarray],
         trophic_interactions: dict[str, float],
+        batch_population_matrix: np.ndarray,
     ) -> np.ndarray:
         """计算每个地块内的营养级互动压力（矩阵优化版）
         
         【核心改进】每个地块独立计算营养级生物量比例
         【性能优化】使用矩阵运算预计算生物量
+        
+        Args:
+            species_list: 当前批次的物种列表
+            species_arrays: 物种属性数组
+            trophic_interactions: 营养级互动
+            batch_population_matrix: 【关键】当前批次对应的population子矩阵
         """
         n_tiles = len(self._tiles)
         n_species = len(species_list)
         
-        if self._population_matrix is None:
+        if batch_population_matrix is None:
             return np.zeros((n_tiles, n_species))
         
         trophic_pressure = np.zeros((n_tiles, n_species), dtype=np.float64)
         trophic_levels = species_arrays['trophic_level']
         int_trophic = trophic_levels.astype(int)  # 取整的营养级
         
-        # 预计算每个物种的体重
+        # 【关键修复】使用当前批次的species_list来获取体重
         weights = np.array([
             sp.morphology_stats.get("body_weight_g", 1.0) 
-            for sp in self._species_list
+            for sp in species_list  # 使用species_list而不是self._species_list
         ])
         
-        # 计算每个地块上每个物种的生物量 (n_tiles × n_species)
-        biomass_matrix = self._population_matrix * weights[np.newaxis, :]
+        # 【关键修复】使用batch_population_matrix计算生物量
+        biomass_matrix = batch_population_matrix * weights[np.newaxis, :]
         
         # 为每个营养级创建掩码
         level_masks = {}
@@ -899,8 +941,8 @@ class TileBasedMortalityEngine:
             elif t_level >= 5:
                 trophic_pressure[:, sp_idx] = scarcity_t5 * 0.3
         
-        # 只保留有种群的地块的压力
-        trophic_pressure = np.where(self._population_matrix > 0, trophic_pressure, 0)
+        # 【关键修复】使用batch_population_matrix而不是self._population_matrix
+        trophic_pressure = np.where(batch_population_matrix > 0, trophic_pressure, 0)
         
         return trophic_pressure
     
@@ -962,15 +1004,21 @@ class TileBasedMortalityEngine:
         self,
         species_list: list[Species],
         species_arrays: dict[str, np.ndarray],
+        batch_population_matrix: np.ndarray,
     ) -> np.ndarray:
         """计算每个地块的资源压力（矩阵优化版）
         
         考虑地块资源量 vs 该地块物种总需求
+        
+        Args:
+            species_list: 当前批次的物种列表
+            species_arrays: 物种属性数组
+            batch_population_matrix: 【关键】当前批次对应的population子矩阵
         """
         n_tiles = len(self._tiles)
         n_species = len(species_list)
         
-        if self._population_matrix is None or self._tile_env_matrix is None:
+        if batch_population_matrix is None or self._tile_env_matrix is None:
             return np.zeros((n_tiles, n_species))
         
         # 预计算物种属性向量
@@ -986,8 +1034,8 @@ class TileBasedMortalityEngine:
         # 需求系数 = 体重 × (代谢率 / 10)
         demand_coef = weights * (metabolics / 10.0)  # (n_species,)
         
-        # 每个地块每个物种的需求 (n_tiles × n_species)
-        demand_matrix = self._population_matrix * demand_coef[np.newaxis, :]
+        # 【关键修复】使用batch_population_matrix计算需求
+        demand_matrix = batch_population_matrix * demand_coef[np.newaxis, :]
         
         # 每个地块的总需求 (n_tiles,)
         total_demand_per_tile = demand_matrix.sum(axis=1)
@@ -1012,8 +1060,8 @@ class TileBasedMortalityEngine:
         # 资源压力 = 短缺比例 × min(需求占比 × 2, 1.0)
         resource_pressure = shortage_ratio[:, np.newaxis] * np.minimum(demand_ratio * 2.0, 1.0)
         
-        # 只保留有种群的地块的压力
-        resource_pressure = np.where(self._population_matrix > 0, resource_pressure, 0.0)
+        # 【关键修复】使用batch_population_matrix
+        resource_pressure = np.where(batch_population_matrix > 0, resource_pressure, 0.0)
         
         return np.clip(resource_pressure, 0.0, 0.65)
     

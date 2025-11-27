@@ -831,7 +831,10 @@ def list_all_species() -> SpeciesList:
         else:
             ecological_role = "unknown"
         
-        population = int(species.morphology_stats.get("population", 0) or 0)
+        # 【修复】确保种群数量在JavaScript安全整数范围内
+        raw_population = species.morphology_stats.get("population", 0) or 0
+        MAX_SAFE_POPULATION = 9_007_199_254_740_991  # JavaScript安全整数上限
+        population = max(0, min(int(raw_population), MAX_SAFE_POPULATION))
         
         items.append(SpeciesListItem(
             lineage_code=species.lineage_code,
@@ -941,10 +944,13 @@ async def create_save(request: CreateSaveRequest) -> dict:
         # 3.6 创建初始人口快照（修复bug：系谱树需要这个数据）
         print(f"[存档API] 创建初始人口快照...")
         from ..models.species import PopulationSnapshot
+        MAX_SAFE_POPULATION = 9_007_199_254_740_991  # JavaScript安全整数上限
         if all_species:
             snapshots = []
             for species in all_species:
-                population = int(species.morphology_stats.get("population", 0) or 0)
+                # 【修复】确保种群数量在安全范围内
+                raw_pop = species.morphology_stats.get("population", 0) or 0
+                population = max(0, min(int(raw_pop), MAX_SAFE_POPULATION))
                 if population > 0:
                     snapshots.append(PopulationSnapshot(
                         species_id=species.id or 0,
@@ -966,9 +972,13 @@ async def create_save(request: CreateSaveRequest) -> dict:
             from ..schemas.responses import SpeciesSnapshot
             initial_species = []
             # 计算总人口用于计算population_share
-            total_population = sum(int(sp.morphology_stats.get("population", 0) or 0) for sp in all_species)
+            # 【修复】确保种群数量在安全范围内（防止32位整数溢出）
+            def safe_population(sp):
+                raw = sp.morphology_stats.get("population", 0) or 0
+                return max(0, min(int(raw), MAX_SAFE_POPULATION))
+            total_population = sum(safe_population(sp) for sp in all_species)
             for species in all_species:
-                population = int(species.morphology_stats.get("population", 0) or 0)
+                population = safe_population(species)
                 population_share = (population / total_population) if total_population > 0 else 0.0
                 
                 # 推断生态角色

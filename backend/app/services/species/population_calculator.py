@@ -14,6 +14,10 @@ class PopulationCalculator:
     基于生态学原理：
     - 体型越大，代谢需求越高，环境承载力越小
     - 遵循幂律关系：种群密度 ∝ 体重^(-0.75)
+    
+    【平衡修复】
+    - 降低微生物的初始种群，避免第一回合就爆炸
+    - 使用更保守的上限，保持游戏平衡
     """
     
     @staticmethod
@@ -37,45 +41,49 @@ class PopulationCalculator:
             # 粗略估算：体重 ≈ 体长^3（立方关系）
             body_weight_g = max(0.000001, (body_length_cm ** 3) * 0.1)
         
-        # 【简化方案】直接基于体重估算全球生物量范围
-        # 不区分具体的生态系统类型，而是使用体型-生物量的幂律关系
-        # 参考地球数据：
-        # - 全球植物生物量：~450 Gt (4.5×10^14 kg)
-        # - 全球细菌生物量：~70 Gt
-        # - 全球动物生物量：~2 Gt
-        # 
-        # 一个地块约占全球陆地+海洋的 80,000 / 510,000,000 ≈ 1/6,375
-        # 因此单个物种在单个地块的合理生物量应该在 10^6 - 10^9 kg 数量级
-        
         body_weight_kg = body_weight_g / 1000
         
-        # 使用幂律关系估算：生物量 ∝ (体重)^(-0.75)
-        # 基准：1kg个体，全球生物量约 10^8 kg
-        base_global_biomass = 1e8  # kg
+        # 【平衡修复】使用更温和的幂律关系
+        # 原来：scale_factor = (body_weight_kg)^(-0.75) 导致微生物数值爆炸
+        # 现在：使用对数缩放，避免极端值
+        # 
+        # 基准：1kg个体，基准生物量约 10^7 kg (1000万)
+        # 微生物（0.001g = 1e-6 kg）：约 10^8 kg (1亿)
+        # 大型动物（100kg）：约 10^5 kg (10万)
         
-        # 根据体重调整（越小越多）
-        scale_factor = (body_weight_kg / 1.0) ** (-0.75)
+        import math
         
-        # 单个地块的生物量（全球的1/5000左右）
-        block_fraction = 1 / 5000
+        # 使用对数缩放替代幂律，更平滑
+        # log10(1e-6) = -6, log10(1) = 0, log10(100) = 2
+        log_weight = math.log10(max(1e-9, body_weight_kg))  # -9 到 3 范围
         
-        # 计算基准生物量
-        base_biomass = base_global_biomass * scale_factor * block_fraction
+        # 缩放系数：体重越小，系数越大，但增长更平缓
+        # log_weight = -6 -> scale = 4
+        # log_weight = 0 -> scale = 1
+        # log_weight = 2 -> scale = 0.5
+        scale_factor = max(0.1, 1.0 - log_weight * 0.5)
+        scale_factor = min(scale_factor, 10.0)  # 上限10倍
         
-        # 设置合理范围（最小10%，最大200%）
-        min_biomass_kg = int(base_biomass * 0.1)
-        max_biomass_kg = int(base_biomass * 2.0)
+        # 基准生物量（更保守的值）
+        base_biomass = 1e7  # 1000万 kg
+        
+        # 计算目标生物量
+        target_biomass = base_biomass * scale_factor
+        
+        # 设置合理范围
+        min_biomass_kg = int(target_biomass * 0.3)
+        max_biomass_kg = int(target_biomass * 3.0)
         
         # 应用栖息地质量系数
         habitat_quality = max(0.5, min(2.0, habitat_quality))
         min_biomass_kg = int(min_biomass_kg * habitat_quality)
         max_biomass_kg = int(max_biomass_kg * habitat_quality)
         
-        # 确保在合理范围内
-        # 最小：100 kg（即使是大型动物也需要一定生物量）
-        # 最大：10^11 kg（避免单个物种占据过多）
-        min_biomass_kg = max(100, min(min_biomass_kg, int(1e11)))
-        max_biomass_kg = max(1000, min(max_biomass_kg, int(1e11)))
+        # 【平衡修复】更保守的边界
+        # 最小：1,000 kg（保证物种有一定规模）
+        # 最大：10^9 kg = 10亿 kg（单物种上限，避免数值爆炸）
+        min_biomass_kg = max(1_000, min(min_biomass_kg, int(1e9)))
+        max_biomass_kg = max(10_000, min(max_biomass_kg, int(1e9)))
         
         return (min_biomass_kg, max_biomass_kg)
     
@@ -85,14 +93,40 @@ class PopulationCalculator:
         body_weight_g: float | None = None,
         habitat_quality: float = 1.0,
     ) -> int:
-        """获取推荐的初始种群数量（范围中位数）。"""
-        min_pop, max_pop = PopulationCalculator.calculate_reasonable_population(
-            body_length_cm, body_weight_g, habitat_quality
-        )
-        # 返回对数中位数（更合理的分布）
+        """获取推荐的初始种群数量。
+        
+        【平衡修改】从小族群开始，让演化过程更有意义
+        - 微生物（<1mm）：约 10万
+        - 小型生物（1mm-10cm）：约 1-5万
+        - 中型生物（10cm-1m）：约 5000-1万
+        - 大型生物（>1m）：约 1000-5000
+        """
         import math
-        log_mid = (math.log10(min_pop) + math.log10(max_pop)) / 2
-        return int(10 ** log_mid)
+        
+        # 基于体长确定初始规模
+        # 使用对数缩放：体长越大，初始种群越小
+        log_length = math.log10(max(0.001, body_length_cm))  # -3 到 3 范围
+        
+        # 初始种群基数
+        # log_length = -3 (0.001cm = 10μm，微生物) -> 100,000
+        # log_length = 0 (1cm) -> 10,000
+        # log_length = 2 (100cm = 1m) -> 1,000
+        base_initial = 10_000  # 1万作为基准
+        
+        # 缩放因子：体长每增加10倍，初始种群减少到1/3
+        scale = 3.0 ** (-log_length)
+        initial_pop = int(base_initial * scale)
+        
+        # 应用栖息地质量
+        habitat_quality = max(0.5, min(2.0, habitat_quality))
+        initial_pop = int(initial_pop * habitat_quality)
+        
+        # 边界限制
+        # 最小：1,000（保证物种能够存活）
+        # 最大：500,000（不能太大，否则第一回合就到上限）
+        initial_pop = max(1_000, min(initial_pop, 500_000))
+        
+        return initial_pop
     
     @staticmethod
     def validate_population(

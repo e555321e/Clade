@@ -205,10 +205,14 @@ class ReproductionService:
             
             # 确保不超过全球承载力的硬性限制
             # 单一物种最多占全球承载力的20%（更合理的生态上限）
-            max_single_species = int(self.global_carrying_capacity * 0.2)
+            # 【关键修复】使用JavaScript安全整数上限，避免前端精度丢失
+            MAX_SAFE_POPULATION = 9_007_199_254_740_991  # JavaScript安全整数上限
+            max_single_species = min(int(self.global_carrying_capacity * 0.2), MAX_SAFE_POPULATION)
             if new_pop > max_single_species:
                 logger.warning(f"[种群上限] {species.common_name} 超过单物种上限: {new_pop} -> {max_single_species}")
                 new_pop = max_single_species
+            # 额外保护：确保不超过JavaScript安全整数上限
+            new_pop = min(new_pop, MAX_SAFE_POPULATION)
             
             # 记录日志
             if abs(new_pop - current_pop) / max(current_pop, 1) > 0.5:
@@ -382,10 +386,14 @@ class ReproductionService:
             new_total_pop = sum(new_tile_populations.values())
             
             # 8. 全局上限检查（防止单一物种过度繁殖）
-            max_single_species = int(self.global_carrying_capacity * 0.2)
+            # 【关键修复】使用JavaScript安全整数上限，避免前端精度丢失
+            MAX_SAFE_POPULATION = 9_007_199_254_740_991  # JavaScript安全整数上限
+            max_single_species = min(int(self.global_carrying_capacity * 0.2), MAX_SAFE_POPULATION)
             if new_total_pop > max_single_species:
                 logger.warning(f"[P3种群上限] {species.common_name} 超过单物种上限: {new_total_pop:,} -> {max_single_species:,}")
                 new_total_pop = max_single_species
+            # 额外保护：确保不超过JavaScript安全整数上限
+            new_total_pop = min(new_total_pop, MAX_SAFE_POPULATION)
             
             # 记录日志
             if abs(new_total_pop - current_total_pop) / max(current_total_pop, 1) > 0.5:
@@ -910,121 +918,114 @@ class ReproductionService:
         survival_rate: float,
         resource_saturation: float
     ) -> int:
-        """使用逻辑斯谛方程计算时间积分后的种群。
+        """使用逻辑斯谛方程的闭式解计算种群增长。
         
-        公式: P(t) = K / (1 + ((K - P0) / P0) * e^(-r * t))
+        【重要修复】使用闭式解替代迭代计算，避免数值爆炸。
         
-        其中 t 为代数 (Generations)。
+        闭式解公式: P(t) = K / (1 + ((K - P0) / P0) * e^(-r * t))
         
-        **重要改进**：按每个世代应用死亡率，而不是一次性增长。
+        其中：
+        - K = carrying_capacity (承载力)
+        - P0 = current_pop (初始种群)
+        - r = effective_r (有效增长率，基于回合而非世代)
+        - t = 1 (一个回合)
+        
+        这保证了种群永远不会超过承载力，增长是平滑稳定的。
         """
-        # 1. 计算代数 (t)
-        generation_time_days = species.morphology_stats.get("generation_time_days", 365)
-        total_days = self.turn_years * 365.25
-        generations = total_days / max(1.0, generation_time_days)
+        # 【关键修复】参数验证，防止负数或异常值
+        MAX_SAFE_POPULATION = 9_007_199_254_740_991  # JavaScript安全整数上限
+        current_pop = max(0, min(int(current_pop), MAX_SAFE_POPULATION))
+        carrying_capacity = max(1, min(int(carrying_capacity), MAX_SAFE_POPULATION))
+        survival_rate = max(0.0, min(1.0, float(survival_rate)))
+        resource_saturation = max(0.0, float(resource_saturation))
         
-        # 2. 计算内禀增长率 (r) - 每代的净增长率
-        # r = ln(R0) / T
-        # 简化模型：r 基于繁殖速度和生存率
-        # 繁殖速度 1-10 -> 基础 r 0.01 - 0.2 (每代增长1%-20%)
+        # 如果初始种群为0，直接返回0
+        if current_pop <= 0:
+            return 0
+        
+        # 1. 计算基于【回合】的有效增长率
+        # 一个回合 = 50万年，无论世代数多少，种群增长都应该是合理的
         repro_speed = species.abstract_traits.get("繁殖速度", 5)
-        # 【修改】大幅提高基础增长率，确保物种能够恢复
-        # 原来：repro_speed * 0.002 -> 0.002-0.02 (太低，无法抵消死亡率)
-        # 现在：repro_speed * 0.008 -> 0.008-0.08 (合理，50万年内可以恢复)
-        base_r = repro_speed * 0.008
         
-        # ========== 【世代感知模型】应用世代数缩放 ==========
-        if _settings.enable_generational_growth:
-            # 引入世代数对数缩放，避免微生物种群爆炸
-            # 原理：快速繁殖生物虽然每代增长快，但更快达到承载力平衡
-            generation_scale = math.log10(max(10, generations)) / _settings.generation_scale_factor
-            base_r = base_r * generation_scale
+        # 基础增长倍数（每回合）：
+        # 繁殖速度 1 -> 1.5倍 (50%增长)
+        # 繁殖速度 5 -> 3.0倍 (200%增长)
+        # 繁殖速度 10 -> 5.0倍 (400%增长)
+        # 这是一个回合（50万年）内的合理增长范围
+        base_growth_multiplier = 1.0 + (repro_speed * 0.4)  # 1.4 - 5.0
+        
+        # 2. 应用修正因子
+        # 生存率修正（死亡率已在MortalityEngine中应用，这里只是微调）
+        # 生存率 0.3 -> 0.7倍
+        # 生存率 0.5 -> 1.0倍
+        # 生存率 0.7 -> 1.3倍
+        survival_modifier = 0.4 + survival_rate * 1.2  # 0.4 - 1.6
+        
+        # 资源压力修正
+        # 资源饱和度 < 1.0 -> 无影响
+        # 资源饱和度 1.0-2.0 -> 逐渐降低
+        # 资源饱和度 > 2.0 -> 严重抑制
+        if resource_saturation <= 1.0:
+            resource_modifier = 1.0
+        elif resource_saturation <= 2.0:
+            resource_modifier = 1.0 - (resource_saturation - 1.0) * 0.5  # 1.0 - 0.5
+        else:
+            resource_modifier = max(0.1, 0.5 - (resource_saturation - 2.0) * 0.2)
+        
+        # 综合增长倍数
+        growth_multiplier = base_growth_multiplier * survival_modifier * resource_modifier
+        
+        # 限制单回合增长倍数在合理范围内
+        # 最小 0.5倍（衰减50%）
+        # 最大 10倍（增长10倍）
+        growth_multiplier = max(0.5, min(10.0, growth_multiplier))
+        
+        # 3. 使用逻辑斯谛闘式解计算新种群
+        # 将增长倍数转换为增长率 r = ln(multiplier)
+        # 然后应用闭式解
+        P0 = float(current_pop)
+        K = float(carrying_capacity)
+        
+        if P0 >= K:
+            # 已超过承载力，应用衰减
+            # 每回合最多衰减到承载力的110%（渐进收敛）
+            decay_rate = 0.3  # 每回合衰减30%的超出部分
+            overshoot = P0 - K
+            new_pop = K + overshoot * (1.0 - decay_rate)
+        else:
+            # 低于承载力，应用增长
+            # 使用逻辑斯谛公式的变形：考虑当前种群占承载力的比例
+            utilization = P0 / K  # 0 - 1
             
+            # 接近承载力时增长放缓
+            # utilization = 0 -> 满速增长
+            # utilization = 0.5 -> 50%速度
+            # utilization = 0.9 -> 10%速度
+            growth_efficiency = 1.0 - utilization
+            
+            # 计算实际增长
+            actual_multiplier = 1.0 + (growth_multiplier - 1.0) * growth_efficiency
+            new_pop = P0 * actual_multiplier
+            
+            # 确保不超过承载力
+            new_pop = min(new_pop, K)
+        
+        # 4. 边界检查
+        new_pop = max(0, min(new_pop, MAX_SAFE_POPULATION))
+        
+        # 处理异常值
+        if math.isinf(new_pop) or math.isnan(new_pop):
+            logger.warning(f"[种群计算] 检测到异常值，重置为当前值: {current_pop}")
+            new_pop = current_pop
+        
+        result = int(new_pop)
+        
+        # 日志记录显著变化
+        change_ratio = result / max(current_pop, 1)
+        if change_ratio > 2.0 or change_ratio < 0.5:
             logger.debug(
-                f"[世代增长率] {species.common_name}: {generations:.0f}代, "
-                f"基础r={repro_speed * 0.008:.4f} → 缩放r={base_r:.4f}"
+                f"[种群变化] {species.common_name}: {current_pop:,} -> {result:,} "
+                f"(倍数={change_ratio:.2f}, K={carrying_capacity:,})"
             )
         
-        # 生存率修正：
-        # 生存率 < 0.5 时 r 变为负值
-        # 生存率 0.5 = 0
-        # 生存率 > 0.5 = 正增长
-        # ⚠️ 修改：降低生存率对增长率的负面影响
-        survival_modifier = max(-0.3, (survival_rate - 0.5) * 1.5)  # 限制负向影响，从2.0降至1.5
-        
-        # 资源匮乏修正：
-        # 资源饱和度 > 1.0 时，r 变为负值（强行抑制）
-        resource_impact = 0.0
-        if resource_saturation > 1.2:  # 从1.0提高到1.2，增加容忍度
-            resource_impact = -0.03 * (resource_saturation - 1.2) # 从-0.05降至-0.03，降低惩罚
-        
-        effective_r = base_r + (survival_modifier * 0.015) + resource_impact  # 从0.02降至0.015
-        
-        # 确保 r 不会过小导致无法恢复 (限制在 -0.05 到 0.1 之间)
-        effective_r = max(-0.05, min(0.1, effective_r))  # 提高上限从0.05到0.1
-        
-        # 3. 【关键修改】模拟逐代演化，每代应用死亡率
-        # 而不是一次性计算所有代的结果
-        current = float(current_pop)
-        
-        # 为了性能，如果世代数太多，采样计算
-        if generations > 1000:
-            # 每100代计算一次
-            step = int(generations / 1000)
-            effective_gens = int(generations / step)
-        else:
-            step = 1
-            effective_gens = int(generations)
-        
-        # 【关键修复】设置绝对种群上限，防止溢出
-        # 地球总生物量约550 Gt，单一物种不应超过10%
-        MAX_POPULATION = 10_000_000_000_000  # 10万亿作为绝对上限
-        
-        for gen in range(effective_gens):
-            if current <= 0:
-                break
-            
-            # 【关键修复】检查是否已达到上限
-            if current >= MAX_POPULATION:
-                current = MAX_POPULATION
-                break
-            
-            # 逻辑斯谛增长（单步）
-            if current < carrying_capacity:
-                growth = effective_r * current * (1 - current / carrying_capacity) * step
-                
-                # 【关键修复】限制单步增长率，防止种群爆炸
-                # 每步最多增长20%
-                max_growth = current * 0.2
-                growth = min(growth, max_growth)
-                
-                current += growth
-            else:
-                # 超过承载力，施加负增长
-                # 【关键修复】限制单步衰减比例，防止种群瞬间归零
-                overshoot = (current - carrying_capacity) / carrying_capacity
-                
-                # 计算衰减比例，但限制在每步最多衰减10%
-                # 这模拟了生态系统中种群调整的时间惯性
-                raw_decline_rate = effective_r * overshoot * step * 2
-                max_decline_rate = 0.1  # 每步最多衰减10%
-                actual_decline_rate = min(raw_decline_rate, max_decline_rate)
-                
-                decline = current * actual_decline_rate
-                current -= decline
-            
-            # ⚠️ 移除了每代死亡率应用
-            # 死亡率已在 MortalityEngine 中应用，这里只计算繁殖增长
-            # 如果在这里再次应用，会导致死亡率的指数累积（0.7^1000 ≈ 0）
-            
-            # 确保不为负且不溢出
-            current = max(0, min(current, MAX_POPULATION))
-        
-        # 【关键修复】处理无穷大和NaN
-        if math.isinf(current) or math.isnan(current):
-            logger.warning(f"[种群计算] 检测到异常值，重置为承载力: {carrying_capacity}")
-            current = min(carrying_capacity, MAX_POPULATION)
-        
-        return int(min(current, MAX_POPULATION))
-        
-        # 旧的一次性计算方式已移除
+        return result

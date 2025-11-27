@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     exports_dir: str = str(PROJECT_ROOT / "data/exports")
     saves_dir: str = str(PROJECT_ROOT / "data/saves")
     cache_dir: str = str(PROJECT_ROOT / "data/cache")
-    global_carrying_capacity: int = 100_000_000_000  # 全球承载力1000亿（生物量/生态负荷单位）
+    global_carrying_capacity: int = 10_000_000_000  # 全球承载力100亿（生物量/生态负荷单位，平衡调整）
     background_population_threshold: int = 50_000
     mass_extinction_threshold: float = 0.6
     background_promotion_quota: int = 3

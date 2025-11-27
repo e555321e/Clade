@@ -1054,11 +1054,14 @@ class SimulationEngine:
         stream_callback=None,
     ) -> TurnReport:
         species_snapshots: list[SpeciesSnapshot] = []
-        total_pop = sum(
-            item.species.morphology_stats.get("population", 0) for item in mortality
-        )
+        # 【修复】确保种群数量在JavaScript安全整数范围内
+        MAX_SAFE_POPULATION = 9_007_199_254_740_991  # JavaScript安全整数上限
+        def safe_pop(sp):
+            raw = sp.morphology_stats.get("population", 0) or 0
+            return max(0, min(int(raw), MAX_SAFE_POPULATION))
+        total_pop = sum(safe_pop(item.species) for item in mortality)
         for item in mortality:
-            population = int(item.species.morphology_stats.get("population", 0) or 0)
+            population = safe_pop(item.species)
             share = (population / total_pop) if total_pop else 0
             species_snapshots.append(
                 SpeciesSnapshot(
