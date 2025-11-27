@@ -764,7 +764,8 @@ async def staggered_gather(
     coroutines: list,
     interval: float = 2.0,
     max_concurrent: int = 3,
-    task_name: str = "任务"
+    task_name: str = "任务",
+    task_timeout: float = 90.0,  # 【新增】单任务超时
 ) -> list:
     """
     间隔并行执行协程，避免同时发送过多请求。
@@ -774,6 +775,7 @@ async def staggered_gather(
         interval: 每个任务启动的间隔秒数
         max_concurrent: 最大同时执行的任务数
         task_name: 任务名称（用于日志）
+        task_timeout: 单个任务的超时时间（秒）
     
     Returns:
         所有任务的结果列表（保持原始顺序）
@@ -791,13 +793,21 @@ async def staggered_gather(
             await asyncio.sleep(delay)
         
         async with semaphore:
+            start_time = time.time()
             logger.debug(f"[间隔并行] {task_name} {idx + 1}/{len(coroutines)} 开始执行")
             try:
-                result = await coro
+                # 【关键修复】为每个任务添加超时保护
+                result = await asyncio.wait_for(coro, timeout=task_timeout)
                 results[idx] = result
-                logger.debug(f"[间隔并行] {task_name} {idx + 1}/{len(coroutines)} 完成")
+                elapsed = time.time() - start_time
+                logger.debug(f"[间隔并行] {task_name} {idx + 1}/{len(coroutines)} 完成 (耗时{elapsed:.1f}s)")
+            except asyncio.TimeoutError:
+                elapsed = time.time() - start_time
+                logger.error(f"[间隔并行] ⏱️ {task_name} {idx + 1}/{len(coroutines)} 超时 (超过{task_timeout}s，实际{elapsed:.1f}s)")
+                results[idx] = TimeoutError(f"{task_name} {idx + 1} 超时")
             except Exception as e:
-                logger.warning(f"[间隔并行] {task_name} {idx + 1}/{len(coroutines)} 失败: {e}")
+                elapsed = time.time() - start_time
+                logger.warning(f"[间隔并行] {task_name} {idx + 1}/{len(coroutines)} 失败 (耗时{elapsed:.1f}s): {e}")
                 results[idx] = e
     
     # 创建所有任务
@@ -807,8 +817,13 @@ async def staggered_gather(
     ]
     
     # 等待所有任务完成
-    logger.info(f"[间隔并行] 开始执行 {len(coroutines)} 个{task_name}（间隔{interval}s，最大并发{max_concurrent}）")
+    logger.info(f"[间隔并行] 开始执行 {len(coroutines)} 个{task_name}（间隔{interval}s，最大并发{max_concurrent}，单任务超时{task_timeout}s）")
     await asyncio.gather(*tasks)
-    logger.info(f"[间隔并行] 全部 {len(coroutines)} 个{task_name}执行完成")
+    
+    # 统计结果
+    success_count = sum(1 for r in results if r is not None and not isinstance(r, Exception))
+    timeout_count = sum(1 for r in results if isinstance(r, TimeoutError))
+    error_count = sum(1 for r in results if isinstance(r, Exception) and not isinstance(r, TimeoutError))
+    logger.info(f"[间隔并行] 全部 {len(coroutines)} 个{task_name}执行完成 (成功:{success_count} 超时:{timeout_count} 错误:{error_count})")
     
     return results

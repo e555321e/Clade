@@ -429,3 +429,54 @@ export async function fetchErosionMap(): Promise<Float32Array> {
   const buffer = await res.arrayBuffer();
   return new Float32Array(buffer);
 }
+
+// ================== 任务控制 API ==================
+
+export interface TaskDiagnostics {
+  success: boolean;
+  concurrency_limit?: number;
+  active_requests?: number;
+  queued_requests?: number;
+  total_requests?: number;
+  total_timeouts?: number;
+  timeout_rate?: string;
+  error?: string;
+}
+
+export interface AbortTasksResult {
+  success: boolean;
+  message: string;
+  active_requests?: number;
+  queued_requests?: number;
+}
+
+/**
+ * 中断当前正在进行的 AI 任务
+ * 当 AI 调用卡住时使用
+ */
+export async function abortCurrentTasks(): Promise<AbortTasksResult> {
+  try {
+    const res = await fetch("/api/tasks/abort", { method: "POST" });
+    if (!res.ok) {
+      return { success: false, message: `请求失败 (${res.status})` };
+    }
+    return await res.json();
+  } catch (error: any) {
+    return { success: false, message: error.message || "网络错误" };
+  }
+}
+
+/**
+ * 获取当前 AI 任务的诊断信息
+ */
+export async function getTaskDiagnostics(): Promise<TaskDiagnostics> {
+  try {
+    const res = await fetch("/api/tasks/diagnostics");
+    if (!res.ok) {
+      return { success: false, error: `请求失败 (${res.status})` };
+    }
+    return await res.json();
+  } catch (error: any) {
+    return { success: false, error: error.message || "网络错误" };
+  }
+}

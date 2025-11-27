@@ -27,7 +27,7 @@ class FocusBatchProcessor:
         self.batch_size = max(1, batch_size)
 
     async def _process_chunk(self, chunk: Sequence[MortalityResult]) -> list:
-        """处理单个批次"""
+        """处理单个批次（带超时保护）"""
         payload = [
             {
                 "lineage_code": item.species.lineage_code,
@@ -38,7 +38,15 @@ class FocusBatchProcessor:
             for item in chunk
         ]
         
-        response = await self.router.ainvoke("focus_batch", {"batch": payload})
+        # 【修复】添加超时保护，防止批次请求卡住
+        try:
+            response = await asyncio.wait_for(
+                self.router.ainvoke("focus_batch", {"batch": payload}),
+                timeout=90  # 批次90秒超时
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"[Focus] 批次AI调用超时 (包含{len(chunk)}个物种)")
+            return []
         
         content = response.get("content") if isinstance(response, dict) else None
         details = content.get("details") if isinstance(content, dict) else None

@@ -53,13 +53,24 @@ class ReportBuilder:
             }
             
             content_parts = []
-            try:
+            
+            # 【修复】流式读取的超时保护
+            async def stream_with_timeout():
+                nonlocal content_parts
+                last_chunk_time = asyncio.get_event_loop().time()
+                chunk_timeout = 30.0  # 单个chunk最长等待30秒
+                
                 async for chunk in self.router.astream("turn_report", payload):
+                    current_time = asyncio.get_event_loop().time()
+                    
                     # 处理可能的状态/错误事件字典
                     if isinstance(chunk, dict):
                         if chunk.get("type") == "error":
-                             print(f"[ReportBuilder] Stream error event: {chunk}")
+                            logger.warning(f"[ReportBuilder] Stream error event: {chunk}")
                         continue
+                    
+                    # 更新最后一次收到数据的时间
+                    last_chunk_time = current_time
                     
                     # 确保 chunk 是字符串
                     if not isinstance(chunk, str):
@@ -72,9 +83,14 @@ class ReportBuilder:
                             await stream_callback(chunk)
                         else:
                             stream_callback(chunk)
-
+            
+            try:
+                # 整体流式读取超时90秒
+                await asyncio.wait_for(stream_with_timeout(), timeout=90.0)
+            except asyncio.TimeoutError:
+                logger.error("[ReportBuilder] 流式读取超时（90秒），使用已收到的内容")
             except Exception as e:
-                print(f"[ReportBuilder] Stream error: {e}")
+                logger.error(f"[ReportBuilder] Stream error: {e}")
                 
             full_text = "".join(content_parts)
         

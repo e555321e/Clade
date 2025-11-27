@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { connectToEventStream } from "../services/api";
+import { connectToEventStream, abortCurrentTasks, getTaskDiagnostics } from "../services/api";
 
 interface Props {
   message?: string;
@@ -43,6 +43,10 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
   const [aiProgress, setAIProgress] = useState<AIProgress | null>(null);
   const [lastAIActivity, setLastAIActivity] = useState<number>(0);
   const [aiElapsedSeconds, setAIElapsedSeconds] = useState<number>(0);
+  
+  // 任务中断状态
+  const [isAborting, setIsAborting] = useState<boolean>(false);
+  const [abortMessage, setAbortMessage] = useState<string>("");
   
   // 日志队列管理（逐条动画显示）
   const logQueueRef = useRef<Array<{ icon: string; text: string; category: string; timestamp: number }>>([]);
@@ -288,6 +292,38 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
   const elapsedMinutes = Math.floor(elapsedTime / 60);
   const elapsedSeconds = elapsedTime % 60;
 
+  // 重置连接处理函数
+  const handleAbortTasks = useCallback(async () => {
+    if (isAborting) return;
+    
+    setIsAborting(true);
+    setAbortMessage("正在重置连接...");
+    
+    try {
+      const result = await abortCurrentTasks();
+      if (result.success) {
+        setAbortMessage(`✅ ${result.message}`);
+        // 添加日志
+        logQueueRef.current.push({
+          icon: "🔄",
+          text: `连接已重置 - 活跃: ${result.active_requests || 0}, 排队: ${result.queued_requests || 0}`,
+          category: "系统",
+          timestamp: Date.now()
+        });
+      } else {
+        setAbortMessage(`❌ ${result.message}`);
+      }
+    } catch (error: any) {
+      setAbortMessage(`❌ 重置失败: ${error.message}`);
+    }
+    
+    // 3秒后清除消息
+    setTimeout(() => {
+      setAbortMessage("");
+      setIsAborting(false);
+    }, 3000);
+  }, [isAborting]);
+
   // 连接状态配置
   const statusConfig: Record<ConnectionStatus, { color: string; text: string; icon: string }> = {
     connecting: { color: "#fbbf24", text: "连接中", icon: "⏳" },
@@ -324,7 +360,31 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
               <span className="status-text">{tokenCount} tokens</span>
             </div>
           )}
+          {/* 卡住时显示重置按钮（超过30秒） */}
+          {elapsedTime > 30 && (
+            <button 
+              className="abort-btn"
+              onClick={handleAbortTasks}
+              disabled={isAborting}
+              title="如果卡住了，点击重置连接"
+            >
+              {isAborting ? "⏳" : "🔄"} {isAborting ? "重置中..." : "重置连接"}
+            </button>
+          )}
         </div>
+        {/* 重置状态消息 */}
+        {abortMessage && (
+          <div className="abort-message" style={{ 
+            padding: '8px 16px', 
+            background: abortMessage.includes('✅') ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+            borderRadius: '8px',
+            marginBottom: '12px',
+            fontSize: '13px',
+            textAlign: 'center'
+          }}>
+            {abortMessage}
+          </div>
+        )}
 
         {/* DNA 双螺旋加载动画 */}
         <div className="dna-loader">
@@ -544,6 +604,31 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
         .status-text {
           color: rgba(255, 255, 255, 0.7);
           font-family: var(--font-mono, monospace);
+        }
+
+        .abort-btn {
+          padding: 6px 12px;
+          background: rgba(239, 68, 68, 0.2);
+          border: 1px solid rgba(239, 68, 68, 0.4);
+          border-radius: 6px;
+          color: #fca5a5;
+          font-size: 0.75rem;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+
+        .abort-btn:hover:not(:disabled) {
+          background: rgba(239, 68, 68, 0.3);
+          border-color: rgba(239, 68, 68, 0.6);
+          color: #fecaca;
+        }
+
+        .abort-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
         }
 
         /* DNA 加载动画 */

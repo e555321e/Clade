@@ -22,7 +22,7 @@ class CriticalAnalyzer:
         self.router = router
 
     async def _process_item(self, item: MortalityResult) -> dict:
-        """处理单个物种"""
+        """处理单个物种（带超时保护）"""
         payload = {
             "lineage_code": item.species.lineage_code,
             "population": item.survivors,
@@ -34,8 +34,16 @@ class CriticalAnalyzer:
             },
         }
         
-        response = await self.router.ainvoke("critical_detail", payload)
-        return response
+        # 【修复】添加超时保护，防止单个请求卡住
+        try:
+            response = await asyncio.wait_for(
+                self.router.ainvoke("critical_detail", payload),
+                timeout=60  # 单个物种60秒超时
+            )
+            return response
+        except asyncio.TimeoutError:
+            logger.error(f"[Critical] {item.species.common_name} AI调用超时")
+            return {"error": "timeout", "content": {"summary": "分析超时，请稍后重试"}}
 
     async def enhance_async(self, results: list[MortalityResult]) -> None:
         """为 critical 层物种的死亡率结果添加 AI 生成的详细叙事（间隔并行执行）。"""

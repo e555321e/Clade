@@ -1855,3 +1855,78 @@ def get_intervention_status() -> dict:
         "total_suppressed": len(suppressed),
         "total_symbiotic": len(symbiotic)
     }
+
+
+# ================== 任务中断 API ==================
+
+@router.post("/tasks/abort", tags=["system"])
+async def abort_current_tasks() -> dict:
+    """重置 AI 连接，解除卡住状态
+    
+    当 AI 调用卡住时，可以调用此 API：
+    - 关闭当前的 HTTP 客户端连接
+    - 不清空队列和计数器（让任务自然恢复）
+    - 卡住的请求会因连接关闭而抛出异常，然后自动重试或返回
+    
+    这类似于后端的 shutdown，可以让卡住的任务继续
+    """
+    from ..main import get_simulation_engine
+    
+    try:
+        engine = get_simulation_engine()
+        router = engine.router
+        
+        # 获取当前诊断信息
+        diagnostics_before = router.get_diagnostics()
+        
+        # 只关闭客户端连接，不清空计数器
+        old_client = router._client_session
+        router._client_session = None  # 先置空
+        
+        if old_client and not old_client.is_closed:
+            try:
+                await old_client.aclose()
+                logger.info("[任务恢复] 已关闭旧的 HTTP 客户端连接")
+            except Exception as e:
+                logger.warning(f"[任务恢复] 关闭连接时出错: {e}")
+        
+        logger.warning(f"[任务恢复] 连接已重置，活跃请求: {diagnostics_before['active_requests']}，排队: {diagnostics_before['queued_requests']}")
+        
+        return {
+            "success": True,
+            "message": "连接已重置，卡住的任务将自动恢复",
+            "active_requests": diagnostics_before['active_requests'],
+            "queued_requests": diagnostics_before['queued_requests']
+        }
+    except Exception as e:
+        logger.error(f"[任务恢复] 重置失败: {e}")
+        return {
+            "success": False,
+            "message": f"重置失败: {str(e)}"
+        }
+
+
+@router.get("/tasks/diagnostics", tags=["system"])
+def get_task_diagnostics() -> dict:
+    """获取当前 AI 任务的诊断信息
+    
+    返回：
+    - 并发限制
+    - 活跃请求数
+    - 排队请求数
+    - 超时统计
+    """
+    from ..main import get_simulation_engine
+    
+    try:
+        engine = get_simulation_engine()
+        router = engine.router
+        return {
+            "success": True,
+            **router.get_diagnostics()
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
