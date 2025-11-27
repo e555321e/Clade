@@ -97,6 +97,11 @@ model_router = ModelRouter(
             model=settings.speciation_model,
             extra_body={"response_format": {"type": "json_object"}}  # 强制JSON
         ),
+        "speciation_batch": ModelConfig(
+            provider="openai", 
+            model=settings.speciation_model,
+            extra_body={"response_format": {"type": "json_object"}}  # 强制JSON
+        ),
         "reemergence": ModelConfig(provider="local", model="reemergence-template"),
         "pressure_escalation": ModelConfig(provider="local", model="pressure-template"),
         "migration": ModelConfig(provider="local", model="migration-template"),

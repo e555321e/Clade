@@ -296,20 +296,40 @@ class SpeciationService:
             logger.info("[分化] 没有可执行的AI任务，本回合跳过")
             return []
 
-        logger.info(f"[分化] 开始顺序执行 {len(active_batch)} 个分化任务 (剩余排队 {len(self._deferred_requests)})")
+        logger.info(f"[分化] 开始批量处理 {len(active_batch)} 个分化任务 (剩余排队 {len(self._deferred_requests)})")
         
-        # 【修改】完全顺序执行，避免并发请求过多导致API卡死
+        # 【优化】使用批量请求，一次性处理所有分化任务
+        # 每批最多处理 10 个物种，避免单次请求过大
+        batch_size = 10
         results = []
         
-        for idx, entry in enumerate(active_batch):
-            logger.info(f"[分化] 执行任务 {idx + 1}/{len(active_batch)}: {entry['ctx']['parent'].common_name} -> {entry['ctx']['new_code']}")
+        for batch_start in range(0, len(active_batch), batch_size):
+            batch_entries = active_batch[batch_start:batch_start + batch_size]
+            batch_num = batch_start // batch_size + 1
+            total_batches = (len(active_batch) + batch_size - 1) // batch_size
+            
+            logger.info(f"[分化] 批量请求 {batch_num}/{total_batches}：处理 {len(batch_entries)} 个物种")
             
             try:
-                result = await self._call_ai_wrapper(entry["payload"], stream_callback)
-                results.append(result)
+                # 构建批量请求 payload
+                batch_payload = self._build_batch_payload(
+                    batch_entries, average_pressure, pressure_summary, 
+                    map_changes, major_events
+                )
+                
+                # 调用批量 AI 接口
+                batch_results = await self._call_batch_ai(batch_payload, stream_callback)
+                
+                # 解析批量结果并匹配到对应的 entry
+                parsed_results = self._parse_batch_results(batch_results, batch_entries)
+                results.extend(parsed_results)
+                
+                logger.info(f"[分化] 批量请求 {batch_num} 完成，成功解析 {len([r for r in parsed_results if not isinstance(r, Exception)])} 个结果")
+                
             except Exception as e:
-                logger.error(f"[分化] 任务 {idx + 1} 失败: {e}")
-                results.append(e)
+                logger.error(f"[分化] 批量请求 {batch_num} 失败: {e}")
+                # 批量失败时，为该批次所有 entry 添加异常
+                results.extend([e] * len(batch_entries))
 
         # 3. 结果处理与写入
         logger.info(f"[分化] 开始处理 {len(results)} 个AI结果")
@@ -411,8 +431,136 @@ class SpeciationService:
             
         return new_species_events
 
+    def _build_batch_payload(
+        self,
+        entries: list[dict],
+        average_pressure: float,
+        pressure_summary: str,
+        map_changes: list,
+        major_events: list
+    ) -> dict:
+        """构建批量分化请求的 payload"""
+        # 构建物种列表文本
+        species_list_parts = []
+        for idx, entry in enumerate(entries):
+            payload = entry["payload"]
+            ctx = entry["ctx"]
+            
+            species_info = f"""
+【物种 {idx + 1}】
+- request_id: {idx}
+- 父系编码: {payload.get('parent_lineage')}
+- 学名: {payload.get('latin_name')}
+- 俗名: {payload.get('common_name')}
+- 新编码: {ctx['new_code']}
+- 栖息地: {payload.get('habitat_type')}
+- 营养级: {payload.get('parent_trophic_level', 2.0):.2f}
+- 描述: {payload.get('traits', '')[:200]}
+- 幸存者: {payload.get('survivors', 0):,}
+- 分化类型: {payload.get('speciation_type')}
+- 子代编号: 第{payload.get('offspring_index', 1)}个（共{payload.get('total_offspring', 1)}个）"""
+            species_list_parts.append(species_info)
+        
+        species_list = "\n".join(species_list_parts)
+        
+        return {
+            "average_pressure": average_pressure,
+            "pressure_summary": pressure_summary,
+            "map_changes_summary": self._summarize_map_changes(map_changes) if map_changes else "无显著地形变化",
+            "major_events_summary": self._summarize_major_events(major_events) if major_events else "无重大事件",
+            "species_list": species_list,
+            "batch_size": len(entries),
+        }
+    
+    async def _call_batch_ai(
+        self, 
+        payload: dict, 
+        stream_callback: Callable[[str], Awaitable[None] | None] | None
+    ) -> dict:
+        """调用批量分化 AI 接口"""
+        full_content = ""
+        
+        if stream_callback:
+            try:
+                async for chunk in self.router.astream("speciation_batch", payload):
+                    if isinstance(chunk, dict) and chunk.get("type") in ("status", "error"):
+                        continue
+                    if isinstance(chunk, str):
+                        full_content += chunk
+                        if asyncio.iscoroutinefunction(stream_callback):
+                            await stream_callback(chunk)
+                        else:
+                            stream_callback(chunk)
+            except Exception as e:
+                logger.error(f"[分化批量] 流式AI调用失败: {e}")
+                if not full_content:
+                    response = await self.router.ainvoke("speciation_batch", payload)
+                    return response.get("content") if isinstance(response, dict) else {}
+        else:
+            response = await self.router.ainvoke("speciation_batch", payload)
+            return response.get("content") if isinstance(response, dict) else {}
+        
+        return self.router._parse_content(full_content)
+    
+    def _parse_batch_results(
+        self, 
+        batch_response: dict, 
+        entries: list[dict]
+    ) -> list[dict | Exception]:
+        """解析批量响应，返回与 entries 对应的结果列表"""
+        results = []
+        
+        if not isinstance(batch_response, dict):
+            logger.warning(f"[分化批量] 响应不是字典类型: {type(batch_response)}")
+            return [ValueError("Invalid batch response")] * len(entries)
+        
+        # 尝试从响应中提取 results 数组
+        ai_results = batch_response.get("results", [])
+        if not isinstance(ai_results, list):
+            # 可能响应本身就是结果数组
+            if isinstance(batch_response, list):
+                ai_results = batch_response
+            else:
+                logger.warning(f"[分化批量] 响应中没有 results 数组")
+                return [ValueError("No results in response")] * len(entries)
+        
+        # 建立 request_id 到结果的映射
+        result_map = {}
+        for item in ai_results:
+            if isinstance(item, dict):
+                req_id = item.get("request_id")
+                if req_id is not None:
+                    try:
+                        result_map[int(req_id)] = item
+                    except (ValueError, TypeError):
+                        result_map[str(req_id)] = item
+        
+        # 按顺序匹配结果
+        for idx, entry in enumerate(entries):
+            # 尝试多种方式匹配
+            matched_result = result_map.get(idx) or result_map.get(str(idx))
+            
+            if matched_result is None and idx < len(ai_results):
+                # 如果没有 request_id，按顺序匹配
+                matched_result = ai_results[idx] if isinstance(ai_results[idx], dict) else None
+            
+            if matched_result:
+                # 验证必要字段
+                required_fields = ["latin_name", "common_name", "description"]
+                if all(matched_result.get(f) for f in required_fields):
+                    results.append(matched_result)
+                    logger.debug(f"[分化批量] 成功匹配结果 {idx}: {matched_result.get('common_name')}")
+                else:
+                    logger.warning(f"[分化批量] 结果 {idx} 缺少必要字段")
+                    results.append(ValueError(f"Missing required fields for entry {idx}"))
+            else:
+                logger.warning(f"[分化批量] 无法匹配结果 {idx}")
+                results.append(ValueError(f"No matching result for entry {idx}"))
+        
+        return results
+
     async def _call_ai_wrapper(self, payload: dict, stream_callback: Callable[[str], Awaitable[None] | None] | None) -> dict:
-        """AI调用包装器，支持流式推送"""
+        """AI调用包装器，支持流式推送（保留用于单个请求的回退）"""
         full_content = ""
         
         if stream_callback:

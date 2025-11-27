@@ -1,0 +1,12 @@
+feat: 物种分化改为批量请求，大幅减少AI调用次数
+
+- 新增 speciation_batch prompt，支持一次请求处理多个物种分化
+- 修改 speciation.py：
+  - 添加 _build_batch_payload 构建批量请求
+  - 添加 _call_batch_ai 调用批量接口
+  - 添加 _parse_batch_results 解析批量响应
+  - 每批最多处理10个物种
+- 在 routes.py 注册 speciation_batch 能力
+
+效果：原来N个物种需要N次API调用，现在只需要 ceil(N/10) 次
+
