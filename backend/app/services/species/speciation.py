@@ -23,7 +23,13 @@ _settings = get_settings()
 
 
 class SpeciationService:
-    """根据存活数据和演化潜力，生成新的谱系并记录事件。"""
+    """根据存活数据和演化潜力，生成新的谱系并记录事件。
+    
+    【核心改进】现在支持基于地块的分化：
+    - 分化发生在特定区域（地块集群），而非全局
+    - 子代物种只在分化起源区域出现
+    - 不同子代可以分配到不同地块（模拟地理隔离）
+    """
 
     def __init__(self, router) -> None:
         self.router = router
@@ -33,6 +39,51 @@ class SpeciationService:
         self.max_speciation_per_turn = 20
         self.max_deferred_requests = 60
         self._deferred_requests: list[dict[str, Any]] = []
+        
+        # 【新增】地块级数据缓存
+        self._tile_mortality_cache: dict[str, dict[int, float]] = {}  # {lineage_code: {tile_id: death_rate}}
+        self._tile_population_cache: dict[str, dict[int, float]] = {}  # {lineage_code: {tile_id: population}}
+        self._tile_adjacency: dict[int, set[int]] = {}  # {tile_id: {adjacent_tile_ids}}
+        self._speciation_candidates: dict[str, dict] = {}  # 预筛选的分化候选数据
+    
+    def set_tile_mortality_data(
+        self, 
+        lineage_code: str, 
+        tile_death_rates: dict[int, float]
+    ) -> None:
+        """设置物种在各地块的死亡率数据
+        
+        由 TileBasedMortalityEngine 调用
+        """
+        self._tile_mortality_cache[lineage_code] = tile_death_rates
+    
+    def set_tile_population_data(
+        self, 
+        lineage_code: str, 
+        tile_populations: dict[int, float]
+    ) -> None:
+        """设置物种在各地块的种群分布数据
+        
+        由 TileBasedMortalityEngine 调用
+        """
+        self._tile_population_cache[lineage_code] = tile_populations
+    
+    def set_speciation_candidates(self, candidates: dict[str, dict]) -> None:
+        """设置预筛选的分化候选数据
+        
+        由 engine.py 从 TileBasedMortalityEngine.get_speciation_candidates() 获取后传入
+        """
+        self._speciation_candidates = candidates
+    
+    def set_tile_adjacency(self, adjacency: dict[int, set[int]]) -> None:
+        """设置地块邻接关系"""
+        self._tile_adjacency = adjacency
+    
+    def clear_tile_cache(self) -> None:
+        """清空地块缓存（每回合开始时调用）"""
+        self._tile_mortality_cache.clear()
+        self._tile_population_cache.clear()
+        self._speciation_candidates.clear()
 
     async def process_async(
         self,
@@ -79,63 +130,113 @@ class SpeciationService:
         
         for result in mortality_results:
             species = result.species
-            # 【关键修复】使用当前种群（繁殖增长后），而不是死亡率评估时的 survivors
-            # mortality_results 是在繁殖增长之前生成的，survivors 是过时的数据
-            # species.morphology_stats["population"] 是繁殖增长后的最新值
-            current_population = int(species.morphology_stats.get("population", 0) or 0)
-            survivors = current_population  # 使用最新种群数据
-            death_rate = result.death_rate
+            lineage_code = species.lineage_code
+            
+            # ========== 【基于地块的分化检查】==========
+            # 优先使用预筛选的分化候选数据
+            candidate_data = self._speciation_candidates.get(lineage_code)
+            
+            if candidate_data:
+                # 使用地块级数据
+                candidate_tiles = candidate_data["candidate_tiles"]
+                tile_populations = candidate_data["tile_populations"]
+                tile_mortality = candidate_data["tile_mortality"]
+                is_isolated = candidate_data["is_isolated"]
+                mortality_gradient = candidate_data["mortality_gradient"]
+                clusters = candidate_data["clusters"]
+                
+                # 计算候选地块上的总种群
+                candidate_population = int(candidate_data["total_candidate_population"])
+                
+                # 计算候选地块的加权平均死亡率
+                total_pop = sum(tile_populations.get(t, 0) for t in candidate_tiles)
+                if total_pop > 0:
+                    death_rate = sum(
+                        tile_mortality.get(t, 0) * tile_populations.get(t, 0) 
+                        for t in candidate_tiles
+                    ) / total_pop
+                else:
+                    death_rate = result.death_rate
+                
+                logger.debug(
+                    f"[地块分化检查] {species.common_name}: "
+                    f"候选地块={len(candidate_tiles)}, 候选种群={candidate_population:,}, "
+                    f"加权死亡率={death_rate:.1%}, 隔离={is_isolated}"
+                )
+            else:
+                # 回退到全局数据（兼容旧逻辑）
+                candidate_tiles = set()
+                tile_populations = self._tile_population_cache.get(lineage_code, {})
+                tile_mortality = self._tile_mortality_cache.get(lineage_code, {})
+                candidate_population = int(species.morphology_stats.get("population", 0) or 0)
+                death_rate = result.death_rate
+                is_isolated = False
+                mortality_gradient = 0.0
+                clusters = []
+                
+                # 如果有地块数据，尝试筛选候选地块
+                if tile_populations and tile_mortality:
+                    for tile_id, pop in tile_populations.items():
+                        rate = tile_mortality.get(tile_id, 0.5)
+                        if pop >= 100 and 0.03 <= rate <= 0.70:
+                            candidate_tiles.add(tile_id)
+                    if candidate_tiles:
+                        candidate_population = int(sum(tile_populations.get(t, 0) for t in candidate_tiles))
+            
+            # 使用候选地块的种群数据
+            survivors = candidate_population
             resource_pressure = result.resource_pressure
             
             # 条件1：计算该物种的动态分化门槛
             base_threshold = self._calculate_speciation_threshold(species)
             min_population = int(base_threshold * 1.6)
             
-            if current_population < min_population:
+            # 【改进】使用候选地块的种群，而非全局种群
+            if candidate_population < min_population:
                 continue
             
             # 条件2：演化潜力（放宽门槛 + 累积压力补偿）
-            # 【修复】默认值从0.0改为0.5，门槛从0.7降到0.5
             evo_potential = species.hidden_traits.get("evolution_potential", 0.5)
             speciation_pressure = species.morphology_stats.get("speciation_pressure", 0.0) or 0.0
             
-            # 【新增】分化冷却期检查：刚分化出的物种需要"稳定期"才能继续分化
-            # 冷却期从配置读取，默认3回合（150万年）
+            # 【新增】分化冷却期检查
             cooldown = _settings.speciation_cooldown_turns
             last_speciation_turn = species.morphology_stats.get("last_speciation_turn", -999)
             turns_since_speciation = turn_index - last_speciation_turn
             if turns_since_speciation < cooldown:
                 logger.debug(
                     f"[分化冷却] {species.common_name} 仍在冷却期 "
-                    f"({turns_since_speciation}/3回合)"
+                    f"({turns_since_speciation}/{cooldown}回合)"
                 )
                 continue
             
-            # 放宽条件：演化潜力≥0.5，或者累积了足够的分化压力（连续多回合满足其他条件）
+            # 放宽条件：演化潜力≥0.5，或累积分化压力≥0.3
             if evo_potential < 0.5 and speciation_pressure < 0.3:
                 continue
             
             # 条件3：压力或资源饱和
-            has_pressure = (1.5 <= average_pressure <= 15.0) or (resource_pressure > 0.8)
+            # 【改进】地理隔离本身就是强分化条件
+            has_pressure = (
+                (1.5 <= average_pressure <= 15.0) or 
+                (resource_pressure > 0.8) or
+                is_isolated  # 地理/生态隔离直接满足条件
+            )
             
             # 自然辐射演化（繁荣物种分化）
-            # 【修复】提高辐射演化概率，让繁荣物种更容易分化
             if not has_pressure:
-                # 种群规模加成：种群越大，辐射演化概率越高
                 pop_factor = min(1.0, survivors / (min_population * 3))
-                # 累积压力加成：连续满足条件但未分化的物种更容易辐射演化
                 radiation_chance = 0.03 + (pop_factor * 0.05) + (speciation_pressure * 0.2)
                 
                 if survivors > min_population * 1.5 and random.random() < radiation_chance:
                     has_pressure = True
                     speciation_type = "辐射演化"
-                    logger.info(f"[辐射演化] {species.common_name} 触发辐射演化 (种群:{survivors:,}, 概率:{radiation_chance:.1%})")
+                    logger.info(f"[辐射演化] {species.common_name} 触发辐射演化 (候选种群:{survivors:,}, 概率:{radiation_chance:.1%})")
                 else:
                     continue
             
-            # 条件4：适应压力（扩大死亡率窗口）
-            # 【修复】从5%-60%扩大到3%-70%，给繁荣物种和濒危物种更多机会
-            if death_rate < 0.03 or death_rate > 0.70:
+            # 条件4：死亡率检查（已在候选地块筛选时过滤）
+            # 对于使用预筛选数据的情况，跳过此检查
+            if not candidate_data and (death_rate < 0.03 or death_rate > 0.70):
                 continue
             
             # 条件5：随机性 (应用密度制约)
@@ -161,6 +262,29 @@ class SpeciationService:
             speciation_type = "生态隔离"
             
             # 检测地理隔离机会
+            # 【核心改进】优先使用候选数据中的隔离信息
+            if candidate_data and is_isolated:
+                speciation_bonus += 0.25  # 地理隔离是分化的强触发条件
+                speciation_type = "地理隔离"
+                logger.info(
+                    f"[地块级隔离检测] {species.common_name}: "
+                    f"检测到{len(clusters)}个隔离区域, "
+                    f"死亡率梯度={mortality_gradient:.1%}, "
+                    f"候选地块={len(candidate_tiles)}"
+                )
+            elif not candidate_data:
+                # 回退到旧的检测方法
+                geo_isolation_data = self._detect_geographic_isolation(lineage_code)
+                if geo_isolation_data["is_isolated"]:
+                    speciation_bonus += 0.25
+                    speciation_type = "地理隔离"
+                    clusters = geo_isolation_data["clusters"]
+                    logger.info(
+                        f"[地理隔离检测] {species.common_name}: "
+                        f"检测到{geo_isolation_data['num_clusters']}个隔离区域, "
+                        f"死亡率差异={geo_isolation_data['mortality_gradient']:.1%}"
+                    )
+            
             if map_changes:
                 for change in (map_changes or []):
                     change_type = change.get("change_type", "") if isinstance(change, dict) else getattr(change, "change_type", "")
@@ -203,57 +327,127 @@ class SpeciationService:
             species.morphology_stats["speciation_pressure"] = 0.0
             species.morphology_stats["last_speciation_turn"] = turn_index
             
-            # ========== 【优化】动态子种数量（考虑物种密度） ==========
-            # 决定分化出几个子种（基于种群规模和物种密度，不再依赖世代数）
+            # ========== 【基于地块的分化】==========
+            # 使用候选地块上的种群进行分化，而非全局种群
+            
+            # 计算全局种群（用于后续更新父系）
+            global_population = int(species.morphology_stats.get("population", 0) or 0)
+            
+            # 【重要】分化只影响候选地块上的种群
+            # 非候选地块上的种群保持不变（仍属于父系）
+            speciation_pool = candidate_population  # 仅候选地块上的种群参与分化
+            non_candidate_population = global_population - candidate_population
+            
+            # ========== 【改进】基于地块级压力计算分化数量 ==========
+            # 计算各隔离区域的压力指标（用于决定分化数量和传递给AI）
+            cluster_pressure_data = []
+            if candidate_data and clusters:
+                for cluster_idx, cluster in enumerate(clusters):
+                    cluster_pop = sum(tile_populations.get(t, 0) for t in cluster)
+                    cluster_tiles_with_rate = [(t, tile_mortality.get(t, 0.5)) for t in cluster if t in tile_mortality]
+                    
+                    if cluster_tiles_with_rate:
+                        # 计算该区域的平均死亡率
+                        total_pop_in_cluster = sum(tile_populations.get(t, 0) for t, _ in cluster_tiles_with_rate)
+                        if total_pop_in_cluster > 0:
+                            avg_mortality = sum(
+                                tile_mortality.get(t, 0.5) * tile_populations.get(t, 0) 
+                                for t, _ in cluster_tiles_with_rate
+                            ) / total_pop_in_cluster
+                        else:
+                            avg_mortality = sum(r for _, r in cluster_tiles_with_rate) / len(cluster_tiles_with_rate)
+                        
+                        # 区域压力描述
+                        if avg_mortality > 0.5:
+                            pressure_level = "高压"
+                        elif avg_mortality > 0.3:
+                            pressure_level = "中压"
+                        else:
+                            pressure_level = "低压"
+                    else:
+                        avg_mortality = 0.5
+                        pressure_level = "未知"
+                    
+                    cluster_pressure_data.append({
+                        "cluster_idx": cluster_idx,
+                        "tiles": cluster,
+                        "population": int(cluster_pop),
+                        "avg_mortality": avg_mortality,
+                        "pressure_level": pressure_level,
+                    })
+            
             if _settings.enable_dynamic_speciation:
-                # 计算同谱系物种数量（用于属内阻尼）
                 sibling_count = sum(
                     1 for r in mortality_results 
-                    if r.species.lineage_code.startswith(species.lineage_code[:2])  # 共享前缀
+                    if r.species.lineage_code.startswith(species.lineage_code[:2])
                     and r.species.lineage_code != species.lineage_code
                 )
                 
-                num_offspring = self._calculate_dynamic_offspring_count(
-                    generations, survivors, evo_potential,
-                    current_species_count=current_species_count,
-                    sibling_count=sibling_count
-                )
+                # 【改进】基于地块级压力决定子代数量
+                if candidate_data and clusters:
+                    # 基础计算
+                    calculated_offspring = self._calculate_dynamic_offspring_count(
+                        generations, speciation_pool, evo_potential,
+                        current_species_count=current_species_count,
+                        sibling_count=sibling_count
+                    )
+                    
+                    # 【改进】考虑隔离区域数量和压力梯度
+                    # - 更多隔离区域 → 可能产生更多子代
+                    # - 更大的压力梯度 → 分化动力更强
+                    num_clusters = len(clusters)
+                    
+                    if num_clusters >= 3 and mortality_gradient > 0.3:
+                        # 强隔离 + 高梯度：允许更多子代
+                        num_offspring = min(num_clusters, calculated_offspring + 1)
+                    elif num_clusters >= 2:
+                        # 中等隔离：子代数 = min(隔离区域数, 计算值)
+                        num_offspring = min(num_clusters, calculated_offspring)
+                    else:
+                        # 单一区域：使用计算值
+                        num_offspring = calculated_offspring
+                else:
+                    num_offspring = self._calculate_dynamic_offspring_count(
+                        generations, speciation_pool, evo_potential,
+                        current_species_count=current_species_count,
+                        sibling_count=sibling_count
+                    )
+                
                 logger.info(
-                    f"[分化] {species.common_name} 将分化出 {num_offspring} 个子种 "
-                    f"(物种总数:{current_species_count}, 同属:{sibling_count})"
+                    f"[地块分化] {species.common_name} 将分化出 {num_offspring} 个子种 "
+                    f"(候选种群:{speciation_pool:,}, 隔离区域:{len(clusters) if clusters else 0}, "
+                    f"死亡率梯度:{mortality_gradient:.1%})"
                 )
             else:
-                # 传统模式：固定2-3个
                 num_offspring = random.choice([2, 2, 3])
                 logger.info(f"[分化] {species.common_name} 将分化出 {num_offspring} 个子种")
             
-            # 种群分配（保证子代获得非零种群）
+            # 种群分配（仅从候选地块的种群中分配）
             retention_ratio = random.uniform(0.60, 0.80)
-            proposed_parent = max(50, int(survivors * retention_ratio))
-            max_parent_allowed = survivors - num_offspring
+            proposed_parent_from_candidates = max(50, int(speciation_pool * retention_ratio))
+            max_parent_allowed = speciation_pool - num_offspring
             if max_parent_allowed <= 0:
                 logger.warning(
-                    f"[分化终止] {species.common_name} 幸存者不足以生成子种 "
-                    f"(survivors={survivors}, offspring={num_offspring})"
+                    f"[分化终止] {species.common_name} 候选种群不足以生成子种 "
+                    f"(speciation_pool={speciation_pool}, offspring={num_offspring})"
                 )
                 continue
             
-            parent_remaining = min(proposed_parent, max_parent_allowed)
-            child_pool = survivors - parent_remaining
+            parent_from_candidates = min(proposed_parent_from_candidates, max_parent_allowed)
+            child_pool = speciation_pool - parent_from_candidates
             
             if child_pool < num_offspring:
-                # 借用部分亲代个体，确保每个子种至少获得1个体
                 needed = num_offspring - child_pool
-                transferable = max(0, parent_remaining - 50)
+                transferable = max(0, parent_from_candidates - 50)
                 if transferable <= 0:
                     logger.warning(
                         f"[分化终止] {species.common_name} 无法为子种分配个体 "
-                        f"(parent_remaining={parent_remaining})"
+                        f"(parent_from_candidates={parent_from_candidates})"
                     )
                     continue
                 borrowed = min(needed, transferable)
-                parent_remaining -= borrowed
-                child_pool = survivors - parent_remaining
+                parent_from_candidates -= borrowed
+                child_pool = speciation_pool - parent_from_candidates
             
             if child_pool < num_offspring:
                 logger.warning(
@@ -271,9 +465,29 @@ class SpeciationService:
             for code in new_codes:
                 existing_codes.add(code)
             
-            # 立即更新父系物种种群（保持数据库状态一致性）
+            # 【改进】更新父系物种种群
+            # 父系保留：非候选地块种群 + 候选地块中保留的部分
+            parent_remaining = non_candidate_population + parent_from_candidates
             species.morphology_stats["population"] = parent_remaining
             species_repository.upsert(species)
+            
+            logger.debug(
+                f"[种群分配] {species.common_name}: "
+                f"全局{global_population:,} → 父系{parent_remaining:,} + 子代{child_pool:,} "
+                f"(非候选地块保留{non_candidate_population:,})"
+            )
+            
+            # 【核心改进】基于候选数据为子代分配地块
+            if candidate_data and clusters:
+                # 使用候选数据中的隔离区域分配地块
+                offspring_tiles = self._allocate_tiles_from_clusters(
+                    clusters, candidate_tiles, num_offspring
+                )
+            else:
+                # 回退到旧方法
+                offspring_tiles = self._allocate_tiles_to_offspring(
+                    species.lineage_code, num_offspring
+                )
             
             # 为每个子种创建任务
             for idx, (new_code, population) in enumerate(zip(new_codes, pop_splits)):
@@ -287,13 +501,45 @@ class SpeciationService:
                 # 推断生物类群
                 biological_domain = self._infer_biological_domain(species)
                 
+                # 【核心改进】获取该子代对应区域的压力信息
+                assigned_tiles = offspring_tiles[idx] if idx < len(offspring_tiles) else set()
+                
+                # 获取该子代区域的压力数据
+                if cluster_pressure_data and idx < len(cluster_pressure_data):
+                    region_data = cluster_pressure_data[idx]
+                    region_mortality = region_data["avg_mortality"]
+                    region_pressure_level = region_data["pressure_level"]
+                    region_population = region_data["population"]
+                else:
+                    # 计算分配地块的平均死亡率
+                    if assigned_tiles and tile_mortality:
+                        region_mortality = sum(
+                            tile_mortality.get(t, 0.5) for t in assigned_tiles
+                        ) / len(assigned_tiles)
+                    else:
+                        region_mortality = death_rate
+                    
+                    if region_mortality > 0.5:
+                        region_pressure_level = "高压"
+                    elif region_mortality > 0.3:
+                        region_pressure_level = "中压"
+                    else:
+                        region_pressure_level = "低压"
+                    region_population = population
+                
+                # 生成地块级环境摘要
+                tile_context = self._generate_tile_context(
+                    assigned_tiles, tile_populations, tile_mortality, 
+                    mortality_gradient, is_isolated
+                )
+                
                 ai_payload = {
                     "parent_lineage": species.lineage_code,
                     "latin_name": species.latin_name,
                     "common_name": species.common_name,
                     "habitat_type": species.habitat_type,
-                    "biological_domain": biological_domain,  # 新增：生物类群限制
-                    "current_organs_summary": self._summarize_organs(species),  # 新增：当前器官摘要
+                    "biological_domain": biological_domain,
+                    "current_organs_summary": self._summarize_organs(species),
                     "environment_pressure": average_pressure,
                     "pressure_summary": pressure_summary,
                     "evolutionary_generations": int(generations),
@@ -306,17 +552,24 @@ class SpeciationService:
                     "parent_trophic_level": species.trophic_level,
                     "offspring_index": idx + 1,
                     "total_offspring": num_offspring,
-                    # 食物链状态，帮助AI做出合理的演化决策
                     "food_chain_status": self._food_chain_summary,
+                    # 【新增】地块级分化信息
+                    "tile_context": tile_context,
+                    "region_mortality": region_mortality,
+                    "region_pressure_level": region_pressure_level,
+                    "mortality_gradient": mortality_gradient,
+                    "num_isolation_regions": len(clusters) if clusters else 1,
+                    "is_geographic_isolation": is_isolated and len(clusters) >= 2 if clusters else False,
                 }
                 
                 entries.append({
                     "ctx": {
-                    "parent": species,
-                    "new_code": new_code,
-                    "population": population,
-                    "ai_payload_input": ai_payload, # 原始输入，用于fallback
-                        "speciation_type": speciation_type
+                        "parent": species,
+                        "new_code": new_code,
+                        "population": population,
+                        "ai_payload_input": ai_payload,  # 原始输入，用于fallback
+                        "speciation_type": speciation_type,
+                        "assigned_tiles": assigned_tiles,  # 【新增】该子代的栖息地块
                     },
                     "payload": ai_payload,
                 })
@@ -423,9 +676,15 @@ class SpeciationService:
             new_species = species_repository.upsert(new_species)
             logger.info(f"[分化] upsert后 {new_species.common_name} created_turn={new_species.created_turn}")
             
-            # ⚠️ 关键修复：子代继承父代的栖息地分布
-            # 而不是重新计算分布（因为分化通常发生在同一地点）
-            self._inherit_habitat_distribution(parent=ctx["parent"], child=new_species, turn_index=turn_index)
+            # ⚠️ 关键修复：子代只继承分配给它的地块（基于地理隔离分化）
+            # 如果没有分配地块，则继承全部（回退到旧行为）
+            assigned_tiles = ctx.get("assigned_tiles", set())
+            self._inherit_habitat_distribution(
+                parent=ctx["parent"], 
+                child=new_species, 
+                turn_index=turn_index,
+                assigned_tiles=assigned_tiles  # 【新增】只继承这些地块
+            )
             
             self._update_genetic_distances(new_species, ctx["parent"], turn_index)
             
@@ -497,6 +756,14 @@ class SpeciationService:
             biological_domain = payload.get('biological_domain', 'protist')
             organs_summary = payload.get('current_organs_summary', '无已记录的器官系统')
             
+            # 【新增】获取地块级信息
+            tile_context = payload.get('tile_context', '未知区域')
+            region_mortality = payload.get('region_mortality', 0.5)
+            region_pressure_level = payload.get('region_pressure_level', '中压')
+            mortality_gradient = payload.get('mortality_gradient', 0.0)
+            num_isolation_regions = payload.get('num_isolation_regions', 1)
+            is_geographic_isolation = payload.get('is_geographic_isolation', False)
+            
             species_info = f"""
 【物种 {idx + 1}】
 - request_id: {idx}
@@ -511,7 +778,12 @@ class SpeciationService:
 - 现有器官: {organs_summary[:100]}
 - 幸存者: {payload.get('survivors', 0):,}
 - 分化类型: {payload.get('speciation_type')}
-- 子代编号: 第{payload.get('offspring_index', 1)}个（共{payload.get('total_offspring', 1)}个）"""
+- 子代编号: 第{payload.get('offspring_index', 1)}个（共{payload.get('total_offspring', 1)}个）
+- 【地块背景】: {tile_context[:150]}
+- 区域死亡率: {region_mortality:.1%}（{region_pressure_level}）
+- 死亡率梯度: {mortality_gradient:.1%}
+- 隔离区域数: {num_isolation_regions}
+- 地理隔离: {'是' if is_geographic_isolation else '否'}"""
             species_list_parts.append(species_info)
         
         species_list = "\n".join(species_list_parts)
@@ -896,15 +1168,24 @@ class SpeciationService:
             taxonomic_rank="subspecies",
         )
     
-    def _inherit_habitat_distribution(self, parent: Species, child: Species, turn_index: int) -> None:
+    def _inherit_habitat_distribution(
+        self, 
+        parent: Species, 
+        child: Species, 
+        turn_index: int,
+        assigned_tiles: set[int] | None = None
+    ) -> None:
         """子代继承父代的栖息地分布
         
-        风险修复：如果父代没有栖息地，立即为子代计算初始栖息地
+        【核心改进】现在支持基于地块的分化：
+        - 如果指定了 assigned_tiles，子代只继承这些地块
+        - 如果未指定，则继承父代全部地块（旧行为）
         
         Args:
             parent: 父代物种
             child: 子代物种
             turn_index: 当前回合
+            assigned_tiles: 分配给该子代的地块集合（可选）
         """
         from ...repositories.environment_repository import environment_repository
         from ...models.environment import HabitatPopulation
@@ -916,16 +1197,22 @@ class SpeciationService:
         if not parent_habitats:
             logger.warning(f"[栖息地继承] 父代 {parent.common_name} 没有栖息地数据，立即为子代计算初始栖息地")
             # 【风险修复】立即计算子代的初始栖息地，而不是等待下次快照
-            self._calculate_initial_habitat_for_child(child, parent, turn_index)
+            self._calculate_initial_habitat_for_child(child, parent, turn_index, assigned_tiles)
             return
             
         if child.id is None:
             logger.error(f"[栖息地继承] 严重错误：子代 {child.common_name} 没有 ID，无法继承栖息地")
             return
         
-        # 子代继承父代的所有栖息地，保持相同的适宜度
+        # 【核心改进】根据 assigned_tiles 过滤要继承的地块
         child_habitats = []
+        inherited_count = 0
+        
         for parent_hab in parent_habitats:
+            # 如果指定了分配地块，只继承在分配范围内的地块
+            if assigned_tiles and parent_hab.tile_id not in assigned_tiles:
+                continue
+            
             child_habitats.append(
                 HabitatPopulation(
                     tile_id=parent_hab.tile_id,
@@ -935,20 +1222,53 @@ class SpeciationService:
                     turn_index=turn_index,
                 )
             )
+            inherited_count += 1
+        
+        # 如果分配了地块但一个都没继承到（可能父代不在这些地块），使用分配的地块
+        if assigned_tiles and not child_habitats:
+            logger.warning(
+                f"[栖息地继承] {child.common_name} 分配的地块与父代不重叠，"
+                f"将使用分配的地块: {assigned_tiles}"
+            )
+            for tile_id in assigned_tiles:
+                child_habitats.append(
+                    HabitatPopulation(
+                        tile_id=tile_id,
+                        species_id=child.id,
+                        population=0,
+                        suitability=0.5,  # 默认适宜度
+                        turn_index=turn_index,
+                    )
+                )
         
         if child_habitats:
             environment_repository.write_habitats(child_habitats)
-            logger.info(f"[栖息地继承] {child.common_name} 继承了 {len(child_habitats)} 个栖息地")
+            if assigned_tiles:
+                logger.info(
+                    f"[基于地块分化] {child.common_name} 继承了 {len(child_habitats)}/{len(parent_habitats)} 个地块 "
+                    f"(地理隔离分化)"
+                )
+            else:
+                logger.info(f"[栖息地继承] {child.common_name} 继承了 {len(child_habitats)} 个栖息地")
     
-    def _calculate_initial_habitat_for_child(self, child: Species, parent: Species, turn_index: int) -> None:
+    def _calculate_initial_habitat_for_child(
+        self, 
+        child: Species, 
+        parent: Species, 
+        turn_index: int,
+        assigned_tiles: set[int] | None = None
+    ) -> None:
         """为没有栖息地的子代计算初始栖息地分布
         
-        当父代没有栖息地数据时，基于子代的生态特征计算合适的栖息地
+        【核心改进】现在支持基于地块的分化：
+        - 如果指定了 assigned_tiles，只在这些地块中选择
+        - 如果未指定，则在所有合适地块中选择
         
         Args:
             child: 子代物种
             parent: 父代物种（用于参考）
             turn_index: 当前回合
+            assigned_tiles: 分配给该子代的地块集合（可选）
         """
         from ...repositories.environment_repository import environment_repository
         from ...models.environment import HabitatPopulation
@@ -960,6 +1280,16 @@ class SpeciationService:
         if not all_tiles:
             logger.error(f"[栖息地计算] 没有可用地块，无法为 {child.common_name} 计算栖息地")
             return
+        
+        # 【核心改进】如果指定了分配地块，只在这些地块中计算
+        if assigned_tiles:
+            all_tiles = [t for t in all_tiles if t.id in assigned_tiles]
+            if not all_tiles:
+                logger.warning(
+                    f"[栖息地计算] {child.common_name} 分配的地块在数据库中不存在，"
+                    f"使用全部地块"
+                )
+                all_tiles = environment_repository.list_tiles()
         
         # 2. 根据栖息地类型筛选地块
         habitat_type = getattr(child, 'habitat_type', 'terrestrial')
@@ -989,8 +1319,8 @@ class SpeciationService:
         
         if not suitable_tiles:
             logger.warning(f"[栖息地计算] {child.common_name} ({habitat_type}) 没有合适的地块")
-            # 回退：使用前10个地块
-            suitable_tiles = all_tiles[:10]
+            # 回退：使用分配的地块或前10个地块
+            suitable_tiles = all_tiles[:10] if all_tiles else []
         
         # 3. 计算适宜度
         tile_suitability = []
@@ -1003,9 +1333,10 @@ class SpeciationService:
             logger.warning(f"[栖息地计算] {child.common_name} 没有适宜度>0.1的地块，使用前10个")
             tile_suitability = [(tile, 0.5) for tile in suitable_tiles[:10]]
         
-        # 4. 选择top 10地块
+        # 4. 选择top 10地块（如果有分配限制，可能更少）
         tile_suitability.sort(key=lambda x: x[1], reverse=True)
-        top_tiles = tile_suitability[:10]
+        max_tiles = min(10, len(tile_suitability))
+        top_tiles = tile_suitability[:max_tiles]
         
         # 5. 归一化适宜度（总和=1.0）
         total_suitability = sum(s for _, s in top_tiles)
@@ -1028,7 +1359,13 @@ class SpeciationService:
         
         if child_habitats:
             environment_repository.write_habitats(child_habitats)
-            logger.info(f"[栖息地计算] {child.common_name} 计算得到 {len(child_habitats)} 个栖息地")
+            if assigned_tiles:
+                logger.info(
+                    f"[基于地块分化] {child.common_name} 在分配区域内计算得到 "
+                    f"{len(child_habitats)} 个栖息地"
+                )
+            else:
+                logger.info(f"[栖息地计算] {child.common_name} 计算得到 {len(child_habitats)} 个栖息地")
     
     def _calculate_suitability_for_species(self, species: Species, tile) -> float:
         """计算物种对地块的适宜度（简化版）"""
@@ -1052,6 +1389,283 @@ class SpeciationService:
         
         # 综合评分
         return max(0.0, temp_score * 0.4 + humidity_score * 0.3 + resource_score * 0.3)
+    
+    def _detect_geographic_isolation(self, lineage_code: str) -> dict:
+        """检测物种是否存在地理隔离
+        
+        【核心功能】基于地块死亡率差异判断是否存在地理隔离
+        
+        地理隔离判定条件：
+        1. 物种分布在多个不连通的地块群（物理隔离）
+        2. 或者不同地块的死亡率差异显著（生态隔离）
+        
+        Returns:
+            {
+                "is_isolated": bool,  # 是否存在隔离
+                "num_clusters": int,  # 隔离区域数量
+                "mortality_gradient": float,  # 死亡率梯度
+                "clusters": list[set[int]],  # 各区域的地块ID集合
+                "best_cluster": set[int],  # 最适宜分化的区域
+            }
+        """
+        tile_rates = self._tile_mortality_cache.get(lineage_code, {})
+        
+        if len(tile_rates) < 2:
+            return {
+                "is_isolated": False,
+                "num_clusters": 1,
+                "mortality_gradient": 0.0,
+                "clusters": [set(tile_rates.keys())],
+                "best_cluster": set(tile_rates.keys()),
+            }
+        
+        # 1. 计算死亡率梯度
+        rates = list(tile_rates.values())
+        mortality_gradient = max(rates) - min(rates)
+        
+        # 2. 基于连通性检测物理隔离
+        clusters = self._find_connected_clusters(set(tile_rates.keys()))
+        
+        # 3. 基于死亡率差异检测生态隔离
+        # 如果连通但死亡率差异大，也算隔离
+        ecological_isolation = mortality_gradient > 0.25
+        physical_isolation = len(clusters) >= 2
+        
+        is_isolated = physical_isolation or ecological_isolation
+        
+        # 4. 确定最佳分化区域（死亡率最低的地块群）
+        if clusters:
+            # 计算每个群的平均死亡率
+            cluster_avg_rates = []
+            for cluster in clusters:
+                avg_rate = sum(tile_rates.get(t, 0.5) for t in cluster) / len(cluster)
+                cluster_avg_rates.append((cluster, avg_rate))
+            
+            # 选择死亡率最低的群作为分化起源地
+            cluster_avg_rates.sort(key=lambda x: x[1])
+            best_cluster = cluster_avg_rates[0][0]
+        else:
+            best_cluster = set(tile_rates.keys())
+        
+        return {
+            "is_isolated": is_isolated,
+            "num_clusters": len(clusters),
+            "mortality_gradient": mortality_gradient,
+            "clusters": clusters,
+            "best_cluster": best_cluster,
+        }
+    
+    def _find_connected_clusters(self, tile_ids: set[int]) -> list[set[int]]:
+        """使用并查集找出连通的地块群
+        
+        Args:
+            tile_ids: 物种占据的地块ID集合
+            
+        Returns:
+            连通地块群列表
+        """
+        if not tile_ids:
+            return []
+        
+        if not self._tile_adjacency:
+            # 没有邻接信息，假设所有地块连通
+            return [tile_ids]
+        
+        # 并查集
+        parent = {t: t for t in tile_ids}
+        
+        def find(x):
+            if parent[x] != x:
+                parent[x] = find(parent[x])
+            return parent[x]
+        
+        def union(x, y):
+            px, py = find(x), find(y)
+            if px != py:
+                parent[px] = py
+        
+        # 合并相邻地块
+        for tile_id in tile_ids:
+            neighbors = self._tile_adjacency.get(tile_id, set())
+            for neighbor in neighbors:
+                if neighbor in tile_ids:
+                    union(tile_id, neighbor)
+        
+        # 收集各连通分量
+        clusters_map: dict[int, set[int]] = {}
+        for tile_id in tile_ids:
+            root = find(tile_id)
+            if root not in clusters_map:
+                clusters_map[root] = set()
+            clusters_map[root].add(tile_id)
+        
+        return list(clusters_map.values())
+    
+    def _allocate_tiles_from_clusters(
+        self,
+        clusters: list[set[int]],
+        candidate_tiles: set[int],
+        num_offspring: int
+    ) -> list[set[int]]:
+        """基于预计算的隔离区域为子代分配地块
+        
+        【核心功能】直接使用候选数据中的 clusters，无需重新计算
+        
+        Args:
+            clusters: 预计算的隔离区域列表
+            candidate_tiles: 候选地块集合
+            num_offspring: 子代数量
+            
+        Returns:
+            每个子代的地块ID集合列表
+        """
+        import random
+        
+        if not clusters:
+            # 没有隔离区域，将所有候选地块平均分配
+            if not candidate_tiles:
+                return [set() for _ in range(num_offspring)]
+            
+            tile_list = list(candidate_tiles)
+            random.shuffle(tile_list)
+            allocations = [set() for _ in range(num_offspring)]
+            for i, tile in enumerate(tile_list):
+                allocations[i % num_offspring].add(tile)
+            return allocations
+        
+        # 只保留候选地块中的区域
+        filtered_clusters = []
+        for cluster in clusters:
+            filtered = cluster & candidate_tiles
+            if filtered:
+                filtered_clusters.append(filtered)
+        
+        if not filtered_clusters:
+            # 过滤后没有区域，回退到候选地块平均分配
+            tile_list = list(candidate_tiles)
+            random.shuffle(tile_list)
+            allocations = [set() for _ in range(num_offspring)]
+            for i, tile in enumerate(tile_list):
+                allocations[i % num_offspring].add(tile)
+            return allocations
+        
+        # 按区域大小排序（大的优先）
+        filtered_clusters.sort(key=len, reverse=True)
+        
+        # 策略1：如果隔离区域数 >= 子代数，每个子代获得一个区域
+        if len(filtered_clusters) >= num_offspring:
+            random.shuffle(filtered_clusters)
+            return [filtered_clusters[i] for i in range(num_offspring)]
+        
+        # 策略2：隔离区域不足，需要分割大区域
+        allocations = [set() for _ in range(num_offspring)]
+        
+        # 先分配已有的区域
+        for i, cluster in enumerate(filtered_clusters):
+            if i < num_offspring:
+                allocations[i] = cluster
+        
+        # 从最大区域分割出额外的
+        remaining_slots = [i for i in range(num_offspring) if not allocations[i]]
+        if remaining_slots and allocations[0]:
+            largest = list(allocations[0])
+            random.shuffle(largest)
+            
+            split_size = max(1, len(largest) // (len(remaining_slots) + 1))
+            
+            for slot_idx in remaining_slots:
+                take = set(largest[:split_size])
+                largest = largest[split_size:]
+                allocations[slot_idx] = take
+            
+            # 更新最大区域
+            allocations[0] = set(largest)
+        
+        return allocations
+    
+    def _allocate_tiles_to_offspring(
+        self, 
+        parent_lineage_code: str,
+        num_offspring: int
+    ) -> list[set[int]]:
+        """为子代分配地块（旧方法，用于回退）
+        
+        【核心功能】实现基于地块的分化：
+        - 每个子代只获得部分地块
+        - 优先按地理隔离区域分配
+        - 如果没有隔离，则随机划分
+        
+        Args:
+            parent_lineage_code: 父代谱系编码
+            num_offspring: 子代数量
+            
+        Returns:
+            每个子代的地块ID集合列表
+        """
+        import random
+        
+        geo_data = self._detect_geographic_isolation(parent_lineage_code)
+        clusters = geo_data["clusters"]
+        
+        if not clusters:
+            return [set() for _ in range(num_offspring)]
+        
+        # 所有地块
+        all_tiles = set()
+        for cluster in clusters:
+            all_tiles.update(cluster)
+        
+        if len(all_tiles) < num_offspring:
+            # 地块太少，每个子代至少分一个
+            tile_list = list(all_tiles)
+            random.shuffle(tile_list)
+            allocations = [set() for _ in range(num_offspring)]
+            for i, tile in enumerate(tile_list):
+                allocations[i % num_offspring].add(tile)
+            return allocations
+        
+        # 策略1：如果存在物理隔离，按隔离区域分配
+        if len(clusters) >= num_offspring:
+            # 每个子代获得一个独立区域
+            random.shuffle(clusters)
+            allocations = [clusters[i] for i in range(num_offspring)]
+            return allocations
+        
+        # 策略2：如果隔离区域不足，在大区域内随机划分
+        if len(clusters) < num_offspring:
+            allocations = [set() for _ in range(num_offspring)]
+            
+            # 先分配已有的隔离区域
+            for i, cluster in enumerate(clusters):
+                if i < num_offspring:
+                    allocations[i] = cluster
+            
+            # 从最大区域中分割出额外的区域
+            largest_idx = max(range(len(allocations)), key=lambda i: len(allocations[i]))
+            largest_cluster = list(allocations[largest_idx])
+            
+            # 需要分割出的区域数量
+            need_more = num_offspring - len(clusters)
+            if need_more > 0 and len(largest_cluster) > 1:
+                random.shuffle(largest_cluster)
+                split_size = max(1, len(largest_cluster) // (need_more + 1))
+                
+                # 从最大区域中分割
+                remaining = set(largest_cluster)
+                for i in range(num_offspring):
+                    if not allocations[i]:  # 空的slot
+                        take = set(list(remaining)[:split_size])
+                        allocations[i] = take
+                        remaining -= take
+                        if not remaining:
+                            break
+                
+                # 更新最大区域
+                allocations[largest_idx] = remaining
+            
+            return allocations
+        
+        return [all_tiles.copy() for _ in range(num_offspring)]
     
     def _calculate_speciation_threshold(self, species: Species) -> int:
         """计算物种的分化门槛 - 基于多维度生态学指标。
@@ -1260,6 +1874,80 @@ class SpeciationService:
                 return f"{severity}级{desc}"
         
         return "重大环境事件"
+    
+    def _generate_tile_context(
+        self,
+        assigned_tiles: set[int],
+        tile_populations: dict[int, float],
+        tile_mortality: dict[int, float],
+        mortality_gradient: float,
+        is_isolated: bool,
+    ) -> str:
+        """生成地块级环境上下文描述
+        
+        用于传递给 AI，帮助其理解分化发生的地理背景
+        
+        Args:
+            assigned_tiles: 该子代分配的地块
+            tile_populations: 各地块种群分布
+            tile_mortality: 各地块死亡率
+            mortality_gradient: 死亡率梯度
+            is_isolated: 是否地理隔离
+            
+        Returns:
+            地块环境描述文本
+        """
+        if not assigned_tiles:
+            return "未知区域（全局分化）"
+        
+        num_tiles = len(assigned_tiles)
+        
+        # 计算区域统计
+        region_pop = sum(tile_populations.get(t, 0) for t in assigned_tiles)
+        region_rates = [tile_mortality.get(t, 0.5) for t in assigned_tiles if t in tile_mortality]
+        
+        if region_rates:
+            avg_rate = sum(region_rates) / len(region_rates)
+            max_rate = max(region_rates)
+            min_rate = min(region_rates)
+        else:
+            avg_rate, max_rate, min_rate = 0.5, 0.5, 0.5
+        
+        # 生成描述
+        parts = []
+        
+        # 区域规模
+        parts.append(f"分化发生于{num_tiles}个地块区域")
+        
+        # 种群信息
+        parts.append(f"区域种群{int(region_pop):,}")
+        
+        # 环境压力描述
+        if avg_rate > 0.5:
+            pressure_desc = "高环境压力"
+        elif avg_rate > 0.3:
+            pressure_desc = "中等环境压力"
+        else:
+            pressure_desc = "低环境压力"
+        parts.append(f"{pressure_desc}（平均死亡率{avg_rate:.1%}）")
+        
+        # 隔离状态
+        if is_isolated:
+            parts.append("与其他种群存在地理隔离")
+        
+        # 压力梯度
+        if mortality_gradient > 0.3:
+            parts.append(f"区域间存在显著的环境梯度（压力差异{mortality_gradient:.1%}）")
+        elif mortality_gradient > 0.15:
+            parts.append(f"区域间存在一定的环境差异")
+        
+        # 局部异质性
+        if len(region_rates) >= 2:
+            local_gradient = max_rate - min_rate
+            if local_gradient > 0.2:
+                parts.append("区域内部环境条件不均匀")
+        
+        return "。".join(parts)
     
     def _fallback_latin_name(self, parent_latin: str, ai_content: dict) -> str:
         """回退拉丁命名逻辑"""
@@ -2340,4 +3028,5 @@ class SpeciationService:
             valid_evolutions = valid_evolutions[:3]
         
         return True, valid_evolutions
+
 

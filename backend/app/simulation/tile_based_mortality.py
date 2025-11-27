@@ -1,0 +1,1248 @@
+"""基于地块的死亡率计算引擎
+
+【核心改进】
+每个地块独立计算物种死亡率，而不是全局统一计算。
+这更符合生态学现实：不同区域的物种面临不同的环境压力。
+
+【设计原理】
+1. 构建地块-物种种群矩阵 (num_tiles × num_species)
+2. 每个地块独立计算：
+   - 地块环境压力
+   - 地块内营养级互动
+   - 地块内生态位竞争
+3. 汇总各地块结果得到物种总体死亡率
+
+【性能优化】
+使用 NumPy 矩阵运算批量处理所有地块，避免逐个循环。
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Sequence
+
+import numpy as np
+
+from ..models.environment import HabitatPopulation, MapTile
+from ..models.species import Species
+from ..services.species.niche import NicheMetrics
+from ..core.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+# 获取配置
+_settings = get_settings()
+
+
+@dataclass(slots=True)
+class TileMortalityResult:
+    """单个地块上单个物种的死亡率结果"""
+    species: Species
+    tile_id: int
+    tile_population: float      # 该地块上的种群数量(按适宜度分配)
+    tile_death_rate: float      # 该地块的死亡率
+    tile_deaths: int            # 该地块的死亡数
+    tile_survivors: int         # 该地块的存活数
+    
+    # 分解因素
+    pressure_factor: float      # 环境压力因子
+    competition_factor: float   # 竞争因子
+    trophic_factor: float       # 营养级互动因子
+    resource_factor: float      # 资源因子
+
+
+@dataclass(slots=True) 
+class AggregatedMortalityResult:
+    """汇总后的物种死亡率结果（兼容原有 MortalityResult）"""
+    species: Species
+    initial_population: int
+    deaths: int
+    survivors: int
+    death_rate: float
+    notes: list[str]
+    niche_overlap: float
+    resource_pressure: float
+    is_background: bool
+    tier: str
+    grazing_pressure: float = 0.0
+    predation_pressure: float = 0.0
+    
+    # 新增：地块级别详情
+    tile_details: list[TileMortalityResult] | None = None
+
+
+class TileBasedMortalityEngine:
+    """基于地块的死亡率计算引擎
+    
+    【核心特性】
+    - 每个地块独立计算环境压力
+    - 地块内物种竞争（只有同地块的物种才真正竞争）
+    - 地块内营养级互动
+    - 矩阵化批量计算
+    
+    【性能】
+    使用稀疏矩阵表示种群分布，避免处理空白地块。
+    """
+    
+    def __init__(self, batch_limit: int = 50) -> None:
+        self.batch_limit = batch_limit
+        
+        # 缓存地块信息
+        self._tiles: list[MapTile] = []
+        self._tile_id_to_idx: dict[int, int] = {}
+        
+        # 缓存物种信息
+        self._species_id_to_idx: dict[int, int] = {}
+        self._species_list: list[Species] = []
+        
+        # 种群分布矩阵 (num_tiles × num_species)
+        self._population_matrix: np.ndarray | None = None
+        # 适宜度矩阵 (num_tiles × num_species)
+        self._suitability_matrix: np.ndarray | None = None
+        # 地块环境矩阵 (num_tiles × num_features)
+        self._tile_env_matrix: np.ndarray | None = None
+        
+        # 【新增】地块死亡率缓存（供其他服务使用）
+        self._last_mortality_matrix: np.ndarray | None = None
+        self._last_species_lineage_to_idx: dict[str, int] = {}
+        
+        # 【新增】地块邻接关系
+        self._tile_adjacency: dict[int, set[int]] = {}
+    
+    def build_matrices(
+        self,
+        species_list: Sequence[Species],
+        tiles: list[MapTile],
+        habitats: list[HabitatPopulation],
+    ) -> None:
+        """构建计算所需的矩阵
+        
+        Args:
+            species_list: 物种列表
+            tiles: 地块列表
+            habitats: 栖息地分布数据
+        """
+        self._species_list = list(species_list)
+        self._tiles = tiles
+        
+        n_species = len(species_list)
+        n_tiles = len(tiles)
+        
+        if n_species == 0 or n_tiles == 0:
+            logger.warning("物种或地块列表为空，跳过矩阵构建")
+            return
+        
+        # 构建索引映射
+        self._tile_id_to_idx = {tile.id: idx for idx, tile in enumerate(tiles) if tile.id is not None}
+        self._species_id_to_idx = {sp.id: idx for idx, sp in enumerate(species_list) if sp.id is not None}
+        
+        # 构建地块邻接关系（基于地块坐标）
+        self._build_tile_adjacency(tiles)
+        
+        # 初始化矩阵
+        self._population_matrix = np.zeros((n_tiles, n_species), dtype=np.float64)
+        self._suitability_matrix = np.zeros((n_tiles, n_species), dtype=np.float64)
+        
+        # 填充栖息地数据
+        for habitat in habitats:
+            tile_idx = self._tile_id_to_idx.get(habitat.tile_id)
+            species_idx = self._species_id_to_idx.get(habitat.species_id)
+            
+            if tile_idx is not None and species_idx is not None:
+                self._suitability_matrix[tile_idx, species_idx] = habitat.suitability
+        
+        # 根据适宜度分配种群到各地块
+        self._distribute_population()
+        
+        # 构建地块环境矩阵
+        self._build_tile_environment_matrix()
+        
+        logger.info(f"[地块死亡率] 矩阵构建完成: {n_tiles}地块 × {n_species}物种")
+    
+    def _distribute_population(self) -> None:
+        """根据适宜度将物种总种群分配到各地块
+        
+        分配公式：tile_pop = total_pop × (tile_suitability / sum_suitability)
+        """
+        if self._suitability_matrix is None or self._population_matrix is None:
+            return
+        
+        for sp_idx, species in enumerate(self._species_list):
+            total_pop = species.morphology_stats.get("population", 0) or 0
+            if total_pop <= 0:
+                continue
+            
+            # 获取该物种在所有地块的适宜度
+            suitability_col = self._suitability_matrix[:, sp_idx]
+            sum_suit = suitability_col.sum()
+            
+            if sum_suit > 0:
+                # 按适宜度比例分配种群
+                self._population_matrix[:, sp_idx] = total_pop * (suitability_col / sum_suit)
+            else:
+                # 没有栖息地数据，假设均匀分布在所有陆地/海洋地块
+                habitat_type = getattr(species, 'habitat_type', 'terrestrial')
+                suitable_mask = self._get_habitat_type_mask(habitat_type)
+                n_suitable = suitable_mask.sum()
+                if n_suitable > 0:
+                    self._population_matrix[suitable_mask, sp_idx] = total_pop / n_suitable
+    
+    def _get_habitat_type_mask(self, habitat_type: str) -> np.ndarray:
+        """获取适合某种栖息地类型的地块掩码"""
+        n_tiles = len(self._tiles)
+        mask = np.zeros(n_tiles, dtype=bool)
+        
+        for idx, tile in enumerate(self._tiles):
+            biome = tile.biome.lower()
+            
+            if habitat_type == "marine":
+                if "浅海" in biome or "中层" in biome or "海" in biome:
+                    mask[idx] = True
+            elif habitat_type == "deep_sea":
+                if "深海" in biome:
+                    mask[idx] = True
+            elif habitat_type == "coastal":
+                if "海岸" in biome or "浅海" in biome:
+                    mask[idx] = True
+            elif habitat_type in ("terrestrial", "amphibious", "aerial"):
+                if "海" not in biome:
+                    mask[idx] = True
+            else:
+                # 默认陆地
+                if "海" not in biome:
+                    mask[idx] = True
+        
+        return mask
+    
+    def _build_tile_adjacency(self, tiles: list[MapTile]) -> None:
+        """构建地块邻接关系
+        
+        基于地块的 row/col 坐标判断相邻（8邻域）
+        """
+        self._tile_adjacency = {}
+        
+        # 构建坐标到tile_id的映射
+        coord_to_tile: dict[tuple[int, int], int] = {}
+        for tile in tiles:
+            row = getattr(tile, 'row', None)
+            col = getattr(tile, 'col', None)
+            if row is not None and col is not None and tile.id is not None:
+                coord_to_tile[(row, col)] = tile.id
+        
+        # 8邻域偏移
+        neighbors_offset = [
+            (-1, -1), (-1, 0), (-1, 1),
+            (0, -1),           (0, 1),
+            (1, -1),  (1, 0),  (1, 1)
+        ]
+        
+        # 为每个地块找邻居
+        for tile in tiles:
+            if tile.id is None:
+                continue
+            
+            row = getattr(tile, 'row', None)
+            col = getattr(tile, 'col', None)
+            
+            if row is None or col is None:
+                # 没有坐标信息，假设孤立
+                self._tile_adjacency[tile.id] = set()
+                continue
+            
+            neighbors = set()
+            for dr, dc in neighbors_offset:
+                neighbor_coord = (row + dr, col + dc)
+                if neighbor_coord in coord_to_tile:
+                    neighbors.add(coord_to_tile[neighbor_coord])
+            
+            self._tile_adjacency[tile.id] = neighbors
+        
+        logger.debug(f"[地块邻接] 构建了 {len(self._tile_adjacency)} 个地块的邻接关系")
+    
+    def get_tile_adjacency(self) -> dict[int, set[int]]:
+        """获取地块邻接关系（供其他服务使用）"""
+        return self._tile_adjacency
+    
+    def get_species_tile_mortality(self, lineage_code: str) -> dict[int, float]:
+        """获取指定物种在各地块的死亡率
+        
+        Args:
+            lineage_code: 物种谱系编码
+            
+        Returns:
+            {tile_id: death_rate} 字典
+        """
+        if self._last_mortality_matrix is None:
+            return {}
+        
+        species_idx = self._last_species_lineage_to_idx.get(lineage_code)
+        if species_idx is None:
+            return {}
+        
+        result = {}
+        for tile_id, tile_idx in self._tile_id_to_idx.items():
+            death_rate = self._last_mortality_matrix[tile_idx, species_idx]
+            if death_rate > 0:  # 只返回有种群的地块
+                result[tile_id] = float(death_rate)
+        
+        return result
+    
+    def get_all_species_tile_mortality(self) -> dict[str, dict[int, float]]:
+        """获取所有物种在各地块的死亡率
+        
+        Returns:
+            {lineage_code: {tile_id: death_rate}} 嵌套字典
+        """
+        if self._last_mortality_matrix is None:
+            return {}
+        
+        result = {}
+        for lineage_code, species_idx in self._last_species_lineage_to_idx.items():
+            tile_rates = {}
+            for tile_id, tile_idx in self._tile_id_to_idx.items():
+                death_rate = self._last_mortality_matrix[tile_idx, species_idx]
+                if death_rate > 0:
+                    tile_rates[tile_id] = float(death_rate)
+            if tile_rates:
+                result[lineage_code] = tile_rates
+        
+        return result
+    
+    def get_species_tile_population(self, lineage_code: str) -> dict[int, float]:
+        """获取指定物种在各地块的种群分布
+        
+        Args:
+            lineage_code: 物种谱系编码
+            
+        Returns:
+            {tile_id: population} 字典
+        """
+        if self._population_matrix is None:
+            return {}
+        
+        species_idx = self._last_species_lineage_to_idx.get(lineage_code)
+        if species_idx is None:
+            return {}
+        
+        result = {}
+        for tile_id, tile_idx in self._tile_id_to_idx.items():
+            pop = self._population_matrix[tile_idx, species_idx]
+            if pop > 0:
+                result[tile_id] = float(pop)
+        
+        return result
+    
+    def get_all_species_tile_population(self) -> dict[str, dict[int, float]]:
+        """获取所有物种在各地块的种群分布
+        
+        Returns:
+            {lineage_code: {tile_id: population}} 嵌套字典
+        """
+        if self._population_matrix is None:
+            return {}
+        
+        result = {}
+        for lineage_code, species_idx in self._last_species_lineage_to_idx.items():
+            tile_pops = {}
+            for tile_id, tile_idx in self._tile_id_to_idx.items():
+                pop = self._population_matrix[tile_idx, species_idx]
+                if pop > 0:
+                    tile_pops[tile_id] = float(pop)
+            if tile_pops:
+                result[lineage_code] = tile_pops
+        
+        return result
+    
+    def get_speciation_candidates(
+        self, 
+        min_tile_population: int = 100,
+        mortality_threshold: tuple[float, float] = (0.03, 0.70),
+        min_mortality_gradient: float = 0.15,
+    ) -> dict[str, dict]:
+        """获取适合分化的物种及其候选地块
+        
+        【核心功能】基于地块级数据筛选分化候选：
+        - 在特定地块上种群达到阈值
+        - 地块死亡率在适宜范围内
+        - 存在地块间死亡率梯度（地理/生态隔离）
+        
+        Args:
+            min_tile_population: 地块最小种群门槛
+            mortality_threshold: 死亡率范围 (min, max)
+            min_mortality_gradient: 最小死亡率梯度（隔离判定）
+            
+        Returns:
+            {lineage_code: {
+                "candidate_tiles": set[int],  # 可分化的地块
+                "tile_populations": dict[int, float],  # 各地块种群
+                "tile_mortality": dict[int, float],  # 各地块死亡率
+                "mortality_gradient": float,  # 死亡率梯度
+                "is_isolated": bool,  # 是否存在隔离
+                "clusters": list[set[int]],  # 隔离区域
+            }}
+        """
+        if self._population_matrix is None or self._last_mortality_matrix is None:
+            return {}
+        
+        min_rate, max_rate = mortality_threshold
+        result = {}
+        
+        for lineage_code, species_idx in self._last_species_lineage_to_idx.items():
+            # 获取地块级数据
+            tile_pops = {}
+            tile_rates = {}
+            candidate_tiles = set()
+            
+            for tile_id, tile_idx in self._tile_id_to_idx.items():
+                pop = self._population_matrix[tile_idx, species_idx]
+                rate = self._last_mortality_matrix[tile_idx, species_idx]
+                
+                if pop > 0:
+                    tile_pops[tile_id] = float(pop)
+                    tile_rates[tile_id] = float(rate)
+                    
+                    # 检查是否为候选地块
+                    if pop >= min_tile_population and min_rate <= rate <= max_rate:
+                        candidate_tiles.add(tile_id)
+            
+            if not candidate_tiles:
+                continue
+            
+            # 计算死亡率梯度
+            if len(tile_rates) >= 2:
+                rates = list(tile_rates.values())
+                mortality_gradient = max(rates) - min(rates)
+            else:
+                mortality_gradient = 0.0
+            
+            # 检测隔离区域
+            clusters = self._find_population_clusters(set(tile_pops.keys()))
+            is_isolated = len(clusters) >= 2 or mortality_gradient >= min_mortality_gradient
+            
+            result[lineage_code] = {
+                "candidate_tiles": candidate_tiles,
+                "tile_populations": tile_pops,
+                "tile_mortality": tile_rates,
+                "mortality_gradient": mortality_gradient,
+                "is_isolated": is_isolated,
+                "clusters": clusters,
+                "total_candidate_population": sum(tile_pops.get(t, 0) for t in candidate_tiles),
+            }
+        
+        return result
+    
+    def _find_population_clusters(self, tile_ids: set[int]) -> list[set[int]]:
+        """使用并查集找出连通的地块群"""
+        if not tile_ids:
+            return []
+        
+        if not self._tile_adjacency:
+            return [tile_ids]
+        
+        parent = {t: t for t in tile_ids}
+        
+        def find(x):
+            if parent[x] != x:
+                parent[x] = find(parent[x])
+            return parent[x]
+        
+        def union(x, y):
+            px, py = find(x), find(y)
+            if px != py:
+                parent[px] = py
+        
+        for tile_id in tile_ids:
+            neighbors = self._tile_adjacency.get(tile_id, set())
+            for neighbor in neighbors:
+                if neighbor in tile_ids:
+                    union(tile_id, neighbor)
+        
+        clusters_map: dict[int, set[int]] = {}
+        for tile_id in tile_ids:
+            root = find(tile_id)
+            if root not in clusters_map:
+                clusters_map[root] = set()
+            clusters_map[root].add(tile_id)
+        
+        return list(clusters_map.values())
+    
+    def _build_tile_environment_matrix(self) -> None:
+        """构建地块环境特征矩阵
+        
+        特征包括：
+        - 温度 (0)
+        - 湿度 (1)
+        - 资源 (2)
+        - 海拔 (3)
+        - 盐度 (4)
+        """
+        n_tiles = len(self._tiles)
+        self._tile_env_matrix = np.zeros((n_tiles, 5), dtype=np.float64)
+        
+        for idx, tile in enumerate(self._tiles):
+            self._tile_env_matrix[idx, 0] = tile.temperature
+            self._tile_env_matrix[idx, 1] = tile.humidity
+            self._tile_env_matrix[idx, 2] = tile.resources
+            self._tile_env_matrix[idx, 3] = tile.elevation
+            self._tile_env_matrix[idx, 4] = getattr(tile, 'salinity', 35.0)
+    
+    def evaluate(
+        self,
+        species_batch: Sequence[Species],
+        pressure_modifiers: dict[str, float],
+        niche_metrics: dict[str, NicheMetrics],
+        tier: str,
+        trophic_interactions: dict[str, float] | None = None,
+        extinct_codes: set[str] | None = None,
+    ) -> list[AggregatedMortalityResult]:
+        """计算物种死亡率（按地块计算后汇总）
+        
+        Args:
+            species_batch: 物种列表
+            pressure_modifiers: 全局压力修饰符
+            niche_metrics: 生态位指标（全局）
+            tier: 物种层级
+            trophic_interactions: 营养级互动（全局）
+            extinct_codes: 已灭绝物种代码集合
+            
+        Returns:
+            汇总后的死亡率结果列表
+        """
+        if trophic_interactions is None:
+            trophic_interactions = {}
+        if extinct_codes is None:
+            extinct_codes = set()
+        
+        species_list = list(species_batch)
+        n = len(species_list)
+        
+        if n == 0:
+            return []
+        
+        if self._population_matrix is None or self._tile_env_matrix is None:
+            logger.warning("[地块死亡率] 矩阵未初始化，降级为全局计算")
+            return self._fallback_global_evaluate(
+                species_list, pressure_modifiers, niche_metrics, tier,
+                trophic_interactions, extinct_codes
+            )
+        
+        logger.debug(f"[地块死亡率] 按地块计算 {n} 个物种的死亡率 (tier={tier})")
+        
+        # ========== 阶段1: 提取物种属性为向量 ==========
+        species_arrays = self._extract_species_arrays(species_list, niche_metrics)
+        
+        # ========== 阶段2: 计算各地块的死亡率矩阵 ==========
+        # 死亡率矩阵 (num_tiles × num_species)
+        mortality_matrix = self._compute_tile_mortality_matrix(
+            species_list, species_arrays, pressure_modifiers, trophic_interactions
+        )
+        
+        # 【新增】保存死亡率矩阵供其他服务使用
+        self._last_mortality_matrix = mortality_matrix.copy()
+        self._last_species_lineage_to_idx = {
+            sp.lineage_code: i for i, sp in enumerate(species_list)
+        }
+        
+        # ========== 阶段3: 汇总各地块结果 ==========
+        results = self._aggregate_tile_results(
+            species_list, species_arrays, mortality_matrix, 
+            niche_metrics, tier, extinct_codes
+        )
+        
+        return results
+    
+    def _extract_species_arrays(
+        self,
+        species_list: list[Species],
+        niche_metrics: dict[str, NicheMetrics]
+    ) -> dict[str, np.ndarray]:
+        """批量提取物种属性为NumPy数组"""
+        n = len(species_list)
+        
+        arrays = {
+            'base_sensitivity': np.zeros(n),
+            'trophic_level': np.zeros(n),
+            'body_size': np.zeros(n),
+            'population': np.zeros(n, dtype=np.int64),
+            'generation_time': np.zeros(n),
+            'cold_resistance': np.zeros(n),
+            'heat_resistance': np.zeros(n),
+            'drought_resistance': np.zeros(n),
+            'salinity_resistance': np.zeros(n),
+            'overlap': np.zeros(n),
+            'saturation': np.zeros(n),
+            'is_protected': np.zeros(n, dtype=bool),
+            'protection_turns': np.zeros(n, dtype=np.int32),
+            'is_suppressed': np.zeros(n, dtype=bool),
+            'suppression_turns': np.zeros(n, dtype=np.int32),
+        }
+        
+        for i, sp in enumerate(species_list):
+            arrays['base_sensitivity'][i] = sp.hidden_traits.get("environment_sensitivity", 0.5)
+            arrays['trophic_level'][i] = sp.trophic_level
+            arrays['body_size'][i] = sp.morphology_stats.get("body_length_cm", 0.01)
+            arrays['population'][i] = int(sp.morphology_stats.get("population", 0) or 0)
+            arrays['generation_time'][i] = sp.morphology_stats.get("generation_time_days", 365)
+            
+            arrays['cold_resistance'][i] = sp.abstract_traits.get("耐寒性", 5) / 10.0
+            arrays['heat_resistance'][i] = sp.abstract_traits.get("耐热性", 5) / 10.0
+            arrays['drought_resistance'][i] = sp.abstract_traits.get("耐旱性", 5) / 10.0
+            arrays['salinity_resistance'][i] = sp.abstract_traits.get("耐盐性", 5) / 10.0
+            
+            metrics = niche_metrics.get(sp.lineage_code, NicheMetrics(overlap=0.0, saturation=0.0))
+            arrays['overlap'][i] = metrics.overlap
+            arrays['saturation'][i] = metrics.saturation
+            
+            arrays['is_protected'][i] = getattr(sp, 'is_protected', False) or False
+            arrays['protection_turns'][i] = getattr(sp, 'protection_turns', 0) or 0
+            arrays['is_suppressed'][i] = getattr(sp, 'is_suppressed', False) or False
+            arrays['suppression_turns'][i] = getattr(sp, 'suppression_turns', 0) or 0
+        
+        return arrays
+    
+    def _compute_tile_mortality_matrix(
+        self,
+        species_list: list[Species],
+        species_arrays: dict[str, np.ndarray],
+        pressure_modifiers: dict[str, float],
+        trophic_interactions: dict[str, float],
+    ) -> np.ndarray:
+        """计算每个地块上每个物种的死亡率
+        
+        Returns:
+            (num_tiles × num_species) 的死亡率矩阵
+        """
+        n_tiles = len(self._tiles)
+        n_species = len(species_list)
+        
+        # 初始化死亡率矩阵
+        mortality = np.zeros((n_tiles, n_species), dtype=np.float64)
+        
+        # ========== 1. 计算地块环境压力 ==========
+        # 环境压力因子 (num_tiles × num_species)
+        env_pressure = self._compute_tile_environment_pressure(
+            species_list, species_arrays, pressure_modifiers
+        )
+        
+        # ========== 2. 计算地块内竞争压力 ==========
+        # 竞争因子 (num_tiles × num_species)
+        competition_pressure = self._compute_tile_competition_pressure(
+            species_list, species_arrays
+        )
+        
+        # ========== 3. 计算地块内营养级互动 ==========
+        # 营养级因子 (num_tiles × num_species)
+        trophic_pressure = self._compute_tile_trophic_pressure(
+            species_list, species_arrays, trophic_interactions
+        )
+        
+        # ========== 4. 计算地块资源压力 ==========
+        # 资源因子 (num_tiles × num_species)
+        resource_pressure = self._compute_tile_resource_pressure(
+            species_list, species_arrays
+        )
+        
+        # ========== 5. 组合所有因子 ==========
+        # 复合存活率 = (1-环境) × (1-竞争) × (1-营养级) × (1-资源)
+        survival = (
+            (1.0 - np.minimum(0.8, env_pressure)) *
+            (1.0 - np.minimum(0.6, competition_pressure)) *
+            (1.0 - np.minimum(0.7, trophic_pressure)) *
+            (1.0 - np.minimum(0.65, resource_pressure))
+        )
+        
+        mortality = 1.0 - survival
+        
+        # ========== 6. 应用世代累积死亡率 ==========
+        if _settings.enable_generational_mortality:
+            mortality = self._apply_generational_mortality(species_arrays, mortality)
+        
+        # ========== 7. 边界约束 ==========
+        mortality = np.clip(mortality, 0.03, 0.98)
+        
+        return mortality
+    
+    def _compute_tile_environment_pressure(
+        self,
+        species_list: list[Species],
+        species_arrays: dict[str, np.ndarray],
+        pressure_modifiers: dict[str, float],
+    ) -> np.ndarray:
+        """计算每个地块对每个物种的环境压力
+        
+        考虑：
+        - 地块温度 vs 物种耐热/耐寒性
+        - 地块湿度 vs 物种耐旱性
+        - 全局压力修饰符
+        """
+        n_tiles = len(self._tiles)
+        n_species = len(species_list)
+        
+        # 初始化压力矩阵
+        pressure = np.zeros((n_tiles, n_species), dtype=np.float64)
+        
+        # 获取全局压力分数
+        pressure_score = sum(pressure_modifiers.values()) / max(len(pressure_modifiers), 1)
+        
+        # 地块温度 (n_tiles,)
+        tile_temps = self._tile_env_matrix[:, 0]
+        # 地块湿度 (n_tiles,)
+        tile_humidity = self._tile_env_matrix[:, 1]
+        
+        # 物种耐性 (n_species,)
+        cold_res = species_arrays['cold_resistance']
+        heat_res = species_arrays['heat_resistance']
+        drought_res = species_arrays['drought_resistance']
+        base_sens = species_arrays['base_sensitivity']
+        
+        # ========== 温度压力 ==========
+        # 广播计算：(n_tiles, 1) vs (1, n_species)
+        temp_deviation = np.abs(tile_temps[:, np.newaxis] - 15.0)  # 15°C 为最适温度
+        
+        # 高温地块 (>20°C)：检验耐热性
+        high_temp_mask = tile_temps[:, np.newaxis] > 20.0
+        # 低温地块 (<10°C)：检验耐寒性
+        low_temp_mask = tile_temps[:, np.newaxis] < 10.0
+        
+        # 温度压力 = 温度偏差 × (1 - 对应耐性)
+        temp_pressure = np.zeros((n_tiles, n_species))
+        temp_pressure = np.where(
+            high_temp_mask,
+            (temp_deviation / 30.0) * (1.0 - heat_res[np.newaxis, :]),
+            temp_pressure
+        )
+        temp_pressure = np.where(
+            low_temp_mask,
+            (temp_deviation / 30.0) * (1.0 - cold_res[np.newaxis, :]),
+            temp_pressure
+        )
+        
+        # ========== 干旱压力 ==========
+        # 低湿度地块增加干旱压力
+        drought_pressure = np.maximum(0, 0.5 - tile_humidity[:, np.newaxis]) * 2.0
+        drought_pressure *= (1.0 - drought_res[np.newaxis, :])
+        
+        # ========== 全局压力 ==========
+        global_pressure = (pressure_score / 25.0) * base_sens[np.newaxis, :]
+        
+        # 组合压力
+        pressure = temp_pressure * 0.3 + drought_pressure * 0.2 + global_pressure * 0.5
+        
+        return np.clip(pressure, 0.0, 1.0)
+    
+    def _compute_tile_competition_pressure(
+        self,
+        species_list: list[Species],
+        species_arrays: dict[str, np.ndarray],
+    ) -> np.ndarray:
+        """计算每个地块内的竞争压力（矩阵优化版）
+        
+        【核心改进】只有同一地块上的物种才会竞争
+        【性能优化】使用矩阵运算代替嵌套循环
+        """
+        n_tiles = len(self._tiles)
+        n_species = len(species_list)
+        
+        if self._population_matrix is None:
+            return np.zeros((n_tiles, n_species))
+        
+        # 营养级 (n_species,)
+        trophic_levels = species_arrays['trophic_level']
+        
+        # 预计算营养级差异矩阵 (n_species × n_species)
+        trophic_diff_matrix = np.abs(trophic_levels[:, np.newaxis] - trophic_levels[np.newaxis, :])
+        
+        # 竞争系数矩阵（基于营养级差异）
+        # 同营养级（差异<0.5）：0.3
+        # 相邻营养级（差异0.5-1.0）：0.15
+        # 远距离营养级（差异>=1.0）：0.05
+        comp_coef_matrix = np.where(
+            trophic_diff_matrix < 0.5, 0.3,
+            np.where(trophic_diff_matrix < 1.0, 0.15, 0.05)
+        )
+        
+        # 对角线设为0（自己不与自己竞争）
+        np.fill_diagonal(comp_coef_matrix, 0.0)
+        
+        # 竞争压力矩阵 (n_tiles × n_species)
+        competition = np.zeros((n_tiles, n_species), dtype=np.float64)
+        
+        # 对每个地块批量计算
+        for tile_idx in range(n_tiles):
+            tile_pop = self._population_matrix[tile_idx, :]  # (n_species,)
+            
+            # 获取有种群的物种掩码
+            present_mask = tile_pop > 0
+            n_present = present_mask.sum()
+            
+            if n_present <= 1:
+                continue
+            
+            # 种群比例矩阵 (n_species × n_species)
+            # pop_ratio[i, j] = pop[j] / pop[i]
+            safe_pop = np.maximum(tile_pop, 1)  # 避免除零
+            pop_ratio = tile_pop[np.newaxis, :] / safe_pop[:, np.newaxis]  # (n_species × n_species)
+            
+            # 竞争强度 = 竞争系数 × 种群比例
+            comp_strength = comp_coef_matrix * pop_ratio  # (n_species × n_species)
+            
+            # 限制单个竞争者的贡献
+            comp_strength = np.minimum(comp_strength, 0.2)
+            
+            # 只考虑在场物种之间的竞争
+            # 掩码矩阵：只有双方都在场时才计算竞争
+            present_matrix = present_mask[:, np.newaxis] & present_mask[np.newaxis, :]
+            comp_strength = np.where(present_matrix, comp_strength, 0.0)
+            
+            # 对每个物种汇总竞争压力（按行求和）
+            total_competition = comp_strength.sum(axis=1)  # (n_species,)
+            
+            # 限制总竞争上限
+            competition[tile_idx, :] = np.minimum(total_competition, 0.6)
+        
+        return competition
+    
+    def _compute_tile_trophic_pressure(
+        self,
+        species_list: list[Species],
+        species_arrays: dict[str, np.ndarray],
+        trophic_interactions: dict[str, float],
+    ) -> np.ndarray:
+        """计算每个地块内的营养级互动压力（矩阵优化版）
+        
+        【核心改进】每个地块独立计算营养级生物量比例
+        【性能优化】使用矩阵运算预计算生物量
+        """
+        n_tiles = len(self._tiles)
+        n_species = len(species_list)
+        
+        if self._population_matrix is None:
+            return np.zeros((n_tiles, n_species))
+        
+        trophic_pressure = np.zeros((n_tiles, n_species), dtype=np.float64)
+        trophic_levels = species_arrays['trophic_level']
+        int_trophic = trophic_levels.astype(int)  # 取整的营养级
+        
+        # 预计算每个物种的体重
+        weights = np.array([
+            sp.morphology_stats.get("body_weight_g", 1.0) 
+            for sp in self._species_list
+        ])
+        
+        # 计算每个地块上每个物种的生物量 (n_tiles × n_species)
+        biomass_matrix = self._population_matrix * weights[np.newaxis, :]
+        
+        # 为每个营养级创建掩码
+        level_masks = {}
+        for level in range(1, 6):
+            level_masks[level] = (int_trophic == level)
+        
+        # 计算每个地块各营养级的总生物量 (n_tiles × 5)
+        # biomass_by_level[tile_idx, level-1] = 该地块该营养级的总生物量
+        biomass_by_level = np.zeros((n_tiles, 5), dtype=np.float64)
+        for level in range(1, 6):
+            mask = level_masks[level]
+            biomass_by_level[:, level - 1] = biomass_matrix[:, mask].sum(axis=1)
+        
+        EFFICIENCY = 0.12
+        MIN_BIOMASS = 1e-6
+        
+        # 批量计算各种压力
+        t1, t2, t3, t4, t5 = [biomass_by_level[:, i] for i in range(5)]
+        
+        # === T1 受 T2 采食 ===
+        req_t1 = np.where(t2 > 0, t2 / EFFICIENCY, 0)
+        grazing_ratio = np.where(t1 > MIN_BIOMASS, req_t1 / t1, 0)
+        grazing = np.minimum(grazing_ratio * 0.5, 0.8)
+        scarcity_t2 = np.where(t1 > MIN_BIOMASS, 
+                               np.clip(grazing_ratio - 1.0, 0, 2.0),
+                               np.where(t2 > 0, 2.0, 0.0))
+        
+        # === T2 受 T3 捕食 ===
+        req_t2 = np.where(t3 > 0, t3 / EFFICIENCY, 0)
+        ratio_t2 = np.where(t2 > MIN_BIOMASS, req_t2 / t2, 0)
+        pred_t3 = np.minimum(ratio_t2 * 0.5, 0.8)
+        scarcity_t3 = np.where(t2 > MIN_BIOMASS,
+                               np.clip(ratio_t2 - 1.0, 0, 2.0),
+                               np.where(t3 > 0, 2.0, 0.0))
+        
+        # === T3 受 T4 捕食 ===
+        req_t3 = np.where(t4 > 0, t4 / EFFICIENCY, 0)
+        ratio_t3 = np.where(t3 > MIN_BIOMASS, req_t3 / t3, 0)
+        pred_t4 = np.minimum(ratio_t3 * 0.5, 0.8)
+        scarcity_t4 = np.where(t3 > MIN_BIOMASS,
+                               np.clip(ratio_t3 - 1.0, 0, 2.0),
+                               np.where(t4 > 0, 2.0, 0.0))
+        
+        # === T4 受 T5 捕食 ===
+        req_t4 = np.where(t5 > 0, t5 / EFFICIENCY, 0)
+        ratio_t4 = np.where(t4 > MIN_BIOMASS, req_t4 / t4, 0)
+        pred_t5 = np.minimum(ratio_t4 * 0.5, 0.8)
+        scarcity_t5 = np.where(t4 > MIN_BIOMASS,
+                               np.clip(ratio_t4 - 1.0, 0, 2.0),
+                               np.where(t5 > 0, 2.0, 0.0))
+        
+        # 将压力分配到各物种
+        for sp_idx in range(n_species):
+            t_level = int_trophic[sp_idx]
+            
+            if t_level == 1:
+                trophic_pressure[:, sp_idx] = grazing
+            elif t_level == 2:
+                trophic_pressure[:, sp_idx] = np.maximum(pred_t3, scarcity_t2 * 0.3)
+            elif t_level == 3:
+                trophic_pressure[:, sp_idx] = np.maximum(pred_t4, scarcity_t3 * 0.3)
+            elif t_level == 4:
+                trophic_pressure[:, sp_idx] = np.maximum(pred_t5, scarcity_t4 * 0.3)
+            elif t_level >= 5:
+                trophic_pressure[:, sp_idx] = scarcity_t5 * 0.3
+        
+        # 只保留有种群的地块的压力
+        trophic_pressure = np.where(self._population_matrix > 0, trophic_pressure, 0)
+        
+        return trophic_pressure
+    
+    def _compute_trophic_pressures_for_tile(
+        self, 
+        biomass_by_level: dict[int, float]
+    ) -> dict[str, float]:
+        """计算单个地块的营养级压力"""
+        EFFICIENCY = 0.12
+        MIN_BIOMASS = 1e-6
+        
+        t1 = biomass_by_level.get(1, 0.0)
+        t2 = biomass_by_level.get(2, 0.0)
+        t3 = biomass_by_level.get(3, 0.0)
+        t4 = biomass_by_level.get(4, 0.0)
+        t5 = biomass_by_level.get(5, 0.0)
+        
+        result = {}
+        
+        # T1 受 T2 采食
+        if t1 > MIN_BIOMASS:
+            req_t1 = t2 / EFFICIENCY if t2 > 0 else 0
+            grazing_ratio = req_t1 / t1
+            result["grazing"] = min(grazing_ratio * 0.5, 0.8)
+            result["scarcity_t2"] = max(0.0, min(2.0, grazing_ratio - 1.0))
+        elif t2 > 0:
+            result["scarcity_t2"] = 2.0
+        
+        # T2 受 T3 捕食
+        if t2 > MIN_BIOMASS:
+            req_t2 = t3 / EFFICIENCY if t3 > 0 else 0
+            ratio = req_t2 / t2
+            result["pred_t3"] = min(ratio * 0.5, 0.8)
+            result["scarcity_t3"] = max(0.0, min(2.0, ratio - 1.0))
+        elif t3 > 0:
+            result["scarcity_t3"] = 2.0
+        
+        # T3 受 T4 捕食
+        if t3 > MIN_BIOMASS:
+            req_t3 = t4 / EFFICIENCY if t4 > 0 else 0
+            ratio = req_t3 / t3
+            result["pred_t4"] = min(ratio * 0.5, 0.8)
+            result["scarcity_t4"] = max(0.0, min(2.0, ratio - 1.0))
+        elif t4 > 0:
+            result["scarcity_t4"] = 2.0
+        
+        # T4 受 T5 捕食
+        if t4 > MIN_BIOMASS:
+            req_t4 = t5 / EFFICIENCY if t5 > 0 else 0
+            ratio = req_t4 / t4
+            result["pred_t5"] = min(ratio * 0.5, 0.8)
+            result["scarcity_t5"] = max(0.0, min(2.0, ratio - 1.0))
+        elif t5 > 0:
+            result["scarcity_t5"] = 2.0
+        
+        return result
+    
+    def _compute_tile_resource_pressure(
+        self,
+        species_list: list[Species],
+        species_arrays: dict[str, np.ndarray],
+    ) -> np.ndarray:
+        """计算每个地块的资源压力（矩阵优化版）
+        
+        考虑地块资源量 vs 该地块物种总需求
+        """
+        n_tiles = len(self._tiles)
+        n_species = len(species_list)
+        
+        if self._population_matrix is None or self._tile_env_matrix is None:
+            return np.zeros((n_tiles, n_species))
+        
+        # 预计算物种属性向量
+        weights = np.array([
+            sp.morphology_stats.get("body_weight_g", 1.0) 
+            for sp in species_list
+        ])
+        metabolics = np.array([
+            sp.morphology_stats.get("metabolic_rate", 3.0) 
+            for sp in species_list
+        ])
+        
+        # 需求系数 = 体重 × (代谢率 / 10)
+        demand_coef = weights * (metabolics / 10.0)  # (n_species,)
+        
+        # 每个地块每个物种的需求 (n_tiles × n_species)
+        demand_matrix = self._population_matrix * demand_coef[np.newaxis, :]
+        
+        # 每个地块的总需求 (n_tiles,)
+        total_demand_per_tile = demand_matrix.sum(axis=1)
+        
+        # 地块资源 (n_tiles,)
+        tile_resources = self._tile_env_matrix[:, 2]
+        
+        # 供给能力 (n_tiles,)
+        supply_capacity = tile_resources * 1000
+        
+        # 短缺比例 (n_tiles,)
+        # shortage = max(0, (demand - supply) / demand)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            shortage_ratio = np.maximum(0.0, (total_demand_per_tile - supply_capacity) / total_demand_per_tile)
+            shortage_ratio = np.nan_to_num(shortage_ratio, 0.0)
+        
+        # 每个物种的需求占比 (n_tiles × n_species)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            demand_ratio = demand_matrix / total_demand_per_tile[:, np.newaxis]
+            demand_ratio = np.nan_to_num(demand_ratio, 0.0)
+        
+        # 资源压力 = 短缺比例 × min(需求占比 × 2, 1.0)
+        resource_pressure = shortage_ratio[:, np.newaxis] * np.minimum(demand_ratio * 2.0, 1.0)
+        
+        # 只保留有种群的地块的压力
+        resource_pressure = np.where(self._population_matrix > 0, resource_pressure, 0.0)
+        
+        return np.clip(resource_pressure, 0.0, 0.65)
+    
+    def _apply_generational_mortality(
+        self,
+        species_arrays: dict[str, np.ndarray],
+        mortality: np.ndarray,
+    ) -> np.ndarray:
+        """应用世代累积死亡率（矩阵优化版）
+        
+        短世代物种（如微生物）的累积效应
+        """
+        n_tiles, n_species = mortality.shape
+        
+        generation_time = species_arrays['generation_time']
+        body_size = species_arrays['body_size']
+        population = species_arrays['population']
+        
+        # 每个物种的世代数 (n_species,)
+        num_generations = (_settings.turn_years * 365) / np.maximum(1.0, generation_time)
+        
+        # 体型抗性 (n_species,)
+        size_resistance = np.ones(n_species) * 0.1
+        size_resistance = np.where(body_size < 10.0, 0.3, size_resistance)
+        size_resistance = np.where(body_size < 1.0, 0.5, size_resistance)
+        size_resistance = np.where(body_size < 0.1, 0.7, size_resistance)
+        
+        # 繁殖策略抗性 (n_species,)
+        repro_resistance = np.ones(n_species) * 0.1
+        repro_resistance = np.where(population > 100_000, 0.2, repro_resistance)
+        repro_resistance = np.where(population > 500_000, 0.3, repro_resistance)
+        
+        # 抗性因子 (n_species,)
+        resistance_factor = (1.0 - size_resistance * 0.6) * (1.0 - repro_resistance * 0.5)
+        
+        # 广播到矩阵形状
+        n_gen_matrix = num_generations[np.newaxis, :]  # (1, n_species)
+        resistance_matrix = resistance_factor[np.newaxis, :]  # (1, n_species)
+        
+        # 每代风险 (n_tiles × n_species)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            per_gen_risk = mortality / n_gen_matrix
+            per_gen_risk = np.nan_to_num(per_gen_risk, 0.0)
+        
+        # 每代存活率 (n_tiles × n_species)
+        per_gen_survival = np.clip(1.0 - per_gen_risk, 0.0, 1.0)
+        
+        # 累积存活率 = survival ^ n_generations
+        # 使用对数计算避免数值溢出
+        with np.errstate(divide='ignore', invalid='ignore'):
+            log_survival = np.log(np.maximum(per_gen_survival, 1e-300))
+            cumulative_log = n_gen_matrix * log_survival
+            cumulative_log = np.maximum(cumulative_log, -700)  # 防止下溢
+            cumulative_survival = np.exp(cumulative_log)
+            cumulative_survival = np.nan_to_num(cumulative_survival, 0.0)
+        
+        # 边界处理：存活率为0或1的特殊情况
+        cumulative_survival = np.where(per_gen_survival <= 0, 0.0, cumulative_survival)
+        cumulative_survival = np.where(per_gen_survival >= 1.0, 1.0, cumulative_survival)
+        
+        # 累积死亡率 (n_tiles × n_species)
+        cumulative_mortality = 1.0 - cumulative_survival
+        
+        # 应用抗性因子
+        adjusted_mortality = cumulative_mortality * resistance_matrix
+        
+        # 只对多世代物种应用调整（n_gen > 1 且 base_risk > 0）
+        apply_mask = (n_gen_matrix > 1) & (mortality > 0)
+        mortality = np.where(apply_mask, adjusted_mortality, mortality)
+        
+        return np.clip(mortality, 0.0, 0.98)
+    
+    def _aggregate_tile_results(
+        self,
+        species_list: list[Species],
+        species_arrays: dict[str, np.ndarray],
+        mortality_matrix: np.ndarray,
+        niche_metrics: dict[str, NicheMetrics],
+        tier: str,
+        extinct_codes: set[str],
+    ) -> list[AggregatedMortalityResult]:
+        """汇总各地块结果，计算物种总体死亡率
+        
+        汇总方式：按种群加权平均
+        total_death_rate = Σ(tile_pop × tile_death_rate) / total_pop
+        """
+        n_species = len(species_list)
+        results: list[AggregatedMortalityResult] = []
+        
+        for sp_idx, species in enumerate(species_list):
+            total_pop = int(species_arrays['population'][sp_idx])
+            
+            if total_pop <= 0:
+                # 种群为0，死亡率100%
+                results.append(AggregatedMortalityResult(
+                    species=species,
+                    initial_population=0,
+                    deaths=0,
+                    survivors=0,
+                    death_rate=1.0,
+                    notes=["种群已归零"],
+                    niche_overlap=species_arrays['overlap'][sp_idx],
+                    resource_pressure=species_arrays['saturation'][sp_idx],
+                    is_background=species.is_background,
+                    tier=tier,
+                ))
+                continue
+            
+            # 获取该物种在各地块的种群分布
+            if self._population_matrix is not None:
+                tile_pops = self._population_matrix[:, sp_idx]
+            else:
+                tile_pops = np.array([total_pop])
+            
+            # 获取各地块死亡率
+            tile_deaths = mortality_matrix[:, sp_idx]
+            
+            # 加权平均死亡率
+            if tile_pops.sum() > 0:
+                weighted_death_rate = (tile_pops * tile_deaths).sum() / tile_pops.sum()
+            else:
+                weighted_death_rate = tile_deaths.mean()
+            
+            # 应用干预修正
+            if species_arrays['is_protected'][sp_idx] and species_arrays['protection_turns'][sp_idx] > 0:
+                weighted_death_rate *= 0.5
+            if species_arrays['is_suppressed'][sp_idx] and species_arrays['suppression_turns'][sp_idx] > 0:
+                weighted_death_rate = min(0.95, weighted_death_rate + 0.30)
+            
+            # 边界约束
+            weighted_death_rate = min(0.98, max(0.03, weighted_death_rate))
+            
+            # 计算死亡和存活数
+            deaths = int(total_pop * weighted_death_rate)
+            survivors = max(0, total_pop - deaths)
+            
+            # 生成分析文本
+            notes = [self._generate_mortality_notes(
+                species, weighted_death_rate, species_arrays, sp_idx
+            )]
+            
+            if weighted_death_rate > 0.5:
+                logger.info(f"[高死亡率警告] {species.common_name}: {weighted_death_rate:.1%}")
+            
+            results.append(AggregatedMortalityResult(
+                species=species,
+                initial_population=total_pop,
+                deaths=deaths,
+                survivors=survivors,
+                death_rate=weighted_death_rate,
+                notes=notes,
+                niche_overlap=species_arrays['overlap'][sp_idx],
+                resource_pressure=species_arrays['saturation'][sp_idx],
+                is_background=species.is_background,
+                tier=tier,
+            ))
+        
+        return results
+    
+    def _generate_mortality_notes(
+        self,
+        species: Species,
+        death_rate: float,
+        species_arrays: dict[str, np.ndarray],
+        sp_idx: int,
+    ) -> str:
+        """生成死亡率分析文本"""
+        analysis_parts = []
+        
+        if species_arrays['overlap'][sp_idx] > 0.3:
+            analysis_parts.append(f"生态位竞争明显(重叠度{species_arrays['overlap'][sp_idx]:.2f})")
+        if species_arrays['saturation'][sp_idx] > 1.0:
+            analysis_parts.append(f"种群饱和(S={species_arrays['saturation'][sp_idx]:.2f})")
+        
+        body_size = species_arrays['body_size'][sp_idx]
+        if body_size < 0.01:
+            analysis_parts.append("体型极小，对环境变化敏感")
+        elif body_size > 100:
+            analysis_parts.append("体型巨大，具有一定抗压能力")
+        
+        if analysis_parts:
+            return f"{species.common_name}本回合死亡率{death_rate:.1%}（按地块加权）：" + "；".join(analysis_parts) + "。"
+        else:
+            return f"{species.common_name}死亡率{death_rate:.1%}（按地块加权），种群状况稳定。"
+    
+    def _fallback_global_evaluate(
+        self,
+        species_list: list[Species],
+        pressure_modifiers: dict[str, float],
+        niche_metrics: dict[str, NicheMetrics],
+        tier: str,
+        trophic_interactions: dict[str, float],
+        extinct_codes: set[str],
+    ) -> list[AggregatedMortalityResult]:
+        """降级处理：使用全局计算（兼容原有逻辑）"""
+        logger.warning("[地块死亡率] 降级为全局计算模式")
+        
+        # 使用简化的全局计算
+        results: list[AggregatedMortalityResult] = []
+        
+        pressure_score = sum(pressure_modifiers.values()) / max(len(pressure_modifiers), 1)
+        
+        for species in species_list:
+            population = int(species.morphology_stats.get("population", 0) or 0)
+            env_sensitivity = species.hidden_traits.get("environment_sensitivity", 0.5)
+            
+            metrics = niche_metrics.get(species.lineage_code, NicheMetrics(overlap=0.0, saturation=0.0))
+            
+            # 简化的死亡率计算
+            base_mortality = (pressure_score / 25.0) * env_sensitivity
+            overlap_penalty = metrics.overlap * 0.3
+            saturation_penalty = min(0.3, metrics.saturation * 0.1)
+            
+            death_rate = min(0.98, max(0.03, base_mortality + overlap_penalty + saturation_penalty))
+            
+            deaths = int(population * death_rate)
+            survivors = max(0, population - deaths)
+            
+            results.append(AggregatedMortalityResult(
+                species=species,
+                initial_population=population,
+                deaths=deaths,
+                survivors=survivors,
+                death_rate=death_rate,
+                notes=[f"{species.common_name}死亡率{death_rate:.1%}（全局模式）"],
+                niche_overlap=metrics.overlap,
+                resource_pressure=metrics.saturation,
+                is_background=species.is_background,
+                tier=tier,
+            ))
+        
+        return results
+

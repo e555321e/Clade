@@ -49,6 +49,7 @@ from ..services.species.speciation import SpeciationService
 from ..services.species.tiering import SpeciesTieringService
 from .environment import EnvironmentSystem
 from .species import MortalityEngine, MortalityResult
+from .tile_based_mortality import TileBasedMortalityEngine, AggregatedMortalityResult
 
 
 @dataclass(slots=True)
@@ -100,9 +101,11 @@ class SimulationEngine:
         self.adaptation_service = adaptation_service
         self.gene_flow_service = gene_flow_service
         self.gene_activation_service = GeneActivationService()
+        self.tile_mortality = TileBasedMortalityEngine()  # 新增：按地块计算死亡率
         self.turn_counter = 0
         self.watchlist: set[str] = set()
         self._event_callback = None  # 事件回调函数
+        self._use_tile_based_mortality = True  # 是否使用按地块计算的死亡率
     
     def _emit_event(self, event_type: str, message: str, category: str = "其他", **extra):
         """发送事件到前端"""
@@ -321,6 +324,10 @@ class SimulationEngine:
             self._emit_event("turn_start", f"📅 开始第 {self.turn_counter} 回合", "系统")
             
             try:
+                # ========== 【回合初始化】清理各服务缓存 ==========
+                self.speciation.clear_tile_cache()
+                self.migration_advisor.clear_tile_mortality_cache()
+                
                 temp_delta_for_habitats = 0.0
                 sea_delta_for_habitats = 0.0
                 # 1. 解析压力
@@ -412,6 +419,7 @@ class SimulationEngine:
                 logger.info(f"生态位分析（迁徙前）...")
                 # 获取栖息地数据用于地块重叠计算
                 all_habitats = environment_repository.latest_habitats()
+                all_tiles = environment_repository.list_tiles()
                 niche_metrics = self.niche_analyzer.analyze(species_batch, habitat_data=all_habitats)
                 
                 # ========== 【方案B：第一阶段】初步死亡率评估（用于迁徙决策） ==========
@@ -421,21 +429,57 @@ class SimulationEngine:
                 trophic_interactions = self._calculate_trophic_interactions(species_batch)
                 
                 logger.info(f"【阶段1】计算初步死亡率（迁徙前）...")
-                preliminary_critical_results = self.mortality.evaluate(
-                    tiered.critical, modifiers, niche_metrics, tier="critical", 
-                    trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
-                )
-                preliminary_focus_results = self.mortality.evaluate(
-                    tiered.focus, modifiers, niche_metrics, tier="focus", 
-                    trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
-                )
-                preliminary_background_results = self.mortality.evaluate(
-                    tiered.background, modifiers, niche_metrics, tier="background", 
-                    trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
-                )
+                
+                # 【新增】使用按地块计算的死亡率引擎
+                if self._use_tile_based_mortality and all_tiles:
+                    logger.info(f"[地块死亡率] 构建地块-物种矩阵...")
+                    self._emit_event("info", "🗺️ 使用按地块计算死亡率", "生态")
+                    
+                    # 构建矩阵（只需构建一次）
+                    self.tile_mortality.build_matrices(species_batch, all_tiles, all_habitats)
+                    
+                    # 使用新引擎计算死亡率
+                    preliminary_critical_results = self.tile_mortality.evaluate(
+                        tiered.critical, modifiers, niche_metrics, tier="critical", 
+                        trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
+                    )
+                    preliminary_focus_results = self.tile_mortality.evaluate(
+                        tiered.focus, modifiers, niche_metrics, tier="focus", 
+                        trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
+                    )
+                    preliminary_background_results = self.tile_mortality.evaluate(
+                        tiered.background, modifiers, niche_metrics, tier="background", 
+                        trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
+                    )
+                else:
+                    # 降级：使用原有全局计算
+                    preliminary_critical_results = self.mortality.evaluate(
+                        tiered.critical, modifiers, niche_metrics, tier="critical", 
+                        trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
+                    )
+                    preliminary_focus_results = self.mortality.evaluate(
+                        tiered.focus, modifiers, niche_metrics, tier="focus", 
+                        trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
+                    )
+                    preliminary_background_results = self.mortality.evaluate(
+                        tiered.background, modifiers, niche_metrics, tier="background", 
+                        trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
+                    )
                 
                 preliminary_combined = preliminary_critical_results + preliminary_focus_results + preliminary_background_results
                 logger.info(f"【阶段1】初步死亡率计算完成，用于迁徙决策")
+                
+                # ========== 【数据传递】将地块级死亡率传递给迁徙服务 ==========
+                if self._use_tile_based_mortality and all_tiles:
+                    # 清空旧缓存
+                    self.migration_advisor.clear_tile_mortality_cache()
+                    
+                    # 传递地块死亡率数据
+                    tile_mortality_data = self.tile_mortality.get_all_species_tile_mortality()
+                    for lineage_code, tile_rates in tile_mortality_data.items():
+                        self.migration_advisor.set_tile_mortality_data(lineage_code, tile_rates)
+                    
+                    logger.debug(f"[数据传递] 向迁徙服务传递了 {len(tile_mortality_data)} 个物种的地块死亡率数据")
                 
                 # ========== 【方案B：第二阶段】迁徙执行 ==========
                 # 6. 迁徙建议与执行（基于初步死亡率）
@@ -483,20 +527,74 @@ class SimulationEngine:
                 
                 # 注意：营养级互动不重新计算（物种食性不会因迁徙而改变）
                 # 只重新计算死亡率（因为栖息地环境变了）
-                critical_results = self.mortality.evaluate(
-                    tiered.critical, modifiers, niche_metrics, tier="critical", 
-                    trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
-                )
-                focus_results = self.mortality.evaluate(
-                    tiered.focus, modifiers, niche_metrics, tier="focus", 
-                    trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
-                )
-                background_results = self.mortality.evaluate(
-                    tiered.background, modifiers, niche_metrics, tier="background", 
-                    trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
-                )
+                
+                # 【新增】迁徙后需要重新构建矩阵
+                if self._use_tile_based_mortality and all_tiles:
+                    if migration_count > 0:
+                        # 迁徙后需要重新获取栖息地数据并重建矩阵
+                        all_habitats = environment_repository.latest_habitats()
+                        self.tile_mortality.build_matrices(species_batch, all_tiles, all_habitats)
+                    
+                    critical_results = self.tile_mortality.evaluate(
+                        tiered.critical, modifiers, niche_metrics, tier="critical", 
+                        trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
+                    )
+                    focus_results = self.tile_mortality.evaluate(
+                        tiered.focus, modifiers, niche_metrics, tier="focus", 
+                        trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
+                    )
+                    background_results = self.tile_mortality.evaluate(
+                        tiered.background, modifiers, niche_metrics, tier="background", 
+                        trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
+                    )
+                else:
+                    critical_results = self.mortality.evaluate(
+                        tiered.critical, modifiers, niche_metrics, tier="critical", 
+                        trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
+                    )
+                    focus_results = self.mortality.evaluate(
+                        tiered.focus, modifiers, niche_metrics, tier="focus", 
+                        trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
+                    )
+                    background_results = self.mortality.evaluate(
+                        tiered.background, modifiers, niche_metrics, tier="background", 
+                        trophic_interactions=trophic_interactions, extinct_codes=extinct_codes
+                    )
                 
                 combined_results = critical_results + focus_results + background_results
+                
+                # ========== 【数据传递】将地块级数据传递给分化服务 ==========
+                if self._use_tile_based_mortality and all_tiles:
+                    # 清空旧缓存
+                    self.speciation.clear_tile_cache()
+                    
+                    # 传递地块死亡率数据
+                    tile_mortality_data = self.tile_mortality.get_all_species_tile_mortality()
+                    for lineage_code, tile_rates in tile_mortality_data.items():
+                        self.speciation.set_tile_mortality_data(lineage_code, tile_rates)
+                    
+                    # 传递地块种群分布数据
+                    tile_population_data = self.tile_mortality.get_all_species_tile_population()
+                    for lineage_code, tile_pops in tile_population_data.items():
+                        self.speciation.set_tile_population_data(lineage_code, tile_pops)
+                    
+                    # 传递地块邻接关系
+                    tile_adjacency = self.tile_mortality.get_tile_adjacency()
+                    self.speciation.set_tile_adjacency(tile_adjacency)
+                    
+                    # 【核心改进】传递预筛选的分化候选数据
+                    speciation_candidates = self.tile_mortality.get_speciation_candidates(
+                        min_tile_population=100,
+                        mortality_threshold=(0.03, 0.70),
+                        min_mortality_gradient=0.15,
+                    )
+                    self.speciation.set_speciation_candidates(speciation_candidates)
+                    
+                    logger.debug(
+                        f"[数据传递] 向分化服务传递了 {len(tile_mortality_data)} 个物种的地块死亡率数据, "
+                        f"{len(tile_population_data)} 个物种的地块种群数据, "
+                        f"{len(speciation_candidates)} 个分化候选物种"
+                    )
                 
                 # 日志：对比迁徙前后的死亡率变化
                 if migration_count > 0:

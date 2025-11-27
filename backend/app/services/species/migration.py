@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Sequence, TYPE_CHECKING
 
 from ...schemas.responses import MajorPressureEvent, MapChange, MigrationEvent
 from ...simulation.species import MortalityResult
+
+if TYPE_CHECKING:
+    from ...simulation.tile_based_mortality import TileBasedMortalityEngine
 
 
 class MigrationAdvisor:
     """基于规则引擎的迁徙决策系统。
     
-    根据死亡率、压力类型、地图变化判断物种是否需要迁徙。
+    【核心改进】现在可以利用地块级死亡率差异：
+    - 从高死亡率地块迁往低死亡率地块
+    - 迁徙方向更精确，基于实际环境条件
     
     注意：当前版本只生成迁徙建议，不实际执行迁徙。
     实际的栖息地变化需要由 MapStateManager 执行（未来功能）。
@@ -40,6 +45,58 @@ class MigrationAdvisor:
         self.overflow_pressure_threshold = overflow_pressure_threshold
         self.min_population = min_population
         self.enable_actual_migration = enable_actual_migration
+        
+        # 【新增】地块死亡率数据缓存
+        self._tile_mortality_cache: dict[str, dict[int, float]] = {}  # {lineage_code: {tile_id: death_rate}}
+    
+    def set_tile_mortality_data(
+        self, 
+        lineage_code: str, 
+        tile_death_rates: dict[int, float]
+    ) -> None:
+        """设置物种在各地块的死亡率数据
+        
+        由 TileBasedMortalityEngine 调用，提供地块级死亡率
+        
+        Args:
+            lineage_code: 物种谱系编码
+            tile_death_rates: {tile_id: death_rate}
+        """
+        self._tile_mortality_cache[lineage_code] = tile_death_rates
+    
+    def clear_tile_mortality_cache(self) -> None:
+        """清空地块死亡率缓存（每回合开始时调用）"""
+        self._tile_mortality_cache.clear()
+    
+    def _analyze_tile_mortality_gradient(self, lineage_code: str) -> tuple[float, str, str]:
+        """分析物种在各地块的死亡率梯度
+        
+        Returns:
+            (死亡率差异, 高死亡率区域描述, 低死亡率区域描述)
+            如果没有地块数据，返回 (0.0, "", "")
+        """
+        tile_rates = self._tile_mortality_cache.get(lineage_code, {})
+        
+        if len(tile_rates) < 2:
+            return 0.0, "", ""
+        
+        # 找出最高和最低死亡率的地块
+        sorted_tiles = sorted(tile_rates.items(), key=lambda x: x[1])
+        
+        lowest_tile_id, lowest_rate = sorted_tiles[0]
+        highest_tile_id, highest_rate = sorted_tiles[-1]
+        
+        mortality_gradient = highest_rate - lowest_rate
+        
+        # 如果梯度太小，不值得迁徙
+        if mortality_gradient < 0.15:
+            return mortality_gradient, "", ""
+        
+        # 生成区域描述（未来可以基于实际地块biome）
+        high_desc = f"地块{highest_tile_id}区域（死亡率{highest_rate:.1%}）"
+        low_desc = f"地块{lowest_tile_id}区域（死亡率{lowest_rate:.1%}）"
+        
+        return mortality_gradient, high_desc, low_desc
 
     def plan(
         self,
@@ -50,10 +107,11 @@ class MigrationAdvisor:
     ) -> list[MigrationEvent]:
         """基于规则生成迁徙建议。
         
-        迁徙/扩散条件（三种类型）：
-        1. 压力驱动迁徙：死亡率高 + 环境压力
-        2. 资源饱和扩散：资源压力高 + 种群稳定
-        3. 人口溢出：种群暴涨 + 资源不足
+        【核心改进】现在利用地块级死亡率差异：
+        - 类型0（新增）：地块梯度迁徙 - 从高死亡率地块迁往低死亡率地块
+        - 类型1：压力驱动迁徙 - 死亡率高 + 环境压力
+        - 类型2：资源饱和扩散 - 资源压力高 + 种群稳定
+        - 类型3：人口溢出 - 种群暴涨 + 资源不足
         """
         if not species:
             return []
@@ -67,8 +125,20 @@ class MigrationAdvisor:
             destination = ""
             rationale = ""
             
+            lineage_code = result.species.lineage_code
+            
+            # 【新增】类型0：地块梯度迁徙
+            # 当不同地块的死亡率差异显著时，从高死亡率地块迁往低死亡率地块
+            gradient, high_area, low_area = self._analyze_tile_mortality_gradient(lineage_code)
+            if gradient >= 0.20 and result.survivors >= self.min_population:
+                # 死亡率梯度超过20%，触发地块梯度迁徙
+                migration_type = "tile_gradient"
+                origin = high_area
+                destination = low_area
+                rationale = f"地块间死亡率差异{gradient:.0%}，从高风险区域迁往低风险区域"
+            
             # 类型2：资源饱和扩散
-            if result.resource_pressure > self.saturation_threshold:
+            if not migration_type and result.resource_pressure > self.saturation_threshold:
                 if result.survivors >= self.min_population:
                     migration_type = "saturation_dispersal"
                     origin, destination, rationale = self._determine_migration(

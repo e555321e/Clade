@@ -1,4 +1,10 @@
-"""基因流动服务"""
+"""基因流动服务
+
+【核心改进】基因流动现在考虑地理隔离：
+- 只有在同一地块或相邻地块的物种才能发生基因流动
+- 地块重叠程度影响基因流动强度
+- 完全地理隔离的物种无法基因交流
+"""
 from __future__ import annotations
 
 import logging
@@ -6,17 +12,71 @@ from typing import Sequence
 
 from ...models.genus import Genus
 from ...models.species import Species
+from ...models.environment import HabitatPopulation
+from ...repositories.environment_repository import environment_repository
 
 logger = logging.getLogger(__name__)
 
 
 class GeneFlowService:
-    """模拟同属物种间的基因流动"""
+    """模拟同属物种间的基因流动
+    
+    【核心改进】现在考虑地理隔离：
+    - 只有栖息地重叠的物种才能发生基因流动
+    - 重叠程度影响基因流动强度
+    """
+    
+    def __init__(self):
+        self._habitat_cache: dict[int, set[int]] = {}  # {species_id: {tile_ids}}
+    
+    def _build_habitat_cache(self, species_list: Sequence[Species]) -> None:
+        """构建物种栖息地缓存"""
+        self._habitat_cache.clear()
+        
+        # 获取所有物种的ID
+        species_ids = [sp.id for sp in species_list if sp.id is not None]
+        if not species_ids:
+            return
+        
+        # 获取栖息地数据
+        habitats = environment_repository.latest_habitats(species_ids=species_ids)
+        
+        for habitat in habitats:
+            sp_id = habitat.species_id
+            if sp_id not in self._habitat_cache:
+                self._habitat_cache[sp_id] = set()
+            self._habitat_cache[sp_id].add(habitat.tile_id)
+    
+    def _calculate_habitat_overlap(self, sp1: Species, sp2: Species) -> float:
+        """计算两个物种的栖息地重叠程度
+        
+        使用 Jaccard 系数：交集 / 并集
+        
+        Returns:
+            0.0 = 完全隔离（无基因流动）
+            1.0 = 完全重叠（最大基因流动）
+        """
+        tiles1 = self._habitat_cache.get(sp1.id, set()) if sp1.id else set()
+        tiles2 = self._habitat_cache.get(sp2.id, set()) if sp2.id else set()
+        
+        if not tiles1 or not tiles2:
+            # 没有栖息地数据，假设中等重叠
+            return 0.5
+        
+        intersection = tiles1 & tiles2
+        union = tiles1 | tiles2
+        
+        if not union:
+            return 0.0
+        
+        return len(intersection) / len(union)
     
     def apply_gene_flow(self, genus: Genus, species_list: Sequence[Species]) -> int:
         """应用基因流动
         
-        在近缘物种间产生微小的属性趋同
+        【核心改进】现在考虑地理隔离：
+        - 只有栖息地重叠的物种才能发生基因流动
+        - 重叠程度影响基因流动强度
         
         Args:
             genus: 属对象（包含遗传距离矩阵）
@@ -27,21 +87,44 @@ class GeneFlowService:
         """
         flow_count = 0
         
+        # 构建栖息地缓存
+        self._build_habitat_cache(species_list)
+        
         for i, sp1 in enumerate(species_list):
             for sp2 in species_list[i+1:]:
+                # 1. 检查遗传距离
                 distance_key = self._make_distance_key(sp1.lineage_code, sp2.lineage_code)
                 distance = genus.genetic_distances.get(distance_key, 0.5)
                 
                 if distance > 0.4:
                     continue
                 
-                flow_rate = 0.02 * (1.0 - distance / 0.4)
+                # 2. 【新增】检查地理重叠
+                habitat_overlap = self._calculate_habitat_overlap(sp1, sp2)
+                
+                # 完全地理隔离：无基因流动
+                if habitat_overlap < 0.05:
+                    logger.debug(
+                        f"[基因流动] {sp1.common_name} 与 {sp2.common_name} "
+                        f"地理隔离（重叠={habitat_overlap:.2f}），跳过"
+                    )
+                    continue
+                
+                # 3. 计算基因流动速率
+                # 基础速率 × 地理重叠因子
+                base_rate = 0.02 * (1.0 - distance / 0.4)
+                flow_rate = base_rate * habitat_overlap
                 
                 self._apply_flow_between(sp1, sp2, flow_rate)
                 flow_count += 1
+                
+                logger.debug(
+                    f"[基因流动] {sp1.common_name} ↔ {sp2.common_name}: "
+                    f"遗传距离={distance:.2f}, 地理重叠={habitat_overlap:.2f}, 流速={flow_rate:.4f}"
+                )
         
         if flow_count > 0:
-            logger.debug(f"[基因流动] {genus.genus_code}属内发生{flow_count}次基因流动")
+            logger.info(f"[基因流动] {genus.genus_code}属内发生{flow_count}次基因流动")
         
         return flow_count
     
