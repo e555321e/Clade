@@ -259,9 +259,8 @@ class AdaptationService:
         pressure_context: str,
         stream_callback: Callable[[str], Awaitable[None] | None] | None
     ) -> dict:
-        """创建描述更新的AI任务"""
+        """创建描述更新的AI任务（非流式，更稳定）"""
         # 构建 trait diffs 文本
-        # 这里简单列出数值较高的 trait，提示 AI 关注
         high_traits = [
             f"{k}: {v:.1f}" 
             for k, v in species.abstract_traits.items() 
@@ -275,39 +274,19 @@ class AdaptationService:
             common_name=species.common_name,
             old_description=species.description,
             trait_diffs=trait_diffs,
-            pressure_context=pressure_context  # 传入环境上下文
+            pressure_context=pressure_context
         )
 
-        full_content = ""
+        # 【优化】使用非流式调用，避免流式传输卡住
         try:
-            if stream_callback:
-                 async for chunk in self.router.astream_capability(
-                    capability="narrative",
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"}
-                 ):
-                    if isinstance(chunk, dict) and chunk.get("type") in ("status", "error"):
-                         continue
-                    if isinstance(chunk, str):
-                        full_content += chunk
-                        if asyncio.iscoroutinefunction(stream_callback):
-                            await stream_callback(chunk)
-                        else:
-                            stream_callback(chunk)
-            else:
-                full_content = await self.router.acall_capability(
-                    capability="narrative",
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"}
-                )
+            full_content = await self.router.acall_capability(
+                capability="narrative",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
         except Exception as e:
-            logger.error(f"[描述更新] 流式调用失败: {e}")
-            if not full_content:
-                full_content = await self.router.acall_capability(
-                    capability="narrative",
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"}
-                )
+            logger.error(f"[描述更新] AI调用失败: {e}")
+            return {}
         
         return self.router._parse_content(full_content)
 
@@ -631,13 +610,13 @@ class AdaptationService:
         pressure_context: str,
         stream_callback: Callable[[str], Awaitable[None] | None] | None
     ) -> dict:
-        """创建LLM驱动的适应性演化任务
+        """创建LLM驱动的适应性演化任务（非流式，更稳定）
         
         Args:
             species: 目标物种
             environment_pressure: 环境压力字典
             pressure_context: 压力描述上下文
-            stream_callback: 流式回调函数
+            stream_callback: 流式回调函数（已停用）
             
         Returns:
             LLM返回的适应建议
@@ -672,33 +651,16 @@ class AdaptationService:
             organs_summary=organs_summary,
         )
         
-        full_content = ""
+        # 【优化】使用非流式调用，避免流式传输卡住
         try:
-            if stream_callback:
-                async for chunk in self.router.astream_capability(
-                    capability="pressure_adaptation",
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"}
-                ):
-                    if isinstance(chunk, dict) and chunk.get("type") in ("status", "error"):
-                        continue
-                    if isinstance(chunk, str):
-                        full_content += chunk
-                        if asyncio.iscoroutinefunction(stream_callback):
-                            await stream_callback(chunk)
-                        else:
-                            stream_callback(chunk)
-            else:
-                full_content = await self.router.acall_capability(
-                    capability="pressure_adaptation",
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"}
-                )
+            full_content = await self.router.acall_capability(
+                capability="pressure_adaptation",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
         except Exception as e:
             logger.error(f"[LLM适应] 调用失败: {e}")
-            if not full_content:
-                # 回退到空结果
-                return {}
+            return {}
         
         return self.router._parse_content(full_content)
     

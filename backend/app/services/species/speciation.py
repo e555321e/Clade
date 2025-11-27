@@ -477,30 +477,10 @@ class SpeciationService:
         payload: dict, 
         stream_callback: Callable[[str], Awaitable[None] | None] | None
     ) -> dict:
-        """调用批量分化 AI 接口"""
-        full_content = ""
-        
-        if stream_callback:
-            try:
-                async for chunk in self.router.astream("speciation_batch", payload):
-                    if isinstance(chunk, dict) and chunk.get("type") in ("status", "error"):
-                        continue
-                    if isinstance(chunk, str):
-                        full_content += chunk
-                        if asyncio.iscoroutinefunction(stream_callback):
-                            await stream_callback(chunk)
-                        else:
-                            stream_callback(chunk)
-            except Exception as e:
-                logger.error(f"[分化批量] 流式AI调用失败: {e}")
-                if not full_content:
-                    response = await self.router.ainvoke("speciation_batch", payload)
-                    return response.get("content") if isinstance(response, dict) else {}
-        else:
-            response = await self.router.ainvoke("speciation_batch", payload)
-            return response.get("content") if isinstance(response, dict) else {}
-        
-        return self.router._parse_content(full_content)
+        """调用批量分化 AI 接口（非流式，更稳定）"""
+        # 【优化】使用非流式调用，避免流式传输卡住
+        response = await self.router.ainvoke("speciation_batch", payload)
+        return response.get("content") if isinstance(response, dict) else {}
     
     def _parse_batch_results(
         self, 
@@ -560,33 +540,10 @@ class SpeciationService:
         return results
 
     async def _call_ai_wrapper(self, payload: dict, stream_callback: Callable[[str], Awaitable[None] | None] | None) -> dict:
-        """AI调用包装器，支持流式推送（保留用于单个请求的回退）"""
-        full_content = ""
-        
-        if stream_callback:
-            try:
-                async for chunk in self.router.astream("speciation", payload):
-                    if isinstance(chunk, dict) and chunk.get("type") in ("status", "error"):
-                        continue
-                    if isinstance(chunk, str):
-                        full_content += chunk
-                        if asyncio.iscoroutinefunction(stream_callback):
-                            await stream_callback(chunk)
-                        else:
-                            stream_callback(chunk)
-            except Exception as e:
-                logger.error(f"[分化] 流式AI调用失败: {e}")
-                # 如果流式失败且无内容，回退到普通调用
-                if not full_content:
-                    response = await self.router.ainvoke("speciation", payload)
-                    return response.get("content") if isinstance(response, dict) else {}
-        else:
-            # 无回调，使用ainvoke
-            response = await self.router.ainvoke("speciation", payload)
-            return response.get("content") if isinstance(response, dict) else {}
-            
-        # 尝试解析流式收集到的完整JSON
-        return self.router._parse_content(full_content)
+        """AI调用包装器（非流式，更稳定）"""
+        # 【优化】使用非流式调用，避免流式传输卡住
+        response = await self.router.ainvoke("speciation", payload)
+        return response.get("content") if isinstance(response, dict) else {}
 
     # 保留 process 方法以兼容旧调用，直到全部迁移
     def process(self, *args, **kwargs):
