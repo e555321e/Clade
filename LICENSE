@@ -1,3 +1,26 @@
+Commons Clause License Condition v1.0
+
+The Software is provided to you by the Licensor under the License, as defined
+below, subject to the following condition.
+
+Without limiting other conditions in the License, the grant of rights under the
+License will not include, and the License does not grant to you, the right to
+Sell the Software.
+
+For purposes of the foregoing, "Sell" means practicing any or all of the rights
+granted to you under the License to provide to third parties, for a fee or other
+consideration (including without limitation fees for hosting or consulting/
+support services related to the Software), a product or service whose value
+derives, entirely or substantially, from the functionality of the Software. Any
+license notice or attribution required by the License must also include this
+Commons Clause License Condition notice.
+
+Software: Clade
+License: MIT License
+Licensor: Pocketfans
+
+---
+
 MIT License
 
 Copyright (c) 2025 Pocketfans
@@ -22,6 +45,23 @@ SOFTWARE.
 
 ---
 
+Commons Clause 许可条件 v1.0（中文翻译，仅供参考，以英文原文为准）
+
+本软件由许可方根据下述许可证提供给您，但须遵守以下条件。
+
+在不限制许可证中其他条件的前提下，许可证授予的权利不包括、且许可证不授予您"销售"本软件的权利。
+
+就上述目的而言，"销售"是指行使许可证授予您的任何或全部权利，以向第三方提供收费或其他对价
+（包括但不限于与本软件相关的托管或咨询/支持服务费用）的产品或服务，且该产品或服务的价值
+全部或主要来源于本软件的功能。许可证要求的任何许可声明或归属信息还必须包含此 Commons 
+Clause 许可条件声明。
+
+软件：Clade
+许可证：MIT 许可证
+许可方：Pocketfans
+
+---
+
 MIT 开源许可证（中文翻译，仅供参考，以英文原文为准）
 
 版权所有 (c) 2025 Pocketfans
@@ -36,3 +76,23 @@ MIT 开源许可证（中文翻译，仅供参考，以英文原文为准）
 特定用途适用性和非侵权性的担保。在任何情况下，作者或版权持有人均不对任何索赔、
 损害或其他责任负责，无论是在合同诉讼、侵权行为还是其他方面，
 由本软件或本软件的使用或其他交易引起或与之相关。
+
+---
+
+简要说明 / Quick Summary
+
+✅ 允许 (Allowed):
+- 个人学习和研究使用
+- 修改和创建衍生作品
+- 非商业目的的分发
+- 在非盈利项目中使用
+- 贡献代码回馈社区
+
+❌ 禁止 (Not Allowed):
+- 销售本软件或其副本
+- 提供基于本软件的付费托管服务
+- 提供基于本软件的付费咨询/支持服务
+- 将本软件作为付费产品的核心功能
+
+如有商业使用需求，请联系许可方获取商业授权。
+For commercial licensing, please contact the Licensor.
