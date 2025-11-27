@@ -743,7 +743,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                 {/* 右侧：编辑表单 */}
                 <div className="provider-edit-panel">
                   {selectedProvider ? (
-                    <>
+                    <div className="provider-edit-content">
                       <div className="edit-header">
                         <div className="edit-title-row">
                           <span className="edit-logo">{getProviderLogo(selectedProvider)}</span>
@@ -868,7 +868,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                           </div>
                         )}
                       </div>
-                    </>
+                    </div>
                   ) : (
                     <div className="empty-state">
                       <span className="empty-icon">🔌</span>

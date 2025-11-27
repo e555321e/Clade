@@ -1101,7 +1101,7 @@ def test_api_connection(request: dict) -> dict:
             print(f"[测试 Embedding] URL: {url}")
             print(f"[测试 Embedding] Model: {model}")
             
-            response = httpx.post(url, json=body, headers=headers, timeout=10)
+            response = httpx.post(url, json=body, headers=headers, timeout=20)
             response.raise_for_status()
             data = response.json()
             
@@ -1150,7 +1150,7 @@ def test_api_connection(request: dict) -> dict:
                 "Content-Type": "application/json"
             }
             
-            response = httpx.post(url, json=body, headers=headers, timeout=10)
+            response = httpx.post(url, json=body, headers=headers, timeout=20)
             response.raise_for_status()
             data = response.json()
             

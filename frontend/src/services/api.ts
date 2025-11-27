@@ -194,13 +194,29 @@ export async function testApiConnection(params: {
   model: string;
   provider?: string;
 }): Promise<{ success: boolean; message: string; details?: string }> {
-  const res = await fetch("/api/config/test-api", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
-  if (!res.ok) throw new Error("test api failed");
-  return res.json();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+  
+  try {
+    const res = await fetch("/api/config/test-api", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    
+    if (!res.ok) {
+      return { success: false, message: "请求失败", details: `HTTP ${res.status}` };
+    }
+    return res.json();
+  } catch (e) {
+    clearTimeout(timeoutId);
+    if (e instanceof Error && e.name === 'AbortError') {
+      return { success: false, message: "❌ 连接超时", details: "请求超过30秒未响应" };
+    }
+    throw e;
+  }
 }
 
 // 存档相关API
