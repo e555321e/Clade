@@ -1,3 +1,5 @@
 @echo off
 :: Clade 启动器入口 - 调用 PowerShell 脚本
-powershell -ExecutionPolicy Bypass -File "%~dp0start.ps1"
+cd /d "%~dp0"
+powershell -ExecutionPolicy Bypass -NoExit -File "start.ps1"
+pause
