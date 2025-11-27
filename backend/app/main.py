@@ -7,7 +7,6 @@ from .api.routes import router as api_router, initialize_environment, set_backen
 from .api.admin_routes import router as admin_router
 from .core.config import get_settings, setup_logging
 from .core.database import init_db
-from .core.seed import seed_defaults
 
 settings = get_settings()
 
@@ -26,7 +25,8 @@ def on_startup() -> None:
     print(f"[后端启动] 会话ID: {backend_session_id[:8]}...")
     
     init_db()
-    seed_defaults()
+    # 注意：不再在启动时调用 seed_defaults()
+    # 初始物种应该在创建存档时根据剧本类型生成
     initialize_environment()
 
 

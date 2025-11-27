@@ -720,8 +720,9 @@ class TileBasedMortalityEngine:
         
         # ========== 干旱压力 ==========
         # 低湿度地块增加干旱压力
-        drought_pressure = np.maximum(0, 0.5 - tile_humidity[:, np.newaxis]) * 2.0
-        drought_pressure *= (1.0 - drought_res[np.newaxis, :])
+        # 注意：不使用 *= 就地操作，避免广播形状不匹配
+        drought_base = np.maximum(0, 0.5 - tile_humidity[:, np.newaxis]) * 2.0
+        drought_pressure = drought_base * (1.0 - drought_res[np.newaxis, :])
         
         # ========== 全局压力 ==========
         global_pressure = (pressure_score / 25.0) * base_sens[np.newaxis, :]
