@@ -333,10 +333,21 @@ class SpeciationService:
             # 计算全局种群（用于后续更新父系）
             global_population = int(species.morphology_stats.get("population", 0) or 0)
             
+            # 【关键修复】candidate_population 来自旧的 _population_matrix（死亡率计算前）
+            # 而 global_population 来自 morphology_stats（可能已被死亡率和繁殖更新）
+            # 必须确保 candidate_population 不超过 global_population，否则会导致负数种群
+            if candidate_population > global_population:
+                logger.warning(
+                    f"[种群同步警告] {species.common_name}: "
+                    f"候选地块种群({candidate_population:,}) > 全局种群({global_population:,})，"
+                    f"可能由于数据不同步，将候选种群限制为全局种群"
+                )
+                candidate_population = global_population
+            
             # 【重要】分化只影响候选地块上的种群
             # 非候选地块上的种群保持不变（仍属于父系）
             speciation_pool = candidate_population  # 仅候选地块上的种群参与分化
-            non_candidate_population = global_population - candidate_population
+            non_candidate_population = max(0, global_population - candidate_population)  # 确保不为负数
             
             # ========== 【改进】基于地块级压力计算分化数量 ==========
             # 计算各隔离区域的压力指标（用于决定分化数量和传递给AI）
@@ -468,6 +479,19 @@ class SpeciationService:
             # 【改进】更新父系物种种群
             # 父系保留：非候选地块种群 + 候选地块中保留的部分
             parent_remaining = non_candidate_population + parent_from_candidates
+            
+            # 【关键修复】最终保护：确保父系种群不为负数
+            if parent_remaining < 0:
+                logger.error(
+                    f"[严重错误] {species.common_name} 分化后种群为负数！"
+                    f"parent_remaining={parent_remaining:,}, "
+                    f"non_candidate={non_candidate_population:,}, "
+                    f"parent_from_candidates={parent_from_candidates:,}, "
+                    f"global={global_population:,}, candidate={candidate_population:,}"
+                )
+                # 使用合理的最小值：至少保留 50 或 parent_from_candidates 中的较大者
+                parent_remaining = max(50, parent_from_candidates)
+            
             species.morphology_stats["population"] = parent_remaining
             species_repository.upsert(species)
             
