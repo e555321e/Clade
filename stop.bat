@@ -1,5 +1,5 @@
 @echo off
-:: Clade 停止服务入口 - 调用 PowerShell 脚本
+chcp 65001 >nul
 cd /d "%~dp0"
-powershell -ExecutionPolicy Bypass -NoExit -File "stop.ps1"
+powershell -ExecutionPolicy Bypass -Command "[Console]::InputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Content -Path 'stop.ps1' -Raw -Encoding UTF8 | Invoke-Expression"
 pause

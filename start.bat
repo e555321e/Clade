@@ -1,5 +1,5 @@
 @echo off
-:: Clade 启动器入口 - 调用 PowerShell 脚本
+chcp 65001 >nul
 cd /d "%~dp0"
-powershell -ExecutionPolicy Bypass -NoExit -File "start.ps1"
+powershell -ExecutionPolicy Bypass -Command "[Console]::InputEncoding = [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Content -Path 'start.ps1' -Raw -Encoding UTF8 | Invoke-Expression"
 pause
