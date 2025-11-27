@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 import math
 import random
+import time
 from typing import Sequence
 
 import numpy as np
 from ...models.environment import HabitatPopulation, MapState, MapTile
+
+logger = logging.getLogger(__name__)
 from ...models.species import Species
 from ...repositories.environment_repository import environment_repository
 from ...repositories.species_repository import species_repository
@@ -29,27 +33,27 @@ class MapStateManager:
         self.repo = environment_repository
 
     def ensure_initialized(self, map_seed: int | None = None) -> None:
-        print(f"[地图管理器] 确保地图列已存在...")
+        logger.debug(f"[地图管理器] 确保地图列已存在...")
         self.repo.ensure_tile_columns()
         
-        print(f"[地图管理器] 检查现有地图数据...")
+        logger.debug(f"[地图管理器] 检查现有地图数据...")
         tiles = self.repo.list_tiles()
-        print(f"[地图管理器] 发现 {len(tiles)} 个地块")
+        logger.debug(f"[地图管理器] 发现 {len(tiles)} 个地块")
         
         if not tiles:
-            print(f"[地图管理器] 生成新地图 ({self.width}×{self.height})...")
+            logger.debug(f"[地图管理器] 生成新地图 ({self.width}×{self.height})...")
             generated = self._generate_grid(map_seed)
-            print(f"[地图管理器] 生成了 {len(generated)} 个地块，正在保存...")
+            logger.debug(f"[地图管理器] 生成了 {len(generated)} 个地块，正在保存...")
             self.repo.upsert_tiles(generated)
-            print(f"[地图管理器] 地块保存完成")
+            logger.debug(f"[地图管理器] 地块保存完成")
             
-        print(f"[地图管理器] 检查地图状态...")
+        logger.debug(f"[地图管理器] 检查地图状态...")
         if not self.repo.get_state():
-            print(f"[地图管理器] 创建初始地图状态...")
+            logger.debug(f"[地图管理器] 创建初始地图状态...")
             self.repo.save_state(MapState(stage_name="稳定期", stage_progress=0, stage_duration=0))
-            print(f"[地图管理器] 地图状态创建完成")
+            logger.debug(f"[地图管理器] 地图状态创建完成")
         else:
-            print(f"[地图管理器] 地图状态已存在")
+            logger.debug(f"[地图管理器] 地图状态已存在")
 
     def reclassify_terrain_by_sea_level(self, sea_level: float) -> None:
         """
@@ -58,7 +62,7 @@ class MapStateManager:
         Args:
             sea_level: 当前海平面高度（米）
         """
-        print(f"[地图管理器] 根据海平面 {sea_level:.1f}m 重新分类地形...")
+        logger.debug(f"[地图管理器] 根据海平面 {sea_level:.1f}m 重新分类地形...")
         tiles = self.repo.list_tiles()
         
         updated_tiles = []
@@ -117,18 +121,18 @@ class MapStateManager:
                 updated_tiles.append(tile)
         
         if updated_tiles:
-            print(f"[地图管理器] 更新了 {len(updated_tiles)} 个地块: "
+            logger.debug(f"[地图管理器] 更新了 {len(updated_tiles)} 个地块: "
                   f"淹没{terrain_changes['淹没']}个, 露出{terrain_changes['露出']}个")
             self.repo.upsert_tiles(updated_tiles)
         else:
-            print(f"[地图管理器] 地形无变化")
+            logger.debug(f"[地图管理器] 地形无变化")
         
         # 重新分类水体（海岸判定、湖泊识别、盐度更新）
-        print(f"[地图管理器] 重新分类水体...")
+        logger.debug(f"[地图管理器] 重新分类水体...")
         all_tiles = self.repo.list_tiles()
         self._classify_water_bodies(all_tiles)
         self.repo.upsert_tiles(all_tiles)
-        print(f"[地图管理器] 水体分类完成")
+        logger.debug(f"[地图管理器] 水体分类完成")
     
     def snapshot_habitats(self, species_list: Sequence[Species], turn_index: int, force_recalculate: bool = False) -> None:
         """记录或更新物种栖息地分布
@@ -140,7 +144,7 @@ class MapStateManager:
                 - True: 完全重新计算所有物种的栖息地分布（用于初始化）
                 - False: 更新现有栖息地的种群数量，为没有栖息地的物种初始化分布
         """
-        print(f"[地图管理器] 栖息地快照，回合={turn_index}, 物种数={len(species_list)}, 强制重算={force_recalculate}")
+        logger.debug(f"[地图管理器] 栖息地快照，回合={turn_index}, 物种数={len(species_list)}, 强制重算={force_recalculate}")
         
         tiles = self.repo.list_tiles()
         if not tiles:
@@ -153,7 +157,7 @@ class MapStateManager:
             return
         
         # 强制重算模式：用于初始化
-        print(f"[地图管理器] 强制重算模式，为 {len(species_list)} 个物种初始化栖息地分布")
+        logger.debug(f"[地图管理器] 强制重算模式，为 {len(species_list)} 个物种初始化栖息地分布")
         habitats: list[HabitatPopulation] = []
         
         
@@ -167,7 +171,7 @@ class MapStateManager:
                 continue
             
             # 强制重算模式：为所有物种计算栖息地分布
-            print(f"[地图管理器] 初始化 {species.common_name} 的栖息地分布")
+            logger.debug(f"[地图管理器] 初始化 {species.common_name} 的栖息地分布")
             
             # 根据栖息地类型筛选合适的地块
             habitat_type = getattr(species, 'habitat_type', 'terrestrial')
@@ -192,7 +196,7 @@ class MapStateManager:
             top_tiles = suitability[:top_count]
             score_sum = sum(score for _, score in top_tiles) or 1.0
             
-            print(f"[地图管理器] {species.common_name} ({habitat_type}) 分布到 {len(top_tiles)} 个地块")
+            logger.debug(f"[地图管理器] {species.common_name} ({habitat_type}) 分布到 {len(top_tiles)} 个地块")
             
             # 【关键修复】按适宜度分配总生物量到多个地块
             # 而不是每个地块都分配全部生物量
@@ -216,10 +220,10 @@ class MapStateManager:
                     )
         
         if habitats:
-            print(f"[地图管理器] 保存 {len(habitats)} 条栖息地记录")
+            logger.debug(f"[地图管理器] 保存 {len(habitats)} 条栖息地记录")
             self.repo.write_habitats(habitats)
         else:
-            print(f"[地图管理器] 没有栖息地记录需要保存")
+            logger.debug(f"[地图管理器] 没有栖息地记录需要保存")
     
     def _update_habitat_populations(self, species_list: Sequence[Species], turn_index: int) -> None:
         """更新现有栖息地的种群数量（非强制模式）
@@ -293,12 +297,12 @@ class MapStateManager:
         
         # 保存更新的栖息地
         if updated_habitats:
-            print(f"[地图管理器] 更新 {len(updated_habitats)} 条栖息地种群数量")
+            logger.debug(f"[地图管理器] 更新 {len(updated_habitats)} 条栖息地种群数量")
             self.repo.write_habitats(updated_habitats)
         
         # 为没有栖息地的物种初始化分布
         if species_needing_init:
-            print(f"[地图管理器] 为 {len(species_needing_init)} 个物种初始化栖息地")
+            logger.debug(f"[地图管理器] 为 {len(species_needing_init)} 个物种初始化栖息地")
             tiles = self.repo.list_tiles()
             self._init_habitats_for_species(species_needing_init, tiles, turn_index)
     
@@ -350,7 +354,7 @@ class MapStateManager:
                     )
         
         if habitats:
-            print(f"[地图管理器] 初始化 {len(habitats)} 条新栖息地记录")
+            logger.debug(f"[地图管理器] 初始化 {len(habitats)} 条新栖息地记录")
             self.repo.write_habitats(habitats)
     
     def _filter_tiles_by_habitat_type(self, tiles: list[MapTile], habitat_type: str) -> list[MapTile]:
@@ -426,21 +430,21 @@ class MapStateManager:
         view_mode: ViewMode = "terrain",
         species_id: int | None = None,
     ) -> MapOverview:
-        print(f"[地图管理器] 获取概览，地块限制={tile_limit}, 栖息地限制={habitat_limit}, 视图模式={view_mode}, 物种ID={species_id}")
+        logger.debug(f"[地图管理器] 获取概览，地块限制={tile_limit}, 栖息地限制={habitat_limit}, 视图模式={view_mode}, 物种ID={species_id}")
         
         tiles = self.repo.list_tiles(limit=tile_limit)
-        print(f"[地图管理器] 查询到 {len(tiles)} 个地块")
+        logger.debug(f"[地图管理器] 查询到 {len(tiles)} 个地块")
         
         if not tiles:
             print(f"[地图管理器警告] 没有地块数据，尝试初始化...")
             self.ensure_initialized()
             tiles = self.repo.list_tiles(limit=tile_limit)
-            print(f"[地图管理器] 初始化后查询到 {len(tiles)} 个地块")
+            logger.debug(f"[地图管理器] 初始化后查询到 {len(tiles)} 个地块")
         
         # 如果指定了物种，优先查询该物种的栖息地
         species_ids = [species_id] if species_id else None
         habitats = self.repo.latest_habitats(limit=habitat_limit, species_ids=species_ids)
-        print(f"[地图管理器] 查询到 {len(habitats)} 个栖息地记录")
+        logger.debug(f"[地图管理器] 查询到 {len(habitats)} 个栖息地记录")
         
         species_map = {sp.id: sp for sp in species_repository.list_species()}
         tile_by_coords = {(tile.x, tile.y): tile.id or 0 for tile in tiles}
@@ -653,7 +657,7 @@ class MapStateManager:
                 v_type = max(type_counts, key=type_counts.get)
                 final_vegetation[tid] = VegetationInfo(density=density, type=v_type)
 
-        print(f"[地图管理器] 返回概览: {len(tile_infos)} 地块, {len(habitat_entries)} 栖息地, "
+        logger.debug(f"[地图管理器] 返回概览: {len(tile_infos)} 地块, {len(habitat_entries)} 栖息地, "
               f"{len(rivers_map)} 河流段, {len(final_vegetation)} 植被区, "
               f"海平面={sea_level:.1f}m, 温度={global_temp:.1f}°C, 视图={view_mode}")
         
@@ -674,7 +678,7 @@ class MapStateManager:
         import time
         if map_seed is None:
             map_seed = int(time.time() * 1000000) % 2147483647
-        print(f"[地图管理器] 使用随机种子: {map_seed}")
+        logger.debug(f"[地图管理器] 使用随机种子: {map_seed}")
         random.seed(map_seed)
         np.random.seed(map_seed % (2**32))  # numpy也需要设置种子
         
@@ -742,7 +746,7 @@ class MapStateManager:
         if map_state:
             map_state.map_seed = map_seed
             self.repo.save_state(map_state)
-            print(f"[地图管理器] 地图种子已保存: {map_seed}")
+            logger.debug(f"[地图管理器] 地图种子已保存: {map_seed}")
         
         return tiles
 
@@ -942,14 +946,14 @@ class MapStateManager:
         ocean_tiles = [tile for tile in tiles if tile.elevation < -1000]
         
         if len(ocean_tiles) < 10:
-            print("[地图管理器] 海洋地块不足，跳过岛屿生成")
+            logger.debug("[地图管理器] 海洋地块不足，跳过岛屿生成")
             return
         
         # 随机选择5-10个岛屿中心
         num_islands = random.randint(5, 10)
         island_centers = random.sample(ocean_tiles, min(num_islands, len(ocean_tiles)))
         
-        print(f"[地图管理器] 生成 {len(island_centers)} 个随机岛屿")
+        logger.debug(f"[地图管理器] 生成 {len(island_centers)} 个随机岛屿")
         
         for center in island_centers:
             # 每个岛屿3-15个地块

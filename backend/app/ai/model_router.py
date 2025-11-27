@@ -603,12 +603,24 @@ class ModelRouter:
                     url, 
                     json=body, 
                     headers=headers, 
-                    timeout=timeout
+                    timeout=timeout + 10  # 给予连接建立额外缓冲
                 ) as response:
                     response.raise_for_status()
                     yield self._stream_status_event(capability, "connected")
                     first_chunk = True
-                    async for line in response.aiter_lines():
+                    
+                    # 【修复】添加逐行读取超时保护，防止无限等待
+                    iterator = response.aiter_lines()
+                    while True:
+                        try:
+                            line = await asyncio.wait_for(iterator.__anext__(), timeout=60.0)
+                        except StopAsyncIteration:
+                            break
+                        except asyncio.TimeoutError:
+                            logger.error(f"[ModelRouter] Stream capability read timeout for {capability}")
+                            yield self._stream_error_event(capability, "Read timeout")
+                            break
+                        
                         if line.startswith("data: "):
                             data = line[6:]
                             if data.strip() == "[DONE]":

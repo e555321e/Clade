@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import logging
 from pathlib import Path
 import uuid
 import json
@@ -8,6 +9,8 @@ import asyncio
 from queue import Queue
 
 from fastapi import APIRouter, HTTPException
+
+logger = logging.getLogger(__name__)
 from fastapi.responses import StreamingResponse
 from sqlmodel import select
 
@@ -227,7 +230,7 @@ def apply_ui_config(config: UIConfig) -> UIConfig:
     # --- 1. 数据迁移：旧配置 -> 新多服务商配置 ---
     has_legacy_config = config.ai_api_key and not config.providers
     if has_legacy_config:
-        print("[配置] 检测到旧版配置，正在迁移到多服务商结构...")
+        logger.debug("[配置] 检测到旧版配置，正在迁移到多服务商结构...")
         default_provider_id = str(uuid.uuid4())[:8]
         provider = ProviderConfig(
             id=default_provider_id,
@@ -314,7 +317,7 @@ def apply_ui_config(config: UIConfig) -> UIConfig:
                 "model": route_config.model,
                 "extra_body": extra_body
             }
-            print(f"[配置] 已设置 {capability} -> Provider: {active_provider.name}, Model: {route_config.model}, Thinking: {route_config.enable_thinking}")
+            logger.debug(f"[配置] 已设置 {capability} -> Provider: {active_provider.name}, Model: {route_config.model}, Thinking: {route_config.enable_thinking}")
 
     # 2.3 (New) 自动应用默认服务商到未配置的路由
     if default_provider:
@@ -337,7 +340,7 @@ def apply_ui_config(config: UIConfig) -> UIConfig:
                     "model": model_to_use,
                     "extra_body": current_config.extra_body
                 }
-                print(f"[配置] 自动应用默认服务商到 {cap_name}: {default_provider.name} (Model: {model_to_use})")
+                logger.debug(f"[配置] 自动应用默认服务商到 {cap_name}: {default_provider.name} (Model: {model_to_use})")
 
     # --- 3. Embedding 配置 ---
     emb_provider = config.providers.get(config.embedding_provider_id)

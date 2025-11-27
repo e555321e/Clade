@@ -1,10 +1,13 @@
 ﻿from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 
 from pathlib import Path
 
 from sqlalchemy import text
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.sql import func
 from sqlmodel import select
 
@@ -107,7 +110,7 @@ class EnvironmentRepository:
         # 1. 保存到 JSON 文件
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(config.model_dump_json(indent=2, ensure_ascii=False), encoding="utf-8")
-        print(f"[配置] 已保存配置到 {path}")
+        logger.debug(f"[配置] 已保存配置到 {path}")
         return config
 
     def list_habitats(self) -> list[HabitatPopulation]:
