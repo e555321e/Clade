@@ -118,8 +118,8 @@ const PROVIDER_MODEL_PRESETS: Record<string, Array<{ model: string; label: strin
     { model: "deepseek-reasoner", label: "deepseek-reasoner 🧠", hint: "带思考功能，更强推理能力" },
   ],
   siliconflow: [
-    { model: "deepseek-ai/DeepSeek-V3", label: "DeepSeek-V3 (免费)", hint: "可使用免费额度" },
-    { model: "Pro/deepseek-ai/DeepSeek-V3", label: "DeepSeek-V3 Pro (付费)", hint: "付费，并行量更大" },
+    { model: "deepseek-ai/DeepSeek-V3.2-Exp", label: "DeepSeek-V3.2 (免费)", hint: "可使用免费额度" },
+    { model: "Pro/deepseek-ai/DeepSeek-V3.2-Exp", label: "DeepSeek-V3.2 (付费)", hint: "付费，并行量更大" },
   ],
 };
 
@@ -449,10 +449,24 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
       return;
     }
 
+    // 根据服务商自动选择测试模型
+    let testModel = form.default_model;
+    if (!testModel) {
+      // 根据 URL 自动选择合适的测试模型
+      if (provider.base_url.includes("deepseek.com")) {
+        testModel = "deepseek-chat";
+      } else if (provider.base_url.includes("siliconflow")) {
+        testModel = "deepseek-ai/DeepSeek-V3.2-Exp";
+      } else if (provider.base_url.includes("openai.com")) {
+        testModel = "gpt-3.5-turbo";
+      } else {
+        testModel = "gpt-3.5-turbo"; // 默认回退
+      }
+    }
+
     dispatch({ type: 'SET_TESTING_PROVIDER', id: providerId });
 
     try {
-      const testModel = form.default_model || "gpt-3.5-turbo";
       const result = await testApiConnection({
         type: "chat",
         base_url: provider.base_url,
@@ -716,12 +730,11 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                           <span className="field-error"> ⚠️</span>
                         )}
                       </span>
-                      <input
-                        className={`field-input ${validationErrors.default_model ? 'has-error' : ''}`}
+                      <GlobalModelSelect 
                         value={form.default_model ?? ""}
-                        onChange={(e) => dispatch({ type: 'UPDATE_GLOBAL', field: 'default_model', value: e.target.value })}
-                        placeholder="Pro/deepseek-ai/DeepSeek-V3.2-Exp"
-                        aria-invalid={!!validationErrors.default_model}
+                        defaultProvider={form.default_provider_id ? form.providers[form.default_provider_id] : null}
+                        onChange={(value) => dispatch({ type: 'UPDATE_GLOBAL', field: 'default_model', value })}
+                        hasError={!!validationErrors.default_model}
                       />
                     </label>
                   </div>
@@ -1265,6 +1278,71 @@ function CapabilityCard({
           </label>
         )}
       </div>
+    </div>
+  );
+}
+
+// 全局默认模型选择组件
+function GlobalModelSelect({ 
+  value, 
+  defaultProvider, 
+  onChange, 
+  hasError 
+}: { 
+  value: string;
+  defaultProvider: ProviderConfig | null;
+  onChange: (value: string) => void;
+  hasError: boolean;
+}) {
+  const modelPresets = getModelPresetsForProvider(defaultProvider);
+  const isPresetModel = modelPresets.some(p => p.model === value);
+  
+  if (modelPresets.length === 0) {
+    // 没有预设时显示普通输入框
+    return (
+      <input
+        className={`field-input ${hasError ? 'has-error' : ''}`}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="输入模型名称"
+      />
+    );
+  }
+
+  return (
+    <div className="global-model-select">
+      <select
+        className={`field-input ${hasError ? 'has-error' : ''}`}
+        value={isPresetModel ? value : "__custom__"}
+        onChange={(e) => {
+          if (e.target.value === "__custom__") {
+            onChange("");
+          } else {
+            onChange(e.target.value);
+          }
+        }}
+      >
+        <option value="">选择模型...</option>
+        {modelPresets.map(preset => (
+          <option key={preset.model} value={preset.model}>
+            {preset.label}
+          </option>
+        ))}
+        <option value="__custom__">自定义...</option>
+      </select>
+      {(!isPresetModel && value !== "") && (
+        <input
+          className="field-input global-model-custom"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="输入模型名称"
+        />
+      )}
+      {value && modelPresets.find(p => p.model === value)?.hint && (
+        <span className="model-hint">
+          💡 {modelPresets.find(p => p.model === value)?.hint}
+        </span>
+      )}
     </div>
   );
 }

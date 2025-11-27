@@ -649,6 +649,17 @@
   padding: 0.25rem 0;
 }
 
+/* Global Model Select */
+.global-model-select {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.global-model-custom {
+  font-size: 0.8rem;
+}
+
 /* Timeout Row */
 .timeout-row {
   display: flex;
