@@ -247,7 +247,23 @@ class MortalityEngine:
         arrays = _extract_species_arrays(species_list, niche_metrics)
         
         # ============ 阶段2: 向量化计算核心死亡率 ============
-        pressure_score = sum(pressure_modifiers.values()) / (len(pressure_modifiers) or 1)
+        # 【修复】正向修饰符不应计入压力分数
+        # 这些修饰符表示有利条件，不应增加死亡率
+        positive_modifiers = {
+            'resource_boost', 'productivity', 'competition',  # 资源繁盛期
+            'habitat_expansion', 'regeneration_opportunity',   # 中性/正向变化
+            'metabolic_boost', 'body_size_potential',          # 高氧环境优势
+            'oxygen', 'freshwater_input', 'nutrient_redistribution',
+            'upwelling_change', 'sea_level', 'seasonality', 'humidity',
+            'continental_shelf_exposure'
+        }
+        # 只累加负面压力（正值且非正向修饰符）
+        negative_pressure_sum = sum(
+            max(0, v) for k, v in pressure_modifiers.items() 
+            if k not in positive_modifiers
+        )
+        pressure_count = len([k for k in pressure_modifiers if k not in positive_modifiers]) or 1
+        pressure_score = negative_pressure_sum / pressure_count
         
         # 计算调整后的敏感度
         adjusted_sensitivity = arrays['base_sensitivity'].copy()

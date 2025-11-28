@@ -1010,9 +1010,31 @@ class TileBasedMortalityEngine:
             'uv_radiation', 'sulfide', 'toxin_level', 'salinity_change', 
             'mortality_spike', 'volcano', 'volcanic'
         }
+        # 【修复】正向/中性修饰符不应计入死亡压力
+        # 这些修饰符表示有利条件或中性变化，不应增加死亡率
+        positive_modifiers = {
+            'resource_boost',        # 资源丰富（资源繁盛期）
+            'productivity',          # 生产力（资源繁盛期）
+            'competition',           # 竞争变化（负值=减弱，不应计入）
+            'habitat_expansion',     # 栖息地扩展
+            'regeneration_opportunity',  # 再生机会（野火后）
+            'metabolic_boost',       # 代谢增强（高氧）
+            'body_size_potential',   # 大型化潜力（高氧）
+            'continental_shelf_exposure',  # 大陆架暴露（中性）
+            'oxygen',                # 氧气变化（正值=有利）
+            'freshwater_input',      # 淡水输入（中性）
+            'nutrient_redistribution',  # 营养重分布（中性）
+            'upwelling_change',      # 上升流变化（中性）
+            'sea_level',             # 海平面变化（中性，正负意义不同）
+            'seasonality',           # 季节性变化（中性）
+            'humidity',              # 湿度变化（中性，高湿度不一定有害）
+        }
+        excluded_modifiers = handled_modifiers | positive_modifiers
+        
+        # 只累加明确有害的未处理压力（正值部分）
         other_pressure = sum(
-            abs(v) for k, v in pressure_modifiers.items() 
-            if k not in handled_modifiers
+            max(0, v) for k, v in pressure_modifiers.items() 
+            if k not in excluded_modifiers
         )
         global_pressure = (other_pressure / 30.0) * base_sens[np.newaxis, :]
         

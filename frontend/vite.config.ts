@@ -11,7 +11,9 @@ export default defineConfig({
     port: FRONTEND_PORT,
     proxy: {
       "/api": {
-        target: `http://localhost:${BACKEND_PORT}`,
+        // 使用 127.0.0.1 而非 localhost，避免 IPv6/IPv4 不匹配问题
+        // 某些 Windows 系统上 localhost 会解析为 ::1 (IPv6)，而后端只监听 0.0.0.0 (IPv4)
+        target: `http://127.0.0.1:${BACKEND_PORT}`,
         changeOrigin: true,
       },
     },
