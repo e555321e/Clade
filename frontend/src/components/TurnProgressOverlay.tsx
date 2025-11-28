@@ -513,6 +513,36 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
     }, 3000);
   }, [isAborting]);
 
+  // 跳过当前AI步骤处理函数
+  const handleSkipStep = useCallback(async () => {
+    if (isAborting) return;
+    
+    setIsAborting(true);
+    setAbortMessage("正在跳过当前步骤...");
+    
+    try {
+      const result = await skipCurrentAIStep();
+      if (result.success) {
+        setAbortMessage(`⏭️ ${result.message}`);
+        logQueueRef.current.push({
+          icon: "⏭️",
+          text: `已跳过AI步骤，使用规则fallback`,
+          category: "系统",
+          timestamp: Date.now()
+        });
+      } else {
+        setAbortMessage(`❌ ${result.message}`);
+      }
+    } catch (error: any) {
+      setAbortMessage(`❌ 跳过失败: ${error.message}`);
+    }
+    
+    setTimeout(() => {
+      setAbortMessage("");
+      setIsAborting(false);
+    }, 3000);
+  }, [isAborting]);
+
   // 连接状态配置
   const statusConfig: Record<ConnectionStatus, { color: string; text: string; icon: string }> = {
     connecting: { color: "#fbbf24", text: "连接中", icon: "⏳" },
@@ -662,14 +692,39 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
                   <span className="warning-icon">⚠️</span>
                   <span className="warning-text">
                     AI响应时间较长，正在处理复杂任务...
-                    {isVeryLongWait && " 如果持续无响应，可尝试重置连接。"}
+                    {isVeryLongWait && " 可点击跳过使用规则fallback。"}
                   </span>
+                  <div className="warning-actions">
+                    <button 
+                      className="skip-btn"
+                      onClick={handleSkipStep}
+                      disabled={isAborting}
+                      title="跳过当前AI步骤，使用规则生成内容"
+                    >
+                      {isAborting ? "处理中..." : "⏭️ 跳过"}
+                    </button>
+                    <button 
+                      className="reset-btn"
+                      onClick={handleAbortTasks}
+                      disabled={isAborting}
+                      title="重置AI连接"
+                    >
+                      {isAborting ? "重置中..." : "🔄 重置"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 始终显示的跳过按钮（当处于AI阶段时） */}
+              {isCurrentStageAI && !isLikelyStuck && stageElapsedSeconds > 15 && (
+                <div className="skip-hint-bar">
+                  <span className="skip-hint-text">💡 AI正在处理中，如果等待太久可以</span>
                   <button 
-                    className="reset-btn"
-                    onClick={handleAbortTasks}
+                    className="skip-btn-subtle"
+                    onClick={handleSkipStep}
                     disabled={isAborting}
                   >
-                    {isAborting ? "重置中..." : "🔄 重置"}
+                    ⏭️ 跳过此步骤
                   </button>
                 </div>
               )}
@@ -1294,6 +1349,37 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
           line-height: 1.4;
         }
 
+        .warning-actions {
+          display: flex;
+          gap: 8px;
+          flex-shrink: 0;
+        }
+
+        .skip-btn {
+          padding: 6px 14px;
+          background: linear-gradient(135deg, rgba(59, 130, 246, 0.3), rgba(139, 92, 246, 0.2));
+          border: 1px solid rgba(59, 130, 246, 0.5);
+          border-radius: 8px;
+          color: #60a5fa;
+          font-size: 0.75rem;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          white-space: nowrap;
+          font-weight: 500;
+        }
+
+        .skip-btn:hover:not(:disabled) {
+          background: linear-gradient(135deg, rgba(59, 130, 246, 0.4), rgba(139, 92, 246, 0.3));
+          border-color: rgba(59, 130, 246, 0.7);
+          box-shadow: 0 0 12px rgba(59, 130, 246, 0.3);
+          transform: translateY(-1px);
+        }
+
+        .skip-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
         .reset-btn {
           padding: 6px 12px;
           background: rgba(251, 191, 36, 0.2);
@@ -1312,6 +1398,57 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
         }
 
         .reset-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        /* 跳过提示栏 */
+        .skip-hint-bar {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          padding: 10px 16px;
+          background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(139, 92, 246, 0.05));
+          border: 1px solid rgba(59, 130, 246, 0.2);
+          border-radius: 10px;
+          animation: hint-fade-in 0.5s ease-out;
+        }
+
+        @keyframes hint-fade-in {
+          from {
+            opacity: 0;
+            transform: translateY(-5px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        .skip-hint-text {
+          font-size: 0.78rem;
+          color: rgba(255, 255, 255, 0.6);
+        }
+
+        .skip-btn-subtle {
+          padding: 5px 12px;
+          background: rgba(59, 130, 246, 0.15);
+          border: 1px solid rgba(59, 130, 246, 0.3);
+          border-radius: 6px;
+          color: #60a5fa;
+          font-size: 0.72rem;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          white-space: nowrap;
+        }
+
+        .skip-btn-subtle:hover:not(:disabled) {
+          background: rgba(59, 130, 246, 0.25);
+          border-color: rgba(59, 130, 246, 0.5);
+        }
+
+        .skip-btn-subtle:disabled {
           opacity: 0.5;
           cursor: not-allowed;
         }
