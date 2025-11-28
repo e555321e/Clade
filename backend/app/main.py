@@ -1,14 +1,68 @@
 ﻿from __future__ import annotations
 
 import sys
+import time
 import uuid
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .api.routes import router as api_router, initialize_environment, set_backend_session_id
 from .api.admin_routes import router as admin_router
 from .api.embedding_routes import router as embedding_router
 from .core.config import get_settings, setup_logging
 from .core.database import init_db
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """请求日志中间件 - 记录所有请求的 URL、方法、状态码等信息，便于调试 404 等问题"""
+    
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        
+        # 获取客户端信息
+        client_host = request.client.host if request.client else "unknown"
+        method = request.method
+        url = str(request.url)
+        path = request.url.path
+        query = str(request.query_params) if request.query_params else ""
+        
+        # 执行请求
+        response = await call_next(request)
+        
+        # 计算耗时
+        duration_ms = (time.time() - start_time) * 1000
+        status_code = response.status_code
+        
+        # 根据状态码选择日志级别和颜色
+        if status_code >= 500:
+            level = "❌ ERROR"
+        elif status_code >= 400:
+            level = "⚠️ WARN "
+        elif status_code >= 300:
+            level = "↗️ REDIR"
+        else:
+            level = "✅ OK   "
+        
+        # 打印请求日志
+        log_line = f"[{level}] {status_code} | {method:6} | {path}"
+        if query:
+            log_line += f"?{query}"
+        log_line += f" | {duration_ms:.0f}ms | {client_host}"
+        
+        # 对于 404 错误，打印更详细的信息
+        if status_code == 404:
+            print(f"\n{'='*60}")
+            print(f"[404 详细信息]")
+            print(f"  完整 URL: {url}")
+            print(f"  路径: {path}")
+            print(f"  方法: {method}")
+            print(f"  客户端: {client_host}")
+            print(f"  查询参数: {query or '无'}")
+            print(f"{'='*60}\n")
+        
+        print(log_line)
+        
+        return response
 
 
 def disable_windows_quickedit() -> None:
@@ -63,6 +117,9 @@ settings = get_settings()
 setup_logging(settings)
 
 app = FastAPI(title=settings.app_name)
+
+# 添加请求日志中间件（帮助调试 404 等连接问题）
+app.add_middleware(RequestLoggingMiddleware)
 
 
 @app.on_event("startup")
