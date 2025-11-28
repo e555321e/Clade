@@ -619,7 +619,7 @@ class SimulationEngine:
                         all_habitats,
                         mortality_data,
                         self.turn_counter,
-                        embedding_service=self._embedding_integration
+                        embedding_service=self.embedding_integration
                     )
                     
                     if dispersal_results:
