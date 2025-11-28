@@ -2946,27 +2946,18 @@ async def execute_forced_hybridization(request: dict) -> dict:
     if not can_force:
         raise HTTPException(status_code=400, detail=reason)
     
-    # 检查能量
-    current_energy = energy_service.get_state().current
-    if current_energy < FORCED_HYBRIDIZATION_COST:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"能量不足！强行杂交需要 {FORCED_HYBRIDIZATION_COST} 能量，当前只有 {current_energy}"
-        )
-    
-    # 消耗能量
+    # 获取当前回合
     current_turn = simulation_engine.turn_counter
-    success = energy_service._state.current >= FORCED_HYBRIDIZATION_COST
-    if success:
-        energy_service._state.current -= FORCED_HYBRIDIZATION_COST
-        energy_service._state.history.append({
-            "turn": current_turn,
-            "action": "forced_hybridize",
-            "cost": FORCED_HYBRIDIZATION_COST,
-            "details": f"强行杂交 {species_a.common_name} × {species_b.common_name}",
-        })
-    else:
-        raise HTTPException(status_code=400, detail="能量扣除失败")
+    
+    # 使用 energy_service.spend() 方法消耗能量
+    success, message = energy_service.spend(
+        action="forced_hybridize",
+        turn=current_turn,
+        details=f"强行杂交 {species_a.common_name} × {species_b.common_name}"
+    )
+    
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
     
     # 收集现有编码
     all_species = species_repository.list_species()
@@ -2978,14 +2969,8 @@ async def execute_forced_hybridization(request: dict) -> dict:
     )
     
     if not chimera:
-        # 退还能量
-        energy_service._state.current += FORCED_HYBRIDIZATION_COST
-        energy_service._state.history.append({
-            "turn": current_turn,
-            "action": "forced_hybridize_refund",
-            "cost": -FORCED_HYBRIDIZATION_COST,
-            "details": "强行杂交失败，能量退还",
-        })
+        # 退还能量 - 直接添加回去
+        energy_service.add_energy(FORCED_HYBRIDIZATION_COST, "强行杂交失败，能量退还")
         raise HTTPException(status_code=500, detail="强行杂交实验失败")
     
     # 保存嵌合体

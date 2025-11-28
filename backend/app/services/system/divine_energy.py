@@ -87,6 +87,13 @@ ENERGY_COSTS: dict[str, EnergyCost] = {
         description="建立物种间的共生关系",
         icon="🤝",
     ),
+    # 强行杂交/嵌合体（高消耗）
+    "forced_hybridize": EnergyCost(
+        base_cost=50,
+        name="强行杂交",
+        description="强行融合两个物种创造嵌合体",
+        icon="🧬",
+    ),
 }
 
 
