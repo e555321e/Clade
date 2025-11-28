@@ -64,27 +64,27 @@ class Settings(BaseSettings):
     
     # ========== 物种分化平衡参数 ==========
     # 分化冷却期（回合数）：分化后多少回合内不能再次分化
-    speciation_cooldown_turns: int = Field(default=2, alias="SPECIATION_COOLDOWN_TURNS")
+    speciation_cooldown_turns: int = Field(default=1, alias="SPECIATION_COOLDOWN_TURNS")
     # 物种密度软上限：超过此数量后分化概率开始衰减
-    species_soft_cap: int = Field(default=40, alias="SPECIES_SOFT_CAP")
-    # 基础分化概率（0-1）
-    base_speciation_rate: float = Field(default=0.20, alias="BASE_SPECIATION_RATE")
+    species_soft_cap: int = Field(default=50, alias="SPECIES_SOFT_CAP")
+    # 基础分化概率（0-1）- 50万年/回合尺度下应更高
+    base_speciation_rate: float = Field(default=0.35, alias="BASE_SPECIATION_RATE")
     # 最大子种数量
-    max_offspring_count: int = Field(default=4, alias="MAX_OFFSPRING_COUNT")
+    max_offspring_count: int = Field(default=5, alias="MAX_OFFSPRING_COUNT")
     
     # ========== 遗传距离与基因交流平衡参数 ==========
-    # 时间分化分母（N回合达到最大时间距离）：50表示50回合(2500万年)完全分化
-    time_divergence_scale: int = Field(default=40, alias="TIME_DIVERGENCE_SCALE")
-    # 每回合遗传漂变增量（模拟突变积累）
-    genetic_drift_per_turn: float = Field(default=0.008, alias="GENETIC_DRIFT_PER_TURN")
-    # 基因交流遗传距离阈值（超过此值停止交流）
-    gene_flow_distance_threshold: float = Field(default=0.28, alias="GENE_FLOW_DISTANCE_THRESHOLD")
+    # 时间分化分母（N回合达到最大时间距离）：30表示30回合(1500万年)完全分化
+    time_divergence_scale: int = Field(default=30, alias="TIME_DIVERGENCE_SCALE")
+    # 每回合遗传漂变增量（模拟突变积累）- 提高以加速遗传分化
+    genetic_drift_per_turn: float = Field(default=0.012, alias="GENETIC_DRIFT_PER_TURN")
+    # 基因交流遗传距离阈值（超过此值停止交流）- 略微放宽
+    gene_flow_distance_threshold: float = Field(default=0.32, alias="GENE_FLOW_DISTANCE_THRESHOLD")
     # 基因交流地理重叠阈值（低于此值视为隔离）
-    gene_flow_overlap_threshold: float = Field(default=0.12, alias="GENE_FLOW_OVERLAP_THRESHOLD")
-    # 自动杂交检测概率（每回合检测同属近缘物种杂交的概率）
-    auto_hybridization_chance: float = Field(default=0.08, alias="AUTO_HYBRIDIZATION_CHANCE")
-    # 杂交遗传距离上限（超过此值无法杂交）
-    hybridization_distance_max: float = Field(default=0.45, alias="HYBRIDIZATION_DISTANCE_MAX")
+    gene_flow_overlap_threshold: float = Field(default=0.10, alias="GENE_FLOW_OVERLAP_THRESHOLD")
+    # 自动杂交检测概率（每回合检测同属近缘物种杂交的概率）- 提高以增加杂交事件
+    auto_hybridization_chance: float = Field(default=0.18, alias="AUTO_HYBRIDIZATION_CHANCE")
+    # 杂交遗传距离上限（超过此值无法杂交）- 略微放宽允许更多杂交
+    hybridization_distance_max: float = Field(default=0.50, alias="HYBRIDIZATION_DISTANCE_MAX")
     
     # 日志配置
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

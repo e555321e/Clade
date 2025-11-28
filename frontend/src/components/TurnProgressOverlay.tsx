@@ -444,7 +444,9 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
         eventSourceRef.current.close();
       }
     };
-  }, [showDetails, detectStageIndex, scrollStreamingToBottom, addLogToQueue, currentStageIndex]);
+    // 【修复】移除 currentStageIndex 依赖，避免阶段变化时重新创建 EventSource 导致事件丢失
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDetails]);
 
   // 重置状态
   useEffect(() => {

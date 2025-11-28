@@ -113,6 +113,7 @@ class SimulationEngine:
         self.gene_flow_service = gene_flow_service
         self.gene_activation_service = GeneActivationService()
         self.tile_mortality = TileBasedMortalityEngine()  # 新增：按地块计算死亡率
+        self.tile_mortality.set_embedding_service(embeddings)  # 【新增v3】注入Embedding服务用于生态位竞争
         self.ai_pressure_service = create_ai_pressure_service(router)  # 新增：AI压力响应服务
         
         # 【新增】Embedding 集成服务 - 管理分类学、演化预测、叙事生成等扩展功能
@@ -1643,14 +1644,17 @@ class SimulationEngine:
     ) -> None:
         """检测灭绝条件并更新物种状态。
         
-        【平衡修复v2】降低灭绝阈值，让高压力真正导致灭绝
+        【达尔文式淘汰v3】进一步强化灭绝条件
+        
+        设计理念：大量分化→激烈竞争→不适者淘汰→筛选最适者
         
         灭绝条件（50万年时间尺度）：
-        - 单回合死亡率≥80%：灾难性死亡，直接灭绝（原90%）
-        - 死亡率≥60%且连续2回合：种群衰退严重，灭绝（原70%）
-        - 死亡率≥50%且连续3回合：长期不适应环境，灭绝（原60%）
-        - 死亡率≥40%且连续4回合：慢性衰退，灭绝（新增）
-        - 种群<100且死亡率>40%：种群过小，无法恢复（原50%）
+        - 单回合死亡率≥75%：灾难性死亡，直接灭绝（原80%）
+        - 死亡率≥55%且连续2回合：种群衰退严重，灭绝（原60%）
+        - 死亡率≥45%且连续3回合：长期不适应环境，灭绝（原50%）
+        - 死亡率≥35%且连续4回合：慢性衰退，灭绝（原40%）
+        - 种群<150且死亡率>35%：种群过小，无法恢复（原100/40%）
+        - 【新增】死亡率≥30%且连续6回合：长期边缘化，最终灭绝
         
         Args:
             mortality_results: 死亡率计算结果
@@ -1663,8 +1667,8 @@ class SimulationEngine:
             streak_key = "mortality_streak"
             mortality_streak = int(species.morphology_stats.get(streak_key, 0) or 0)
             
-            # 【平衡v2】追踪连续高死亡率（从60%降到40%开始计数）
-            if death_rate >= 0.40:
+            # 【强化】追踪连续高死亡率（从35%开始计数，原40%）
+            if death_rate >= 0.35:
                 mortality_streak += 1
             else:
                 mortality_streak = 0
@@ -1673,24 +1677,28 @@ class SimulationEngine:
             extinction_triggered = False
             extinction_reason = ""
             
-            # 【平衡v2】条件1：单回合死亡率≥80%（原90%）
-            if death_rate >= 0.80:
+            # 【强化】条件1：单回合死亡率≥75%（原80%）
+            if death_rate >= 0.75:
                 extinction_triggered = True
                 extinction_reason = f"单回合死亡率{death_rate:.1%}，种群崩溃"
-            # 【平衡v2】条件2：死亡率≥60%且连续2回合（原70%）
-            elif death_rate >= 0.60 and mortality_streak >= 2:
+            # 【强化】条件2：死亡率≥55%且连续2回合（原60%）
+            elif death_rate >= 0.55 and mortality_streak >= 2:
                 extinction_triggered = True
-                extinction_reason = f"连续{mortality_streak}回合高死亡率（≥60%），种群衰退"
-            # 【平衡v2】条件3：死亡率≥50%且连续3回合（原60%）
-            elif death_rate >= 0.50 and mortality_streak >= 3:
+                extinction_reason = f"连续{mortality_streak}回合高死亡率（≥55%），竞争淘汰"
+            # 【强化】条件3：死亡率≥45%且连续3回合（原50%）
+            elif death_rate >= 0.45 and mortality_streak >= 3:
                 extinction_triggered = True
-                extinction_reason = f"连续{mortality_streak}回合中高死亡率（≥50%），长期不适应环境"
-            # 【新增】条件4：死亡率≥40%且连续4回合（慢性衰退）
-            elif death_rate >= 0.40 and mortality_streak >= 4:
+                extinction_reason = f"连续{mortality_streak}回合中高死亡率（≥45%），不适应环境"
+            # 【强化】条件4：死亡率≥35%且连续4回合（原40%）
+            elif death_rate >= 0.35 and mortality_streak >= 4:
                 extinction_triggered = True
-                extinction_reason = f"连续{mortality_streak}回合持续衰退（≥40%），无法恢复"
-            # 【平衡v2】条件5：种群过小且死亡率>40%（原50%）
-            elif final_pop < 100 and death_rate > 0.40:
+                extinction_reason = f"连续{mortality_streak}回合持续衰退（≥35%），被更适应的物种取代"
+            # 【新增】条件5：死亡率≥30%且连续6回合（长期边缘化）
+            elif death_rate >= 0.30 and mortality_streak >= 6:
+                extinction_triggered = True
+                extinction_reason = f"连续{mortality_streak}回合边缘化（≥30%），最终灭绝"
+            # 【强化】条件6：种群过小且死亡率>35%（原100/40%）
+            elif final_pop < 150 and death_rate > 0.35:
                 extinction_triggered = True
                 extinction_reason = f"种群过小({final_pop})且死亡率高({death_rate:.1%})，无法恢复"
             
@@ -1929,9 +1937,10 @@ class SimulationEngine:
                         continue
                     
                     # 种群检查：双方都需要有一定种群
+                    # 【平衡优化v3】降低种群门槛从100到50，更容易触发杂交
                     pop1 = sp1.morphology_stats.get("population", 0) or 0
                     pop2 = sp2.morphology_stats.get("population", 0) or 0
-                    if pop1 < 100 or pop2 < 100:
+                    if pop1 < 50 or pop2 < 50:
                         continue
                     
                     # 添加到任务列表
@@ -1944,11 +1953,13 @@ class SimulationEngine:
                         "pop2": pop2,
                     })
                     
-                    # 每属每回合最多产生1个自动杂交种
-                    break
+                    # 【平衡优化v3】每属每回合最多产生2个自动杂交种（原1个）
+                    # 生物学依据：同域分布的近缘物种间杂交是常见现象
+                    if len([t for t in hybridization_tasks if t["sp1"].genus_code == sp1.genus_code]) >= 2:
+                        break
                 else:
                     continue
-                break
+                # 移除外层break，允许更多杂交机会
         
         # 批量处理杂交任务（使用异步AI调用）
         for task in hybridization_tasks:

@@ -147,34 +147,41 @@ def _vectorized_generational_mortality(
 
 
 def _vectorized_density_penalty(total_count: int, trophic_levels: np.ndarray) -> np.ndarray:
-    """向量化计算物种密度惩罚"""
+    """向量化计算物种密度惩罚（达尔文式淘汰强化版）
+    
+    【核心理念】物种越多，竞争越激烈，淘汰压力越大
+    这确保了"大量分化"后会有"大量淘汰"，筛选出最适者
+    """
     n = len(trophic_levels)
     
-    if total_count <= 30:
+    # 【强化】降低触发阈值从30到20
+    if total_count <= 20:
         return np.zeros(n)
     
-    # 基础惩罚
-    if total_count <= 60:
-        penalty = (total_count - 30) / 10 * 0.02
+    # 【强化】增加惩罚力度
+    if total_count <= 40:
+        # 20-40种：每多5种增加3%（原10种增加2%）
+        penalty = (total_count - 20) / 5 * 0.03
+    elif total_count <= 70:
+        # 40-70种：每多5种增加4%
+        penalty = 0.12 + (total_count - 40) / 5 * 0.04
     elif total_count <= 100:
-        penalty = 0.06 + (total_count - 60) / 10 * 0.03
+        # 70-100种：每多5种增加5%
+        penalty = 0.36 + (total_count - 70) / 5 * 0.05
     else:
-        penalty = 0.18 + (total_count - 100) / 10 * 0.05
+        # >100种：每多5种增加6%（生态系统超载）
+        penalty = 0.66 + (total_count - 100) / 5 * 0.06
     
-    # 营养级修正（高营养级物种对密度更敏感，因为需要更大领地）
-    # T1: 生产者 - 密度影响最小
-    # T2: 初级消费者 - 正常密度惩罚
-    # T3: 次级消费者 - 轻微增加
-    # T4: 三级消费者 - 中度增加
-    # T5: 顶级捕食者 - 高度敏感（需要最大领地）
+    # 营养级修正（高营养级物种对密度更敏感）
     multiplier = np.ones(n)
-    multiplier = np.where(trophic_levels < 2.0, 0.7, multiplier)  # T1
+    multiplier = np.where(trophic_levels < 2.0, 0.6, multiplier)  # T1: 生产者
     multiplier = np.where((trophic_levels >= 2.0) & (trophic_levels < 3.0), 1.0, multiplier)  # T2
-    multiplier = np.where((trophic_levels >= 3.0) & (trophic_levels < 4.0), 1.2, multiplier)  # T3
-    multiplier = np.where((trophic_levels >= 4.0) & (trophic_levels < 5.0), 1.5, multiplier)  # T4
-    multiplier = np.where(trophic_levels >= 5.0, 2.0, multiplier)  # T5
+    multiplier = np.where((trophic_levels >= 3.0) & (trophic_levels < 4.0), 1.3, multiplier)  # T3
+    multiplier = np.where((trophic_levels >= 4.0) & (trophic_levels < 5.0), 1.7, multiplier)  # T4
+    multiplier = np.where(trophic_levels >= 5.0, 2.2, multiplier)  # T5: 顶级捕食者
     
-    return np.minimum(penalty * multiplier, 0.30)
+    # 【强化】上限从0.30提高到0.45
+    return np.minimum(penalty * multiplier, 0.45)
 
 
 @dataclass(slots=True)
@@ -253,8 +260,9 @@ class MortalityEngine:
             adjusted_sensitivity *= (1.0 - arrays['salinity_resistance'] * 0.3)
         
         # 压力因子和竞争因子
+        # 【强化】提高生态位重叠的影响，促进"最适者生存"
         pressure_factor = (pressure_score / 25) * adjusted_sensitivity
-        overlap_factor = np.maximum(arrays['overlap'], 0.0) * 0.4
+        overlap_factor = np.maximum(arrays['overlap'], 0.0) * 0.55  # 从0.4提高到0.55
         
         # 营养级相关压力（需要逐个处理因为有条件分支）
         grazing_pressure = np.zeros(n)
@@ -306,9 +314,9 @@ class MortalityEngine:
         
         # 向量化计算复合存活率
         # 每个因子都有上限，防止单一因子导致100%死亡
-        # 但多个因子叠加可以导致极高死亡率
+        # 但多个因子叠加可以导致极高死亡率，实现"大量淘汰"
         survival_pressure = 1.0 - np.minimum(0.8, pressure_factor)
-        survival_competition = 1.0 - np.minimum(0.6, overlap_factor)
+        survival_competition = 1.0 - np.minimum(0.70, overlap_factor)  # 从0.6提高到0.70
         # 【调整】资源/食物稀缺上限从0.85降到0.65，避免过早崩溃
         survival_resource = 1.0 - np.minimum(0.65, resource_factor)
         survival_grazing = 1.0 - np.minimum(0.7, grazing_pressure)
@@ -502,15 +510,18 @@ class MortalityEngine:
     def _calculate_sibling_competition(
         self, species: Species, all_species: Sequence[Species], base_overlap: float
     ) -> float:
-        """计算同属物种竞争压力（增强版）
+        """计算同属物种竞争压力（达尔文式淘汰强化版）
         
-        同谱系前缀的物种（如A1与A1a1，A1a1与A1a1a1）之间存在更激烈的竞争。
+        【核心设计理念】大量分化→激烈竞争→不适者淘汰→筛选最适者
+        
+        同谱系前缀的物种（如A1与A1a1，A1a1与A1a1a1）之间存在激烈的竞争。
         子代对亲代的竞争压力更大（体现演化优势）。
         
-        【优化】增加了以下竞争来源：
-        1. 子代对亲代的压制（原有）
-        2. 同级兄弟竞争（新增）- 同一次分化产生的兄弟物种
-        3. 近亲竞争（新增）- 共享祖先的物种
+        【强化淘汰】增强所有竞争来源：
+        1. 子代对亲代的压制（强化）- 新物种淘汰旧物种
+        2. 同级兄弟竞争（强化）- 同代物种间生存竞争
+        3. 近亲竞争（强化）- 物种数量越多，竞争越激烈
+        4. 【新增】适应度竞争 - 属性更优的物种压制属性较差的
         
         Args:
             species: 目标物种
@@ -518,7 +529,7 @@ class MortalityEngine:
             base_overlap: 基础生态位重叠度
             
         Returns:
-            额外死亡率（0-0.40）
+            额外死亡率（0-0.55）
         """
         lineage = species.lineage_code
         population = int(species.morphology_stats.get("population", 0) or 0)
@@ -527,9 +538,6 @@ class MortalityEngine:
             return 0.0
         
         # 提取不同级别的谱系前缀
-        # 例如：A1a2b1 
-        #   - 直接前缀(parent): A1a2 (去掉最后2个字符)
-        #   - 属级前缀(genus): A1 (只保留前2个字符)
         if len(lineage) > 2:
             parent_prefix = lineage[:-2] if len(lineage) > 2 else lineage
         else:
@@ -552,38 +560,75 @@ class MortalityEngine:
         
         total_competition = 0.0
         
-        # 1. 子代对亲代的压制（增强系数）
+        # 1. 子代对亲代的压制（强化：新物种淘汰旧物种）
         for sibling in siblings:
             sibling_pop = int(sibling.morphology_stats.get("population", 0) or 0)
             
             if sibling.created_turn > species.created_turn:
                 pop_ratio = sibling_pop / max(population, 1)
-                # 【增强】压制系数从0.15提高到0.20
-                competition = base_overlap * min(pop_ratio, 2.0) * 0.20
+                # 【强化】压制系数从0.20提高到0.28，体现"新物种更适应"
+                competition = base_overlap * min(pop_ratio, 2.5) * 0.28
                 total_competition += competition
         
-        # 2. 【新增】同级兄弟竞争
-        # 同一次分化产生的物种（parent_code相同）竞争最激烈
+        # 2. 同级兄弟竞争（强化：同代物种的生存竞争）
         my_parent = getattr(species, 'parent_code', None)
         for sibling in siblings:
             sibling_parent = getattr(sibling, 'parent_code', None)
-            if sibling_parent and sibling_parent == my_parent and sibling.created_turn == species.created_turn:
+            if sibling_parent and sibling_parent == my_parent:
                 sibling_pop = int(sibling.morphology_stats.get("population", 0) or 0)
                 pop_ratio = sibling_pop / max(population, 1)
-                # 同时分化的兄弟竞争激烈
-                competition = base_overlap * min(pop_ratio, 1.5) * 0.15
+                # 【强化】兄弟竞争系数从0.15提高到0.22
+                competition = base_overlap * min(pop_ratio, 2.0) * 0.22
                 total_competition += competition
         
-        # 3. 【新增】近亲竞争（表亲级别）
-        # 系数较低，但会随着属内物种数量增加而累积
+        # 3. 近亲竞争（强化：物种数量越多，竞争越激烈）
         cousin_count = len(cousins)
-        if cousin_count > 3:
-            # 每多3个表亲增加5%竞争压力
-            cousin_penalty = min(0.15, (cousin_count - 3) * 0.05)
-            total_competition += cousin_penalty * base_overlap
+        if cousin_count > 2:  # 降低触发阈值
+            # 【强化】每多2个表亲增加7%竞争压力（原3个增加5%）
+            cousin_penalty = min(0.25, (cousin_count - 2) * 0.07)
+            total_competition += cousin_penalty * max(base_overlap, 0.3)  # 保证最小生态位重叠
         
-        # 【调整】上限从25%提高到40%
-        return min(total_competition, 0.40)
+        # 4.【新增】适应度竞争：属性更优的物种压制属性较差的
+        # 比较核心属性（适应性、繁殖力、竞争力）
+        my_fitness = self._calculate_fitness_score(species)
+        for relative in siblings + cousins[:5]:  # 只比较前5个近亲
+            relative_fitness = self._calculate_fitness_score(relative)
+            if relative_fitness > my_fitness:
+                fitness_gap = (relative_fitness - my_fitness) / max(my_fitness, 1.0)
+                # 适应度差距转化为竞争压力
+                total_competition += min(0.12, fitness_gap * 0.15)
+        
+        # 【强化】上限从40%提高到55%，允许更激烈的淘汰
+        return min(total_competition, 0.55)
+    
+    def _calculate_fitness_score(self, species: Species) -> float:
+        """计算物种的适应度分数（用于竞争比较）
+        
+        综合考虑：
+        - 繁殖效率（世代时间越短越有优势）
+        - 环境适应性（各种抗性的平均值）
+        - 竞争能力（营养级和捕食能力）
+        """
+        traits = species.abstract_traits
+        morph = species.morphology_stats
+        
+        # 繁殖效率：世代时间越短越好（log缩放）
+        gen_time = morph.get("generation_time_days", 365)
+        repro_score = 10.0 / (1.0 + math.log10(max(1, gen_time)))
+        
+        # 环境适应性：各种抗性的平均值
+        adaptability = (
+            traits.get("适应性", 5) +
+            traits.get("耐寒性", 5) +
+            traits.get("耐热性", 5) +
+            traits.get("耐旱性", 5)
+        ) / 4.0
+        
+        # 竞争能力：种群和营养级
+        population = morph.get("population", 1000) or 1000
+        pop_score = min(5.0, math.log10(max(1, population)) / 2)
+        
+        return repro_score + adaptability + pop_score
     
     def _calculate_generational_mortality(
         self,

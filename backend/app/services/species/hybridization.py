@@ -44,9 +44,14 @@ class HybridizationService:
     def can_hybridize(self, sp1: Species, sp2: Species, genetic_distance: float = None) -> tuple[bool, float]:
         """判断两个物种能否杂交
         
-        【平衡优化v2】使用配置参数：
-        - 杂交距离上限从配置读取（默认0.45）
-        - 可育性计算更平滑
+        【平衡优化v3】放宽杂交条件：
+        - 杂交距离上限从配置读取（默认0.50）
+        - 可育性计算更平滑，且基础值更高
+        - 允许不同属但同科的物种进行杂交（低可育性）
+        
+        生物学依据：
+        - 属间杂交在植物中很常见（如小麦属×黑麦属）
+        - 某些动物也存在属间杂交（如狮虎兽、骡子）
         
         Args:
             sp1, sp2: 待杂交的物种
@@ -56,10 +61,7 @@ class HybridizationService:
             (是否可杂交, 预期可育性)
         """
         _settings = get_settings()
-        max_distance = _settings.hybridization_distance_max  # 默认0.45
-        
-        if sp1.genus_code != sp2.genus_code or not sp1.genus_code:
-            return False, 0.0
+        max_distance = _settings.hybridization_distance_max  # 默认0.50
         
         if sp1.lineage_code == sp2.lineage_code:
             return False, 0.0
@@ -67,15 +69,24 @@ class HybridizationService:
         if genetic_distance is None:
             genetic_distance = self.genetic_calculator.calculate_distance(sp1, sp2)
         
-        if genetic_distance >= max_distance:
-            return False, 0.0
+        # 同属杂交：正常判断
+        if sp1.genus_code == sp2.genus_code and sp1.genus_code:
+            if genetic_distance >= max_distance:
+                return False, 0.0
+            # 可育性计算：距离越近可育性越高，使用更平滑的曲线
+            # 使用0.7次幂让中等距离的可育性更高
+            fertility = max(0.0, 1.0 - (genetic_distance / max_distance) ** 0.7)
+            return True, fertility
         
-        # 可育性计算：距离越近可育性越高，使用平滑曲线
-        # 距离0 -> 可育性1.0
-        # 距离0.45 -> 可育性0
-        fertility = max(0.0, 1.0 - (genetic_distance / max_distance) ** 0.8)
+        # 【新增】不同属的杂交：需要更近的遗传距离，且可育性大幅降低
+        # 这模拟了属间杂交（如骡子、狮虎兽等）
+        cross_genus_max_distance = max_distance * 0.6  # 更严格的距离限制
+        if genetic_distance < cross_genus_max_distance:
+            # 属间杂交可育性很低（最高30%）
+            fertility = max(0.0, 0.30 * (1.0 - (genetic_distance / cross_genus_max_distance) ** 0.5))
+            return True, fertility
         
-        return True, fertility
+        return False, 0.0
     
     def create_hybrid(
         self, 

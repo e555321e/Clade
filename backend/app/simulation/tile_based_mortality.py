@@ -94,9 +94,11 @@ class TileBasedMortalityEngine:
     - 地块内物种竞争（只有同地块的物种才真正竞争）
     - 地块内营养级互动
     - 矩阵化批量计算
+    - 【新增】集成Embedding相似度计算生态位竞争
     
     【性能】
     使用稀疏矩阵表示种群分布，避免处理空白地块。
+    预计算物种相似度矩阵，避免重复计算。
     """
     
     def __init__(self, batch_limit: int = 50) -> None:
@@ -130,6 +132,10 @@ class TileBasedMortalityEngine:
         # 【新增】植物压力缓存（用于结果汇总）
         self._last_plant_competition_matrix: np.ndarray | None = None
         self._last_herbivory_pressure: dict[str, float] = {}  # {lineage_code: pressure}
+        
+        # 【新增v3】物种相似度矩阵缓存（Embedding + 特征）
+        self._species_similarity_matrix: np.ndarray | None = None
+        self._embedding_service = None  # 由外部注入
     
     def build_matrices(
         self,
@@ -179,6 +185,9 @@ class TileBasedMortalityEngine:
         # 构建地块环境矩阵
         self._build_tile_environment_matrix()
         
+        # 【新增v3】构建物种相似度矩阵（用于生态位竞争）
+        self._build_species_similarity_matrix(list(species_list))
+        
         logger.info(f"[地块死亡率] 矩阵构建完成: {n_tiles}地块 × {n_species}物种")
     
     def _distribute_population(self) -> None:
@@ -201,13 +210,82 @@ class TileBasedMortalityEngine:
             if sum_suit > 0:
                 # 按适宜度比例分配种群
                 self._population_matrix[:, sp_idx] = total_pop * (suitability_col / sum_suit)
-            else:
-                # 没有栖息地数据，假设均匀分布在所有陆地/海洋地块
-                habitat_type = getattr(species, 'habitat_type', 'terrestrial')
-                suitable_mask = self._get_habitat_type_mask(habitat_type)
-                n_suitable = suitable_mask.sum()
-                if n_suitable > 0:
-                    self._population_matrix[suitable_mask, sp_idx] = total_pop / n_suitable
+    
+    def set_embedding_service(self, embedding_service) -> None:
+        """设置Embedding服务（用于计算物种语义相似度）
+        
+        由 SimulationEngine 在初始化时调用
+        """
+        self._embedding_service = embedding_service
+    
+    def _build_species_similarity_matrix(self, species_list: list[Species]) -> None:
+        """构建物种相似度矩阵（特征 + Embedding 混合）
+        
+        【核心优化】预计算所有物种对的相似度，避免每个地块重复计算
+        
+        相似度 = 特征相似度 × 0.5 + Embedding语义相似度 × 0.5
+        
+        这里的相似度表示生态位重叠程度：
+        - 高相似度 → 竞争激烈
+        - 低相似度 → 可共存
+        """
+        n = len(species_list)
+        if n == 0:
+            self._species_similarity_matrix = None
+            return
+        
+        # ======== 1. 计算特征相似度矩阵 (n × n) ========
+        # 提取特征向量：[营养级, log体型, 栖息地编码, 耐热性, 耐寒性, 耐旱性]
+        features = np.zeros((n, 6), dtype=np.float32)
+        
+        habitat_encoding = {
+            'terrestrial': 0, 'marine': 1, 'freshwater': 2,
+            'coastal': 3, 'aerial': 4, 'deep_sea': 5, 'amphibious': 3.5
+        }
+        
+        for i, sp in enumerate(species_list):
+            features[i, 0] = getattr(sp, 'trophic_level', 1.0) / 5.0
+            body_size = sp.morphology_stats.get("body_length_cm", 10.0) or 10.0
+            features[i, 1] = np.log10(max(body_size, 0.01)) / 4.0
+            habitat = getattr(sp, 'habitat_type', 'terrestrial')
+            features[i, 2] = habitat_encoding.get(habitat, 0) / 5.0
+            traits = sp.abstract_traits or {}
+            features[i, 3] = traits.get("耐热性", 5) / 10.0
+            features[i, 4] = traits.get("耐寒性", 5) / 10.0
+            features[i, 5] = traits.get("耐旱性", 5) / 10.0
+        
+        # 欧几里得距离 → 相似度
+        diff = features[:, np.newaxis, :] - features[np.newaxis, :, :]
+        distances = np.sqrt((diff ** 2).sum(axis=2))
+        max_dist = np.sqrt(6)
+        feature_sim = 1.0 - (distances / max_dist)
+        np.fill_diagonal(feature_sim, 1.0)
+        feature_sim = np.clip(feature_sim, 0.0, 1.0)
+        
+        # ======== 2. 获取Embedding相似度矩阵 (n × n) ========
+        embedding_sim = np.eye(n, dtype=np.float32)  # 默认单位矩阵
+        
+        if self._embedding_service is not None:
+            try:
+                lineage_codes = [sp.lineage_code for sp in species_list]
+                emb_matrix, emb_codes = self._embedding_service.compute_species_similarity_matrix(lineage_codes)
+                
+                if len(emb_matrix) > 0 and len(emb_codes) == n:
+                    embedding_sim = emb_matrix.astype(np.float32)
+                    logger.debug(f"[地块竞争] 使用Embedding相似度矩阵 ({n}×{n})")
+            except Exception as e:
+                logger.warning(f"[地块竞争] Embedding相似度计算失败: {e}，使用纯特征相似度")
+        
+        # ======== 3. 混合相似度 ========
+        # 特征相似度权重0.5 + Embedding权重0.5
+        self._species_similarity_matrix = (
+            feature_sim * 0.5 + embedding_sim * 0.5
+        ).astype(np.float32)
+        
+        # 对角线设为0（自己与自己不竞争）
+        np.fill_diagonal(self._species_similarity_matrix, 0.0)
+        
+        logger.debug(f"[地块竞争] 物种相似度矩阵构建完成 ({n}×{n})")
     
     def _get_habitat_type_mask(self, habitat_type: str) -> np.ndarray:
         """获取适合某种栖息地类型的地块掩码"""
@@ -956,15 +1034,20 @@ class TileBasedMortalityEngine:
         species_arrays: dict[str, np.ndarray],
         batch_population_matrix: np.ndarray,
     ) -> np.ndarray:
-        """计算每个地块内的竞争压力（矩阵优化版）
+        """计算每个地块内的竞争压力（Embedding增强版）
         
-        【核心改进】只有同一地块上的物种才会竞争
-        【性能优化】使用矩阵运算代替嵌套循环
+        【核心改进v3】
+        1. 使用预计算的物种相似度矩阵（特征+Embedding混合）
+        2. 只有同一地块上的物种才会竞争
+        3. 相似度越高，竞争越激烈（生态位重叠）
+        4. 向量化批量计算所有地块
+        
+        竞争强度 = 生态位相似度 × 种群压力比 × 营养级系数
         
         Args:
             species_list: 当前批次的物种列表
             species_arrays: 物种属性数组
-            batch_population_matrix: 【关键】当前批次对应的population子矩阵
+            batch_population_matrix: 当前批次对应的population子矩阵
         """
         n_tiles = len(self._tiles)
         n_species = len(species_list)
@@ -972,31 +1055,46 @@ class TileBasedMortalityEngine:
         if batch_population_matrix is None:
             return np.zeros((n_tiles, n_species))
         
-        # 营养级 (n_species,)
+        # ======== 1. 获取或构建相似度矩阵 ========
+        if self._species_similarity_matrix is not None and self._species_similarity_matrix.shape[0] == n_species:
+            # 使用预计算的相似度矩阵
+            similarity_matrix = self._species_similarity_matrix
+        else:
+            # 回退：重新构建（处理新分化物种的情况）
+            self._build_species_similarity_matrix(species_list)
+            if self._species_similarity_matrix is not None:
+                similarity_matrix = self._species_similarity_matrix
+            else:
+                # 最终回退：只用营养级
+                trophic_levels = species_arrays['trophic_level']
+                trophic_diff = np.abs(trophic_levels[:, np.newaxis] - trophic_levels[np.newaxis, :])
+                similarity_matrix = np.where(trophic_diff < 0.5, 0.8, 
+                                             np.where(trophic_diff < 1.0, 0.4, 0.1))
+                np.fill_diagonal(similarity_matrix, 0.0)
+        
+        # ======== 2. 营养级系数矩阵 ========
+        # 同营养级竞争最激烈，相邻层次次之
         trophic_levels = species_arrays['trophic_level']
+        trophic_diff = np.abs(trophic_levels[:, np.newaxis] - trophic_levels[np.newaxis, :])
         
-        # 预计算营养级差异矩阵 (n_species × n_species)
-        trophic_diff_matrix = np.abs(trophic_levels[:, np.newaxis] - trophic_levels[np.newaxis, :])
-        
-        # 竞争系数矩阵（基于营养级差异）
-        # 同营养级（差异<0.5）：0.3
-        # 相邻营养级（差异0.5-1.0）：0.15
-        # 远距离营养级（差异>=1.0）：0.05
-        comp_coef_matrix = np.where(
-            trophic_diff_matrix < 0.5, 0.3,
-            np.where(trophic_diff_matrix < 1.0, 0.15, 0.05)
+        # 营养级系数：同级1.0，相邻0.6，其他0.2
+        trophic_coef = np.where(
+            trophic_diff < 0.5, 1.0,
+            np.where(trophic_diff < 1.0, 0.6, 0.2)
         )
         
-        # 对角线设为0（自己不与自己竞争）
+        # ======== 3. 综合竞争系数矩阵 ========
+        # 竞争系数 = 相似度 × 营养级系数
+        # 【强化】提高基础竞争强度（符合达尔文式淘汰）
+        comp_coef_matrix = (similarity_matrix * trophic_coef * 0.45).astype(np.float64)
         np.fill_diagonal(comp_coef_matrix, 0.0)
         
-        # 竞争压力矩阵 (n_tiles × n_species)
+        # ======== 4. 向量化计算所有地块的竞争压力 ========
         competition = np.zeros((n_tiles, n_species), dtype=np.float64)
         
         # 对每个地块批量计算
         for tile_idx in range(n_tiles):
-            # 【关键修复】使用batch_population_matrix而不是self._population_matrix
-            tile_pop = batch_population_matrix[tile_idx, :]  # (n_species,) - 现在维度匹配
+            tile_pop = batch_population_matrix[tile_idx, :]
             
             # 获取有种群的物种掩码
             present_mask = tile_pop > 0
@@ -1005,27 +1103,26 @@ class TileBasedMortalityEngine:
             if n_present <= 1:
                 continue
             
-            # 种群比例矩阵 (n_species × n_species)
-            # pop_ratio[i, j] = pop[j] / pop[i]
-            safe_pop = np.maximum(tile_pop, 1)  # 避免除零
-            pop_ratio = tile_pop[np.newaxis, :] / safe_pop[:, np.newaxis]  # (n_species × n_species)
+            # 种群压力比矩阵
+            safe_pop = np.maximum(tile_pop, 1)
+            pop_ratio = tile_pop[np.newaxis, :] / safe_pop[:, np.newaxis]
+            pop_ratio = np.minimum(pop_ratio, 3.0)  # 限制最大压力比
             
-            # 竞争强度 = 竞争系数 × 种群比例
-            comp_strength = comp_coef_matrix * pop_ratio  # (n_species × n_species) - 维度现在匹配！
+            # 竞争强度 = 竞争系数 × 种群压力比
+            comp_strength = comp_coef_matrix * pop_ratio
             
             # 限制单个竞争者的贡献
-            comp_strength = np.minimum(comp_strength, 0.2)
+            comp_strength = np.minimum(comp_strength, 0.25)
             
             # 只考虑在场物种之间的竞争
-            # 掩码矩阵：只有双方都在场时才计算竞争
             present_matrix = present_mask[:, np.newaxis] & present_mask[np.newaxis, :]
             comp_strength = np.where(present_matrix, comp_strength, 0.0)
             
-            # 对每个物种汇总竞争压力（按行求和）
-            total_competition = comp_strength.sum(axis=1)  # (n_species,)
+            # 对每个物种汇总竞争压力
+            total_competition = comp_strength.sum(axis=1)
             
-            # 限制总竞争上限
-            competition[tile_idx, :] = np.minimum(total_competition, 0.6)
+            # 【强化v3】提高竞争上限，促进达尔文式淘汰
+            competition[tile_idx, :] = np.minimum(total_competition, 0.70)
         
         return competition
     
