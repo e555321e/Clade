@@ -51,6 +51,12 @@ class UIConfig(BaseModel):
     autosave_interval: int = 1     # 每N回合自动保存一次
     autosave_max_slots: int = 5    # 最大自动保存槽位数
     
+    # 6. AI 推演超时配置
+    ai_species_eval_timeout: int = 60    # 单物种AI评估超时（秒）
+    ai_batch_eval_timeout: int = 180     # 整体批量评估超时（秒）
+    ai_narrative_timeout: int = 60       # 物种叙事生成超时（秒）
+    ai_speciation_timeout: int = 120     # 物种分化评估超时（秒）
+    
     # --- Legacy Fields (Keep for migration) ---
     ai_provider: str | None = None
     ai_model: str | None = None

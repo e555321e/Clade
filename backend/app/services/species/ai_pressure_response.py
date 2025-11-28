@@ -163,6 +163,27 @@ class AIPressureResponseService:
         self._consecutive_danger: dict[str, int] = {}
         # 缓存：本回合已处理的物种
         self._processed_this_turn: set[str] = set()
+        
+        # 【新增】事件回调（用于发送流式心跳到前端）
+        self._event_callback: Callable[[str, str, str], None] | None = None
+        # 【新增】是否使用流式传输
+        self.use_streaming = True
+    
+    def set_event_callback(self, callback: Callable[[str, str, str], None] | None) -> None:
+        """设置事件回调函数
+        
+        Args:
+            callback: 回调函数，签名为 (event_type, message, category, **extra)
+        """
+        self._event_callback = callback
+    
+    def _emit_event(self, event_type: str, message: str, category: str = "AI", **extra) -> None:
+        """发送事件到前端"""
+        if self._event_callback:
+            try:
+                self._event_callback(event_type, message, category, **extra)
+            except Exception as e:
+                logger.debug(f"[AI服务] 发送事件失败: {e}")
     
     def clear_turn_cache(self) -> None:
         """清空回合缓存（每回合开始时调用）"""
@@ -317,6 +338,160 @@ class AIPressureResponseService:
     
     # ==================== 【新】综合状态评估 ====================
     
+    async def _stream_call_with_heartbeat(
+        self,
+        capability: str,
+        messages: list[dict[str, str]],
+        response_format: dict | None = None,
+        task_name: str = "AI处理",
+        timeout: float | None = None,
+    ) -> str:
+        """【增强】使用流式传输调用 AI，智能超时 + chunk心跳
+        
+        智能超时机制：
+        - 只要持续收到 chunk，就不会触发超时
+        - 只有在 idle_timeout 秒内没有收到任何 chunk 才触发超时
+        - 这样即使 AI 思考+输出很长时间，只要在输出就不会超时
+        
+        Args:
+            capability: AI 能力名称
+            messages: 消息列表
+            response_format: 响应格式
+            task_name: 任务名称（用于心跳消息）
+            timeout: 空闲超时秒数（两个chunk之间的最大间隔），None则使用默认
+            
+        Returns:
+            完整的 AI 响应内容
+        """
+        chunks: list[str] = []
+        chunk_count = 0
+        last_heartbeat_time = asyncio.get_event_loop().time()
+        last_chunk_time = asyncio.get_event_loop().time()  # 上次收到 chunk 的时间
+        heartbeat_interval = 1.5  # 每 1.5 秒发送一次 chunk 心跳
+        
+        # 空闲超时：两个 chunk 之间的最大允许间隔
+        # 这个超时只在"没有收到任何输出"时才触发
+        idle_timeout = timeout or float(self.SPECIES_EVAL_TIMEOUT)
+        
+        async def iter_with_idle_timeout():
+            """带空闲超时的迭代器包装"""
+            nonlocal last_chunk_time
+            
+            async for item in self.router.astream_capability(
+                capability=capability,
+                messages=messages,
+                response_format=response_format,
+            ):
+                last_chunk_time = asyncio.get_event_loop().time()  # 重置空闲计时
+                yield item
+        
+        try:
+            # 启动流式迭代
+            stream_iter = iter_with_idle_timeout()
+            
+            while True:
+                try:
+                    # 计算剩余空闲超时时间
+                    elapsed_idle = asyncio.get_event_loop().time() - last_chunk_time
+                    remaining_timeout = max(1.0, idle_timeout - elapsed_idle)
+                    
+                    # 尝试获取下一个 item，带超时保护
+                    item = await asyncio.wait_for(
+                        stream_iter.__anext__(),
+                        timeout=remaining_timeout
+                    )
+                    
+                except StopAsyncIteration:
+                    # 流结束
+                    break
+                except asyncio.TimeoutError:
+                    # 空闲超时：在 idle_timeout 秒内没有收到任何输出
+                    elapsed_total = asyncio.get_event_loop().time() - (last_chunk_time - elapsed_idle)
+                    self._emit_event(
+                        "ai_idle_timeout",
+                        f"⏰ {task_name} 空闲超时 ({idle_timeout:.0f}s无输出)",
+                        "AI",
+                        task=task_name,
+                        chunks_received=chunk_count,
+                        idle_seconds=idle_timeout
+                    )
+                    logger.warning(
+                        f"[流式调用] {task_name} 空闲超时 "
+                        f"(已收到{chunk_count}个chunks, 空闲{idle_timeout}秒)"
+                    )
+                    # 如果已经收到一些内容，尝试返回；否则抛出异常
+                    if chunks:
+                        logger.info(f"[流式调用] {task_name} 使用已接收的部分内容 ({len(''.join(chunks))} chars)")
+                        break
+                    raise asyncio.TimeoutError(f"空闲超时: {idle_timeout}秒内无输出")
+                
+                # 处理状态事件
+                if isinstance(item, dict):
+                    state = item.get("state", "")
+                    if state == "connected":
+                        self._emit_event(
+                            "ai_stream_start", 
+                            f"🔗 {task_name} 已连接",
+                            "AI",
+                            task=task_name
+                        )
+                    elif state == "receiving":
+                        self._emit_event(
+                            "ai_stream_receiving",
+                            f"📥 {task_name} 正在接收...",
+                            "AI", 
+                            task=task_name
+                        )
+                    elif state == "completed":
+                        self._emit_event(
+                            "ai_stream_complete",
+                            f"✅ {task_name} 接收完成",
+                            "AI",
+                            task=task_name,
+                            chunks=chunk_count
+                        )
+                    elif item.get("type") == "error":
+                        error_msg = item.get("message", "未知错误")
+                        self._emit_event(
+                            "ai_stream_error",
+                            f"❌ {task_name} 错误: {error_msg}",
+                            "AI",
+                            task=task_name,
+                            error=error_msg
+                        )
+                else:
+                    # 这是文本 chunk
+                    chunks.append(str(item))
+                    chunk_count += 1
+                    
+                    # 发送 chunk 心跳（限制频率）
+                    current_time = asyncio.get_event_loop().time()
+                    if current_time - last_heartbeat_time >= heartbeat_interval:
+                        self._emit_event(
+                            "ai_chunk_heartbeat",
+                            f"💓 {task_name} 输出中 ({chunk_count} chunks)",
+                            "AI",
+                            task=task_name,
+                            chunks=chunk_count,
+                            preview=chunks[-1][:30] if chunks else ""
+                        )
+                        last_heartbeat_time = current_time
+            
+            full_content = "".join(chunks)
+            logger.debug(f"[流式调用] {task_name} 完成，共 {chunk_count} chunks, 总长度 {len(full_content)}")
+            return full_content
+            
+        except Exception as e:
+            logger.error(f"[流式调用] {task_name} 失败: {e}")
+            self._emit_event(
+                "ai_stream_error",
+                f"❌ {task_name} 流式调用失败",
+                "AI",
+                task=task_name,
+                error=str(e)
+            )
+            raise
+    
     async def evaluate_species_status(
         self,
         species: Species,
@@ -370,12 +545,22 @@ class AIPressureResponseService:
             
             prompt = PRESSURE_RESPONSE_PROMPTS["species_status_eval"].format(**params)
             
-            # 调用AI
-            full_content = await self.router.acall_capability(
-                capability="species_status_eval",
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"}
-            )
+            # 【改进】使用流式传输调用 AI，可以发送心跳 + 智能超时
+            if self.use_streaming and self._event_callback:
+                full_content = await self._stream_call_with_heartbeat(
+                    capability="species_status_eval",
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    task_name=f"评估[{species.common_name}]",
+                    timeout=float(self.SPECIES_EVAL_TIMEOUT)
+                )
+            else:
+                # 非流式调用（fallback）
+                full_content = await self.router.acall_capability(
+                    capability="species_status_eval",
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"}
+                )
             
             # 解析结果
             result = self._parse_status_eval_result(species.lineage_code, full_content)
@@ -400,6 +585,29 @@ class AIPressureResponseService:
             self._processed_this_turn.add(species.lineage_code)
             return fallback_result
     
+    # 状态评估批次大小（每批最多处理几个物种）
+    STATUS_EVAL_BATCH_SIZE = 4
+    
+    # 超时配置（可通过 set_timeout_config 方法动态设置）
+    SPECIES_EVAL_TIMEOUT = 60  # 单物种评估超时（秒）
+    BATCH_EVAL_TIMEOUT = 180   # 整体批量评估超时（秒）
+    NARRATIVE_TIMEOUT = 60     # 叙事生成超时（秒）
+    
+    def set_timeout_config(
+        self,
+        species_eval_timeout: int = 60,
+        batch_eval_timeout: int = 180,
+        narrative_timeout: int = 60,
+    ) -> None:
+        """设置超时配置（从UIConfig读取）"""
+        self.SPECIES_EVAL_TIMEOUT = species_eval_timeout
+        self.BATCH_EVAL_TIMEOUT = batch_eval_timeout
+        self.NARRATIVE_TIMEOUT = narrative_timeout
+        logger.info(
+            f"[AI压力响应] 超时配置已更新: "
+            f"单物种={species_eval_timeout}s, 批量={batch_eval_timeout}s, 叙事={narrative_timeout}s"
+        )
+    
     async def batch_evaluate_species_status(
         self,
         species_list: Sequence[Species],
@@ -407,9 +615,13 @@ class AIPressureResponseService:
         environment_pressure: dict[str, float],
         pressure_context: str,
     ) -> dict[str, SpeciesStatusEval]:
-        """【新】批量综合评估物种状态
+        """【优化】批量综合评估物种状态（全并行模式）
         
-        为提高效率，将多个物种的评估合并为一次AI调用
+        改进策略：
+        1. 将所有物种分成小批次（每批4个）
+        2. 使用 staggered_gather 并行执行多个批次
+        3. 每个批次内部也是并行的
+        4. 单个物种超时30秒后快速降级到规则fallback
         
         Returns:
             {lineage_code: SpeciesStatusEval}
@@ -429,21 +641,35 @@ class AIPressureResponseService:
         if not species_to_eval:
             return {}
         
-        # 【优化】少量物种时并行评估（更精确，且速度不亚于批量）
-        if len(species_to_eval) <= 5:
-            async def eval_single(sp: Species) -> tuple[str, SpeciesStatusEval | None]:
-                """评估单个物种并返回 (lineage_code, result)"""
-                result = await self.evaluate_species_status(
-                    sp, 
-                    mortality_results.get(sp.lineage_code, 0.0),
-                    environment_pressure,
-                    pressure_context
+        logger.info(f"[综合评估] 开始并行评估 {len(species_to_eval)} 个物种")
+        
+        # 单个物种的评估协程（带超时保护）
+        async def eval_single_with_fallback(sp: Species) -> tuple[str, SpeciesStatusEval]:
+            """评估单个物种，超时则使用规则fallback"""
+            base_dr = mortality_results.get(sp.lineage_code, 0.0)
+            try:
+                # 使用配置的超时时间
+                result = await asyncio.wait_for(
+                    self.evaluate_species_status(
+                        sp, base_dr, environment_pressure, pressure_context
+                    ),
+                    timeout=float(self.SPECIES_EVAL_TIMEOUT)
                 )
-                return (sp.lineage_code, result)
+                if result:
+                    return (sp.lineage_code, result)
+            except asyncio.TimeoutError:
+                logger.warning(f"[综合评估] {sp.common_name} AI超时(30s)，使用规则fallback")
+            except Exception as e:
+                logger.warning(f"[综合评估] {sp.common_name} AI失败: {e}，使用规则fallback")
             
-            # 并行执行所有评估
+            # 降级到规则fallback
+            fallback = self._generate_rule_based_fallback(sp, base_dr, environment_pressure)
+            return (sp.lineage_code, fallback)
+        
+        # 如果物种很少（≤4个），直接并行评估所有
+        if len(species_to_eval) <= self.STATUS_EVAL_BATCH_SIZE:
             parallel_results = await asyncio.gather(
-                *[eval_single(sp) for sp in species_to_eval],
+                *[eval_single_with_fallback(sp) for sp in species_to_eval],
                 return_exceptions=True
             )
             
@@ -453,75 +679,62 @@ class AIPressureResponseService:
                     logger.warning(f"[综合评估] 并行评估异常: {item}")
                     continue
                 code, result = item
-                if result:
-                    results[code] = result
+                results[code] = result
+                self._processed_this_turn.add(code)
             
             logger.info(f"[综合评估] 并行评估完成: {len(results)}/{len(species_to_eval)} 个物种")
             return results
         
-        # 批量评估（物种数量较多时）
-        try:
-            species_info_list = []
-            for sp in species_to_eval:
-                base_dr = mortality_results.get(sp.lineage_code, 0.0)
-                consecutive = self._consecutive_danger.get(sp.lineage_code, 0)
-                
-                info = (
-                    f"【{sp.lineage_code}】{sp.common_name}\n"
-                    f"  营养级: T{sp.trophic_level:.1f}, 栖息地: {sp.habitat_type}\n"
-                    f"  基础死亡率: {base_dr:.1%}, 连续高危: {consecutive}回合\n"
-                    f"  关键特质: 耐寒{sp.abstract_traits.get('耐寒性', 5):.0f}, "
-                    f"耐热{sp.abstract_traits.get('耐热性', 5):.0f}, "
-                    f"运动{sp.abstract_traits.get('运动能力', 5):.0f}"
-                )
-                species_info_list.append(info)
-            
-            total_pressure = sum(abs(v) for v in environment_pressure.values())
-            
-            # 使用批量prompt（复用已有的，输出格式兼容）
-            prompt = PRESSURE_RESPONSE_PROMPTS["pressure_assessment_batch"].format(
-                total_pressure=total_pressure,
-                pressure_sources=pressure_context,
-                major_events="",
-                species_list="\n\n".join(species_info_list)
+        # 物种较多时，分批并行处理
+        batches = []
+        for i in range(0, len(species_to_eval), self.STATUS_EVAL_BATCH_SIZE):
+            batches.append(species_to_eval[i:i + self.STATUS_EVAL_BATCH_SIZE])
+        
+        logger.info(f"[综合评估] 分 {len(batches)} 批并行处理（每批最多 {self.STATUS_EVAL_BATCH_SIZE} 个物种）")
+        
+        # 为每个批次创建协程
+        async def process_batch(batch: list[Species]) -> list[tuple[str, SpeciesStatusEval]]:
+            """并行处理一个批次"""
+            batch_results = await asyncio.gather(
+                *[eval_single_with_fallback(sp) for sp in batch],
+                return_exceptions=True
             )
-            
-            full_content = await self.router.acall_capability(
-                capability="species_status_eval",
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"}
-            )
-            
-            # 解析批量结果，传入死亡率数据用于推断紧急状态
-            results = self._parse_batch_status_eval(full_content, mortality_results)
-            
-            for code in results:
-                self._processed_this_turn.add(code)
-            
-            # 【优化】检查是否有遗漏的物种，为它们生成fallback
-            missing_species = [sp for sp in species_to_eval if sp.lineage_code not in results]
-            if missing_species:
-                logger.info(f"[综合评估] AI返回遗漏 {len(missing_species)} 个物种，生成规则fallback")
-                for sp in missing_species:
+            valid_results = []
+            for item in batch_results:
+                if isinstance(item, Exception):
+                    continue
+                valid_results.append(item)
+            return valid_results
+        
+        # 使用 staggered_gather 并行执行所有批次
+        batch_results = await staggered_gather(
+            [process_batch(batch) for batch in batches],
+            interval=0.5,  # 批次间隔0.5秒
+            max_concurrent=4,  # 最多同时4个批次（即16个并发评估）
+            task_name="状态评估批次",
+            task_timeout=45.0,  # 单批次超时45秒
+        )
+        
+        # 合并结果
+        results = {}
+        for i, batch_result in enumerate(batch_results):
+            if isinstance(batch_result, Exception):
+                logger.warning(f"[综合评估] 批次{i+1}失败: {batch_result}")
+                # 为失败批次的物种生成fallback
+                for sp in batches[i]:
                     base_dr = mortality_results.get(sp.lineage_code, 0.0)
                     fallback = self._generate_rule_based_fallback(sp, base_dr, environment_pressure)
                     results[sp.lineage_code] = fallback
                     self._processed_this_turn.add(sp.lineage_code)
+                continue
             
-            logger.info(f"[综合评估] 批量评估完成: {len(results)} 个物种")
-            return results
-            
-        except Exception as e:
-            logger.warning(f"[综合评估] 批量AI评估失败: {e}，为所有物种生成规则fallback")
-            # 【优化】批量失败时，为所有物种生成规则fallback
-            results = {}
-            for sp in species_to_eval:
-                base_dr = mortality_results.get(sp.lineage_code, 0.0)
-                fallback = self._generate_rule_based_fallback(sp, base_dr, environment_pressure)
-                results[sp.lineage_code] = fallback
-                self._processed_this_turn.add(sp.lineage_code)
-            logger.info(f"[综合评估] 规则fallback生成完成: {len(results)} 个物种")
-            return results
+            if batch_result:
+                for code, result in batch_result:
+                    results[code] = result
+                    self._processed_this_turn.add(code)
+        
+        logger.info(f"[综合评估] 分批并行评估完成: {len(results)}/{len(species_to_eval)} 个物种")
+        return results
     
     def _prepare_status_eval_params(
         self,
@@ -838,16 +1051,19 @@ class AIPressureResponseService:
         global_environment: str,
         major_events: str,
     ) -> list[SpeciesNarrativeResult]:
-        """生成单批次叙事（内部方法）"""
+        """生成单批次叙事（内部方法）- 支持流式传输"""
         try:
             # 构建物种列表字符串
             species_info_list = []
+            species_names = []
             for item in species_data:
                 sp = item["species"]
                 tier = item.get("tier", "focus")
                 dr = item.get("death_rate", 0.0)
                 status_eval = item.get("status_eval")
                 events = item.get("events", [])
+                
+                species_names.append(sp.common_name)
                 
                 info_lines = [
                     f"【{sp.lineage_code}】{sp.common_name} (tier: {tier})",
@@ -873,11 +1089,23 @@ class AIPressureResponseService:
                 species_list="\n\n".join(species_info_list)
             )
             
-            full_content = await self.router.acall_capability(
-                capability="species_narrative",
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"}
-            )
+            # 【改进】使用流式传输 + 智能超时
+            task_name = f"叙事[{', '.join(species_names[:3])}{'...' if len(species_names) > 3 else ''}]"
+            
+            if self.use_streaming and self._event_callback:
+                full_content = await self._stream_call_with_heartbeat(
+                    capability="species_narrative",
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"},
+                    task_name=task_name,
+                    timeout=float(self.NARRATIVE_TIMEOUT)
+                )
+            else:
+                full_content = await self.router.acall_capability(
+                    capability="species_narrative",
+                    messages=[{"role": "user", "content": prompt}],
+                    response_format={"type": "json_object"}
+                )
             
             # 解析结果
             return self._parse_narrative_results(full_content)

@@ -269,6 +269,12 @@ export interface UIConfig {
   autosave_enabled?: boolean;      // 是否启用自动保存
   autosave_interval?: number;      // 每N回合自动保存一次
   autosave_max_slots?: number;     // 最大自动保存槽位数
+  
+  // 6. AI 推演超时配置
+  ai_species_eval_timeout?: number;   // 单物种AI评估超时（秒）
+  ai_batch_eval_timeout?: number;     // 整体批量评估超时（秒）
+  ai_narrative_timeout?: number;      // 物种叙事生成超时（秒）
+  ai_speciation_timeout?: number;     // 物种分化评估超时（秒）
 
   // --- Legacy Fields (For backward compatibility types) ---
   ai_provider?: string | null;

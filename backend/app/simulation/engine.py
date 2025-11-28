@@ -680,12 +680,38 @@ class SimulationEngine:
                         
                         try:
                             # 【优化】使用新的批量综合评估（合并了压力评估+紧急响应判断）
+                            # 整体超时90秒，内部已有单物种30秒超时和规则fallback
                             critical_focus_species = tiered.critical + tiered.focus
-                            ai_status_evals = await self.ai_pressure_service.batch_evaluate_species_status(
-                                critical_focus_species,
-                                mortality_data,
-                                modifiers,
-                                pressure_context,
+                            species_count = len(critical_focus_species)
+                            
+                            # 发送AI进度事件
+                            self._emit_event(
+                                "ai_progress", 
+                                f"AI评估 {species_count} 个物种", 
+                                "AI",
+                                total=species_count,
+                                completed=0,
+                                current_task="综合状态评估"
+                            )
+                            
+                            ai_status_evals = await asyncio.wait_for(
+                                self.ai_pressure_service.batch_evaluate_species_status(
+                                    critical_focus_species,
+                                    mortality_data,
+                                    modifiers,
+                                    pressure_context,
+                                ),
+                                timeout=90  # 整体90秒超时
+                            )
+                            
+                            # 更新进度：评估完成
+                            self._emit_event(
+                                "ai_progress",
+                                f"AI评估完成",
+                                "AI",
+                                total=species_count,
+                                completed=species_count,
+                                current_task="评估完成"
                             )
                             
                             if ai_status_evals:

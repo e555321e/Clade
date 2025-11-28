@@ -699,6 +699,17 @@ async def run_turns(command: TurnCommand):
         # 将推送函数传递给引擎
         simulation_engine._event_callback = push_simulation_event
         
+        # 【超时配置】从 UIConfig 读取并应用到 AI 服务
+        current_config = environment_repository.load_ui_config(ui_config_path)
+        simulation_engine.ai_pressure_service.set_timeout_config(
+            species_eval_timeout=current_config.ai_species_eval_timeout,
+            batch_eval_timeout=current_config.ai_batch_eval_timeout,
+            narrative_timeout=current_config.ai_narrative_timeout,
+        )
+        
+        # 【流式心跳】将事件回调传递给 AI 服务，启用流式心跳监测
+        simulation_engine.ai_pressure_service.set_event_callback(push_simulation_event)
+        
         reports = await simulation_engine.run_turns_async(command)
         
         elapsed = time_module.time() - start_time

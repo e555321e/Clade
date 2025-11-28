@@ -561,8 +561,8 @@ export function AchievementsPanel({ onClose }: Props) {
 
         .achievements-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-          gap: 14px;
+          grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+          gap: 16px;
         }
       `}</style>
     </AnalysisPanel>
@@ -633,13 +633,14 @@ function AchievementCard({ achievement }: { achievement: Achievement }) {
         .achievement-card {
           display: flex;
           gap: 16px;
-          padding: 18px;
+          padding: 20px;
           background: rgba(255, 255, 255, 0.02);
           border: 1px solid rgba(255, 255, 255, 0.06);
           border-radius: 16px;
           position: relative;
           overflow: hidden;
           transition: all 0.25s ease;
+          min-height: 100px;
         }
 
         .achievement-card:hover {
@@ -680,8 +681,9 @@ function AchievementCard({ achievement }: { achievement: Achievement }) {
 
         .achievement-icon-wrapper {
           position: relative;
-          width: 56px;
-          height: 56px;
+          width: 52px;
+          height: 52px;
+          min-width: 52px;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -691,6 +693,7 @@ function AchievementCard({ achievement }: { achievement: Achievement }) {
           );
           border-radius: 14px;
           flex-shrink: 0;
+          align-self: flex-start;
         }
 
         .achievement-card.unlocked .achievement-icon-wrapper {
@@ -702,7 +705,8 @@ function AchievementCard({ achievement }: { achievement: Achievement }) {
         }
 
         .achievement-icon {
-          font-size: 1.75rem;
+          font-size: 1.5rem;
+          line-height: 1;
         }
 
         .unlock-badge {
@@ -724,7 +728,8 @@ function AchievementCard({ achievement }: { achievement: Achievement }) {
           min-width: 0;
           display: flex;
           flex-direction: column;
-          gap: 6px;
+          gap: 8px;
+          overflow: hidden;
         }
 
         .achievement-header {
@@ -732,12 +737,14 @@ function AchievementCard({ achievement }: { achievement: Achievement }) {
           justify-content: space-between;
           align-items: flex-start;
           gap: 12px;
+          flex-wrap: wrap;
         }
 
         .achievement-name {
           font-weight: 600;
           font-size: 0.95rem;
           color: rgba(255, 255, 255, 0.9);
+          word-break: break-word;
         }
 
         .achievement-rarity {
@@ -748,6 +755,7 @@ function AchievementCard({ achievement }: { achievement: Achievement }) {
           border-radius: 6px;
           color: var(--rarity-color);
           white-space: nowrap;
+          flex-shrink: 0;
         }
 
         .achievement-desc {
@@ -755,17 +763,19 @@ function AchievementCard({ achievement }: { achievement: Achievement }) {
           font-size: 0.8rem;
           color: rgba(255, 255, 255, 0.55);
           line-height: 1.45;
+          flex-shrink: 0;
         }
 
         .achievement-progress {
           display: flex;
-          align-items: center;
-          gap: 10px;
-          margin-top: 8px;
+          flex-direction: column;
+          gap: 6px;
+          margin-top: auto;
+          padding-top: 8px;
         }
 
         .progress-bar {
-          flex: 1;
+          width: 100%;
           height: 6px;
           background: rgba(255, 255, 255, 0.08);
           border-radius: 3px;
@@ -782,15 +792,17 @@ function AchievementCard({ achievement }: { achievement: Achievement }) {
         .progress-text {
           font-size: 0.75rem;
           font-family: var(--font-mono, monospace);
-          color: rgba(255, 255, 255, 0.4);
+          color: rgba(255, 255, 255, 0.5);
           white-space: nowrap;
+          text-align: right;
         }
 
         .unlock-info {
           display: flex;
           align-items: center;
           gap: 6px;
-          margin-top: 6px;
+          margin-top: auto;
+          padding-top: 8px;
           font-size: 0.75rem;
           color: var(--rarity-color);
         }

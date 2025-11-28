@@ -12,7 +12,7 @@ interface Props {
   onSave: (config: UIConfig) => Promise<void>;
 }
 
-type Tab = "connection" | "models" | "memory" | "autosave";
+type Tab = "connection" | "models" | "memory" | "autosave" | "performance";
 
 // ========== 常量定义 ==========
 
@@ -633,6 +633,13 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
               label="自动保存" 
               desc="回合自动存档"
             />
+            <NavButton 
+              active={tab === "performance"} 
+              onClick={() => dispatch({ type: 'SET_TAB', tab: 'performance' })} 
+              icon="⚡" 
+              label="性能调优" 
+              desc="超时与并发"
+            />
           </div>
           
         </nav>
@@ -1221,6 +1228,227 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                         <p style={{ color: (form.autosave_enabled ?? true) ? '#10b981' : '#ef4444' }}>
                           {(form.autosave_enabled ?? true) ? '✅ 已启用' : '❌ 已禁用'}
                         </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 5: 性能调优 */}
+          {tab === "performance" && (
+            <div className="tab-content fade-in">
+              <div className="section-header">
+                <h3>⚡ AI 推演性能调优</h3>
+                <p>调整 AI 调用的超时时间，平衡响应速度与推演质量。</p>
+              </div>
+              
+              <div className="memory-layout">
+                <div className="memory-main">
+                  <div className="tip-box info">
+                    💡 超时时间决定了系统等待 AI 响应的最长时间。如果 AI 在超时前未能完成，系统将使用规则降级处理。
+                    <br/><br/>
+                    <strong>建议配置：</strong>
+                    <ul style={{ margin: '8px 0 0 16px', padding: 0 }}>
+                      <li>网络稳定时可设置较短的超时（30-60秒）</li>
+                      <li>使用 DeepSeek-R1 等思考模型时建议增加超时（90-180秒）</li>
+                      <li>物种数量多时建议增加整体批量超时</li>
+                    </ul>
+                  </div>
+
+                  <div className="form-fields">
+                    {/* 单物种评估超时 */}
+                    <label className="form-field">
+                      <span className="field-label">
+                        🦎 单物种评估超时
+                        <span className="field-hint-inline">（每个物种的AI分析时间上限）</span>
+                      </span>
+                      <div className="input-with-unit">
+                        <input
+                          className="field-input"
+                          type="number"
+                          min="10"
+                          max="300"
+                          value={form.ai_species_eval_timeout ?? 60}
+                          onChange={(e) => dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_species_eval_timeout', value: parseInt(e.target.value) || 60 })}
+                        />
+                        <span className="unit-label">秒</span>
+                      </div>
+                      <span className="field-hint">单个物种状态评估的最长等待时间，超时后使用规则降级</span>
+                    </label>
+
+                    {/* 批量评估总超时 */}
+                    <label className="form-field">
+                      <span className="field-label">
+                        🦋 批量评估总超时
+                        <span className="field-hint-inline">（所有物种评估的总时间上限）</span>
+                      </span>
+                      <div className="input-with-unit">
+                        <input
+                          className="field-input"
+                          type="number"
+                          min="30"
+                          max="600"
+                          value={form.ai_batch_eval_timeout ?? 180}
+                          onChange={(e) => dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_batch_eval_timeout', value: parseInt(e.target.value) || 180 })}
+                        />
+                        <span className="unit-label">秒</span>
+                      </div>
+                      <span className="field-hint">整体 AI 综合状态评估的最长等待时间</span>
+                    </label>
+
+                    {/* 叙事生成超时 */}
+                    <label className="form-field">
+                      <span className="field-label">
+                        📖 叙事生成超时
+                        <span className="field-hint-inline">（物种故事生成时间上限）</span>
+                      </span>
+                      <div className="input-with-unit">
+                        <input
+                          className="field-input"
+                          type="number"
+                          min="10"
+                          max="300"
+                          value={form.ai_narrative_timeout ?? 60}
+                          onChange={(e) => dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_narrative_timeout', value: parseInt(e.target.value) || 60 })}
+                        />
+                        <span className="unit-label">秒</span>
+                      </div>
+                      <span className="field-hint">每个物种叙事/故事生成的最长等待时间</span>
+                    </label>
+
+                    {/* 物种分化超时 */}
+                    <label className="form-field">
+                      <span className="field-label">
+                        🧬 物种分化超时
+                        <span className="field-hint-inline">（新物种诞生判定时间上限）</span>
+                      </span>
+                      <div className="input-with-unit">
+                        <input
+                          className="field-input"
+                          type="number"
+                          min="30"
+                          max="300"
+                          value={form.ai_speciation_timeout ?? 120}
+                          onChange={(e) => dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_speciation_timeout', value: parseInt(e.target.value) || 120 })}
+                        />
+                        <span className="unit-label">秒</span>
+                      </div>
+                      <span className="field-hint">AI判定物种分化的最长等待时间</span>
+                    </label>
+
+                    {/* AI 并发限制 */}
+                    <label className="form-field">
+                      <span className="field-label">
+                        🔀 AI 并发数量
+                        <span className="field-hint-inline">（同时进行的AI请求数）</span>
+                      </span>
+                      <div className="input-with-unit">
+                        <input
+                          className="field-input"
+                          type="number"
+                          min="1"
+                          max="50"
+                          value={form.ai_concurrency_limit ?? 15}
+                          onChange={(e) => dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_concurrency_limit', value: parseInt(e.target.value) || 15 })}
+                        />
+                        <span className="unit-label">个</span>
+                      </div>
+                      <span className="field-hint">同时处理的AI请求数量，过高可能触发API限流</span>
+                    </label>
+                  </div>
+
+                  {/* 快速预设 */}
+                  <div className="preset-section">
+                    <h4>快速配置</h4>
+                    <div className="preset-buttons autosave-presets">
+                      <button
+                        type="button"
+                        className="preset-btn"
+                        onClick={() => {
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_species_eval_timeout', value: 30 });
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_batch_eval_timeout', value: 90 });
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_narrative_timeout', value: 30 });
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_speciation_timeout', value: 60 });
+                        }}
+                      >
+                        🚀 极速模式
+                        <span className="preset-desc">快速降级，适合测试</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="preset-btn"
+                        onClick={() => {
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_species_eval_timeout', value: 60 });
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_batch_eval_timeout', value: 180 });
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_narrative_timeout', value: 60 });
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_speciation_timeout', value: 120 });
+                        }}
+                      >
+                        ⚖️ 默认模式
+                        <span className="preset-desc">平衡速度与质量</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="preset-btn"
+                        onClick={() => {
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_species_eval_timeout', value: 120 });
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_batch_eval_timeout', value: 360 });
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_narrative_timeout', value: 120 });
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_speciation_timeout', value: 180 });
+                        }}
+                      >
+                        🧠 思考模式
+                        <span className="preset-desc">适合DeepSeek-R1等</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="preset-btn"
+                        onClick={() => {
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_species_eval_timeout', value: 180 });
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_batch_eval_timeout', value: 600 });
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_narrative_timeout', value: 180 });
+                          dispatch({ type: 'UPDATE_GLOBAL', field: 'ai_speciation_timeout', value: 300 });
+                        }}
+                      >
+                        🐢 耐心模式
+                        <span className="preset-desc">最大等待，减少降级</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 右侧说明 */}
+                <div className="memory-stats">
+                  <h4>📝 超时机制说明</h4>
+                  <div className="info-list">
+                    <div className="info-item">
+                      <span className="info-icon">⏱️</span>
+                      <div>
+                        <strong>超时降级</strong>
+                        <p>当AI超时后，系统将使用基于规则的快速评估代替</p>
+                      </div>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-icon">🔄</span>
+                      <div>
+                        <strong>并行处理</strong>
+                        <p>多个物种的评估会并行进行，提高整体效率</p>
+                      </div>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-icon">💡</span>
+                      <div>
+                        <strong>流式心跳</strong>
+                        <p>AI处理中会发送心跳信号，前端可实时感知进度</p>
+                      </div>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-icon">⚠️</span>
+                      <div>
+                        <strong>注意</strong>
+                        <p>过短的超时会导致更多规则降级，叙事质量可能下降</p>
                       </div>
                     </div>
                   </div>
