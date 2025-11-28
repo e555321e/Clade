@@ -7,6 +7,19 @@ const FRONTEND_PORT = parseInt(process.env.FRONTEND_PORT || "5173", 10);
 
 export default defineConfig({
   plugins: [react()],
+  // 显式指定需要预打包的依赖，消除 Vite 5.x 的自动检测警告
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "pixi.js",
+      "d3",
+      "recharts",
+      "react-force-graph-2d",
+      "react-markdown",
+      "lucide-react",
+    ],
+  },
   server: {
     port: FRONTEND_PORT,
     proxy: {
