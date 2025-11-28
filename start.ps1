@@ -49,7 +49,7 @@ if (Test-Path $langFile) {
 
 # ==================== 读取端口配置 ====================
 # 默认端口
-$BACKEND_PORT = 8000
+$BACKEND_PORT = 8022
 $FRONTEND_PORT = 5173
 
 # 从 .env 文件读取端口配置

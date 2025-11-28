@@ -2,7 +2,7 @@
 import react from "@vitejs/plugin-react";
 
 // 从环境变量读取端口配置，支持灵活部署
-const BACKEND_PORT = process.env.BACKEND_PORT || "8000";
+const BACKEND_PORT = process.env.BACKEND_PORT || "8022";
 const FRONTEND_PORT = parseInt(process.env.FRONTEND_PORT || "5173", 10);
 
 export default defineConfig({

@@ -120,7 +120,7 @@ cd backend
 python -m venv venv
 source venv/bin/activate
 pip install -e ".[dev]"
-uvicorn app.main:app --reload --port 8000 &
+uvicorn app.main:app --reload --port 8022 &
 
 # 2. 启动前端（新开一个终端窗口）
 cd frontend
@@ -217,7 +217,7 @@ npm run dev
 可能是上次没有正确关闭。双击 `stop.bat` 关闭所有服务，然后重新启动。
 
 或者修改端口：
-- 后端：在 `start.ps1` 中修改 `--port 8000`
+- 后端：编辑项目根目录的 `.env` 文件，修改 `BACKEND_PORT=8022`
 - 前端：在 `frontend/vite.config.ts` 中修改端口
 
 </details>

@@ -54,6 +54,6 @@
 ## 示例
 
 ```bash
-curl http://localhost:8000/api/species/A1
-curl http://localhost:8000/api/lineage
+curl http://localhost:8022/api/species/A1
+curl http://localhost:8022/api/lineage
 ```

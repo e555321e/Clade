@@ -3,7 +3,7 @@ $Host.UI.RawUI.WindowTitle = "Clade - Stop"
 
 # ==================== 读取端口配置 ====================
 # 默认端口
-$BACKEND_PORT = 8000
+$BACKEND_PORT = 8022
 $FRONTEND_PORT = 5173
 
 # 从 .env 文件读取端口配置
@@ -58,7 +58,7 @@ if ($portBackend) {
     $portBackend | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object {
         $proc = Get-Process -Id $_ -ErrorAction SilentlyContinue
         if ($proc) {
-            Write-Host "        $stoppingProcess: $($proc.ProcessName) (PID: $_)" -ForegroundColor Gray
+            Write-Host "        ${stoppingProcess}: $($proc.ProcessName) (PID: $_)" -ForegroundColor Gray
             Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue
         }
     }
@@ -74,7 +74,7 @@ if ($portFrontend) {
     $portFrontend | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object {
         $proc = Get-Process -Id $_ -ErrorAction SilentlyContinue
         if ($proc) {
-            Write-Host "        $stoppingProcess: $($proc.ProcessName) (PID: $_)" -ForegroundColor Gray
+            Write-Host "        ${stoppingProcess}: $($proc.ProcessName) (PID: $_)" -ForegroundColor Gray
             Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue
         }
     }
@@ -88,7 +88,7 @@ Write-Host "  [3/3] $cleanup" -ForegroundColor Yellow
 Get-Process powershell -ErrorAction SilentlyContinue | Where-Object {
     $_.MainWindowTitle -like "*Clade*" -and $_.Id -ne $PID
 } | ForEach-Object {
-    Write-Host "        $closingWindow: $($_.MainWindowTitle)" -ForegroundColor Gray
+    Write-Host "        ${closingWindow}: $($_.MainWindowTitle)" -ForegroundColor Gray
     Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
 }
 

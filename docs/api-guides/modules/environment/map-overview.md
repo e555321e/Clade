@@ -75,5 +75,5 @@
 ## 示例
 
 ```bash
-curl "http://localhost:8000/api/map?view_mode=biodiversity&species_code=A1"
+curl "http://localhost:8022/api/map?view_mode=biodiversity&species_code=A1"
 ```

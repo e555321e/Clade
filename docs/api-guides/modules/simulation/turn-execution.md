@@ -58,7 +58,7 @@
 ## 示例（curl）
 
 ```bash
-curl -X POST http://localhost:8000/api/turns/run \
+curl -X POST http://localhost:8022/api/turns/run \
   -H "Content-Type: application/json" \
   -d '{"rounds": 2, "pressures": [{"kind":"drought_period","intensity":6}]}'
 ```
