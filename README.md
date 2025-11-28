@@ -110,6 +110,65 @@ cd Clade
 - ✅ 启动后端和前端服务
 - ✅ 打开浏览器
 
+<details>
+<summary>📖 一键脚本不工作？点击查看手动启动方法</summary>
+
+如果双击 `start.bat` 或 `start.ps1` 没有反应，可以手动启动：
+
+**第一步：启动后端**
+
+打开 **PowerShell** 或 **命令提示符**，运行：
+
+```powershell
+# 进入项目目录（改成你自己的路径）
+cd C:\你的路径\Clade
+
+# 进入后端目录
+cd backend
+
+# 创建虚拟环境（只需第一次）
+python -m venv venv
+
+# 激活虚拟环境
+.\venv\Scripts\Activate.ps1
+# 如果是 CMD 命令提示符，用这个：
+# .\venv\Scripts\activate.bat
+
+# 安装依赖（只需第一次）
+pip install -e ".[dev]"
+
+# 启动后端服务
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8022
+```
+
+**第二步：启动前端**
+
+**新开一个** PowerShell 或命令提示符窗口，运行：
+
+```powershell
+# 进入项目目录（改成你自己的路径）
+cd C:\你的路径\Clade
+
+# 进入前端目录
+cd frontend
+
+# 安装依赖（只需第一次）
+npm install
+
+# 启动前端服务
+npm run dev
+```
+
+**第三步：访问游戏**
+
+打开浏览器，访问：**http://localhost:5173**
+
+> 💡 **提示**：
+> - 两个窗口都要保持打开状态，关闭任意一个都会导致服务停止
+> - 如果端口 8022 或 5173 被占用，可以在 `.env` 文件中修改
+
+</details>
+
 #### 🍎 Mac / 🐧 Linux 用户
 
 打开终端，依次运行：
