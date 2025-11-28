@@ -8,7 +8,7 @@ import httpx
 import asyncio
 from queue import Queue
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
@@ -672,7 +672,7 @@ def _cleanup_old_autosaves(base_save_name: str, max_slots: int) -> None:
 
 
 @router.post("/turns/run")  # 移除 response_model，避免 Pydantic 验证阻塞
-async def run_turns(command: TurnCommand):
+async def run_turns(command: TurnCommand, background_tasks: BackgroundTasks):
     import traceback
     import time as time_module
     global simulation_running, autosave_counter
@@ -763,18 +763,19 @@ async def run_turns(command: TurnCommand):
         action_queue["queued_rounds"] = max(action_queue["queued_rounds"] - command.rounds, 0)
         simulation_running = False
         
-        # 【关键修复】使用线程池执行自动保存，避免阻塞事件循环
+        # 【关键修复】使用 BackgroundTasks 执行自动保存
+        # 这会在响应完全发送后才执行，避免响应被阻塞
         latest_turn = reports[-1].turn_index if reports else 0
         
         def do_autosave():
-            """在后台线程执行自动保存"""
+            """在后台执行自动保存"""
             try:
                 _perform_autosave(latest_turn)
             except Exception as e:
                 logger.warning(f"[后台任务] 自动保存失败: {e}")
         
-        # 启动后台线程任务（不等待完成）
-        asyncio.get_event_loop().run_in_executor(None, do_autosave)
+        # 添加到 BackgroundTasks，会在响应发送后执行
+        background_tasks.add_task(do_autosave)
         
         # 【性能优化】直接使用 json.dumps 序列化，完全绕过 FastAPI/Pydantic
         logger.info(f"[HTTP响应] 开始序列化响应...")
