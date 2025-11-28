@@ -86,6 +86,40 @@ from ..simulation.engine import SimulationEngine
 from ..simulation.environment import EnvironmentSystem
 from ..simulation.species import MortalityEngine
 
+
+def _infer_ecological_role(species) -> str:
+    """根据物种营养级推断生态角色
+    
+    营养级划分规则：
+    - T < 1.5: 纯生产者 (producer) - 纯自养生物
+    - 1.5 ≤ T < 2.0: 混合营养 (mixotroph) - 既能自养又能摄食
+    - 2.0 ≤ T < 2.8: 草食者 (herbivore) - 以生产者为食
+    - 2.8 ≤ T < 3.5: 杂食者 (omnivore) - 植物和动物都吃
+    - T ≥ 3.5: 肉食者 (carnivore) - 以其他动物为食
+    
+    特殊情况：腐食者(detritivore)通过 diet_type 识别
+    """
+    trophic = getattr(species, 'trophic_level', 2.0)
+    diet_type = getattr(species, 'diet_type', None)
+    
+    # 特殊处理：腐食者（分解者）
+    if diet_type == "detritivore":
+        return "decomposer"
+    
+    # 基于营养级判断
+    if trophic < 1.5:
+        return "producer"
+    elif trophic < 2.0:
+        # 边界区域：混合营养生物（既能自养又能捕食）
+        return "mixotroph"
+    elif trophic < 2.8:
+        return "herbivore"
+    elif trophic < 3.5:
+        return "omnivore"
+    else:
+        return "carnivore"
+
+
 router = APIRouter(prefix="", tags=["simulation"])
 
 settings = get_settings()
@@ -851,18 +885,8 @@ def get_lineage_tree() -> LineageTree:
             )
             peak_pop = session.exec(peak_query).first() or 0
         
-        # 推断生态角色
-        desc_lower = species.description.lower()
-        if any(kw in desc_lower for kw in ["植物", "藻类", "光合", "生产者", "plant", "algae"]):
-            ecological_role = "producer"
-        elif any(kw in desc_lower for kw in ["食草", "herbivore", "草食"]):
-            ecological_role = "herbivore"
-        elif any(kw in desc_lower for kw in ["食肉", "carnivore", "捕食"]):
-            ecological_role = "carnivore"
-        elif any(kw in desc_lower for kw in ["杂食", "omnivore"]):
-            ecological_role = "omnivore"
-        else:
-            ecological_role = "unknown"
+        # 推断生态角色：基于营养级
+        ecological_role = _infer_ecological_role(species)
         
         # 推断tier
         tier = "background" if species.is_background else None
@@ -1033,18 +1057,8 @@ def list_all_species() -> SpeciesList:
     
     items = []
     for species in all_species:
-        # 推断生态角色
-        desc_lower = species.description.lower()
-        if any(kw in desc_lower for kw in ["植物", "藻类", "光合", "生产者", "plant", "algae"]):
-            ecological_role = "producer"
-        elif any(kw in desc_lower for kw in ["食草", "herbivore", "草食"]):
-            ecological_role = "herbivore"
-        elif any(kw in desc_lower for kw in ["食肉", "carnivore", "捕食"]):
-            ecological_role = "carnivore"
-        elif any(kw in desc_lower for kw in ["杂食", "omnivore"]):
-            ecological_role = "omnivore"
-        else:
-            ecological_role = "unknown"
+        # 推断生态角色：优先使用 diet_type 字段
+        ecological_role = _infer_ecological_role(species)
         
         # 【修复】确保种群数量在JavaScript安全整数范围内
         raw_population = species.morphology_stats.get("population", 0) or 0
@@ -1226,18 +1240,8 @@ async def create_save(request: CreateSaveRequest) -> dict:
                 population = safe_population(species)
                 population_share = (population / total_population) if total_population > 0 else 0.0
                 
-                # 推断生态角色
-                desc_lower = species.description.lower()
-                if any(kw in desc_lower for kw in ["植物", "藻类", "光合", "生产者", "plant", "algae"]):
-                    ecological_role = "producer"
-                elif any(kw in desc_lower for kw in ["食草", "herbivore", "草食"]):
-                    ecological_role = "herbivore"
-                elif any(kw in desc_lower for kw in ["食肉", "carnivore", "捕食"]):
-                    ecological_role = "carnivore"
-                elif any(kw in desc_lower for kw in ["杂食", "omnivore"]):
-                    ecological_role = "omnivore"
-                else:
-                    ecological_role = "unknown"
+                # 推断生态角色：优先使用 diet_type 字段
+                ecological_role = _infer_ecological_role(species)
                 
                 initial_species.append(SpeciesSnapshot(
                     lineage_code=species.lineage_code,

@@ -302,6 +302,8 @@ function TreeNode({
     herbivore: "#fbbf24",
     carnivore: "#f43f5e",
     omnivore: "#f97316",
+    mixotroph: "#22d3ee",
+    decomposer: "#a78bfa",
   };
   const roleColor = roleColors[node.ecological_role] || "#64748b";
   
@@ -365,6 +367,8 @@ function NodeDetailCard({ node, onClose }: { node: LineageNode; onClose: () => v
     herbivore: "#fbbf24",
     carnivore: "#f43f5e",
     omnivore: "#f97316",
+    mixotroph: "#22d3ee",
+    decomposer: "#a78bfa",
   };
   const roleColor = roleColors[node.ecological_role] || "#64748b";
 

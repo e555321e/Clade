@@ -83,6 +83,14 @@ const roleConfig: Record<string, {
     label: "食腐动物",
     description: "资源的回收者"
   },
+  mixotroph: { 
+    color: "#22d3ee", 
+    gradient: "linear-gradient(135deg, #22d3ee 0%, #06b6d4 100%)", 
+    bgGradient: "linear-gradient(135deg, rgba(34, 211, 238, 0.15) 0%, rgba(6, 182, 212, 0.08) 100%)",
+    icon: "🔬", 
+    label: "混合营养",
+    description: "既能自养又能捕食"
+  },
   unknown: { 
     color: "#3b82f6", 
     gradient: "linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)", 

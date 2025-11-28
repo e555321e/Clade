@@ -28,6 +28,8 @@ export function GenealogyFilters({ filters, maxTurn, onChange }: Props) {
     { value: "herbivore", label: "食草", color: "#fbbf24", emoji: "🦌" },
     { value: "carnivore", label: "食肉", color: "#f43f5e", emoji: "🦁" },
     { value: "omnivore", label: "杂食", color: "#f97316", emoji: "🐻" },
+    { value: "mixotroph", label: "混养", color: "#22d3ee", emoji: "🔬" },
+    { value: "decomposer", label: "分解", color: "#a78bfa", emoji: "🍄" },
     { value: "unknown", label: "未知", color: "#64748b", emoji: "❓" },
   ];
 

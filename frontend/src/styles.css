@@ -61,6 +61,8 @@
   --color-herbivore: #facc15;         /* 金黄 - 食草动物 */
   --color-carnivore: #f43f5e;         /* 玫红 - 食肉动物 */
   --color-omnivore: #fb923c;          /* 橙色 - 杂食动物 */
+  --color-mixotroph: #22d3ee;         /* 青色 - 混合营养 */
+  --color-decomposer: #a78bfa;        /* 紫色 - 分解者 */
   --color-decomposer: #c084fc;        /* 淡紫 - 分解者 */
   --color-background: #94a3b8;        /* 灰蓝 - 背景物种 */
   
@@ -2171,6 +2173,12 @@ h1, h2, h3 {
 }
 .species-card.role-omnivore {
   border-left-color: var(--color-omnivore);
+}
+.species-card.role-mixotroph {
+  border-left-color: var(--color-mixotroph);
+}
+.species-card.role-decomposer {
+  border-left-color: var(--color-decomposer);
 }
 .species-card.role-decomposer {
   border-left-color: var(--color-decomposer);

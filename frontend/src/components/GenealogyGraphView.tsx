@@ -19,6 +19,8 @@ const COLORS = {
   HERBIVORE: 0xfbbf24,
   CARNIVORE: 0xf43f5e,
   OMNIVORE: 0xf97316,
+  MIXOTROPH: 0x22d3ee,
+  DECOMPOSER: 0xa78bfa,
   DEFAULT: 0xffffff,
   SELECTED: 0x3b82f6,
   SUBSPECIES: 0x8b5cf6,
@@ -903,6 +905,8 @@ function getNodeColorHex(node: LineageNode): number {
     case "herbivore": return COLORS.HERBIVORE;
     case "carnivore": return COLORS.CARNIVORE;
     case "omnivore": return COLORS.OMNIVORE;
+    case "mixotroph": return COLORS.MIXOTROPH;
+    case "decomposer": return COLORS.DECOMPOSER;
     default: return COLORS.DEFAULT;
   }
 }
@@ -1155,6 +1159,8 @@ function getRoleName(role: string): string {
     herbivore: '食草',
     carnivore: '食肉',
     omnivore: '杂食',
+    mixotroph: '混养',
+    decomposer: '分解',
   };
   return names[role] || role;
 }
@@ -1176,6 +1182,8 @@ function getNodeColorStr(node: LineageNode): string {
     case "herbivore": return "#fbbf24";
     case "carnivore": return "#f43f5e";
     case "omnivore": return "#f97316";
+    case "mixotroph": return "#22d3ee";
+    case "decomposer": return "#a78bfa";
     default: return "#ffffff";
   }
 }
