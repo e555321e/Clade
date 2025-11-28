@@ -203,6 +203,7 @@ export interface TurnReport {
   sea_level: number;
   global_temperature: number;
   tectonic_stage?: string; // 新增：地质阶段
+  extinction_count?: number; // 本回合灭绝物种数量
 }
 
 export interface LineageNode {

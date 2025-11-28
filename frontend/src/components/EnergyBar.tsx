@@ -151,37 +151,6 @@ export function EnergyBar({ className = "", onOpenHistory }: Props) {
 
       {tooltipElement}
 
-      {/* 保留原有 tooltip 结构用于样式定义，但不再使用 */}
-      {false && (
-        <div className="energy-tooltip">
-          <div className="tooltip-header">
-            <span className="tooltip-icon">⚡</span>
-            <span className="tooltip-title">神力能量</span>
-          </div>
-          <div className="tooltip-body">
-            <div className="tooltip-row">
-              <span>当前能量</span>
-              <span className="value">{energy.current} / {energy.maximum}</span>
-            </div>
-            <div className="tooltip-row">
-              <span>每回合恢复</span>
-              <span className="value">+{energy.regen_per_turn}</span>
-            </div>
-            <div className="tooltip-row">
-              <span>总消耗</span>
-              <span className="value">{energy.total_spent}</span>
-            </div>
-            <div className="tooltip-row">
-              <span>总恢复</span>
-              <span className="value">{energy.total_regenerated}</span>
-            </div>
-          </div>
-          <div className="tooltip-footer">
-            点击查看消耗历史
-          </div>
-        </div>
-      )}
-
       <style>{`
         .energy-bar {
           display: flex;

@@ -319,29 +319,28 @@ if ($portBackend -or $portFrontend) {
 Write-Host ""
 Write-Status $lang.start ($lang.startingBackend -f $BACKEND_PORT) $cWarning
 
-# 处理带空格的路径
+# 处理带空格的路径（使用 Set-Location 支持跨驱动器）
 $backendPath = "$scriptDir\backend"
 $beCmd = @"
-cd '$backendPath'
+Set-Location -LiteralPath '$backendPath'
 & '.\venv\Scripts\Activate.ps1'
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT
 "@
-Start-Process powershell -ArgumentList "-NoExit", "-Command", $beCmd
+Start-Process powershell -ArgumentList "-NoExit", "-Command", $beCmd -WorkingDirectory $backendPath
 
 Start-Sleep -Seconds 4
 
 Write-Status $lang.start ($lang.startingFrontend -f $FRONTEND_PORT) $cWarning
 
-# 设置环境变量传递给前端（处理带空格的路径）
+# 设置环境变量传递给前端（使用 Set-Location 支持跨驱动器）
 $frontendPath = "$scriptDir\frontend"
-# 使用 -File 或分开命令避免转义问题
 $feCmd = @"
-cd '$frontendPath'
+Set-Location -LiteralPath '$frontendPath'
 `$env:BACKEND_PORT='$BACKEND_PORT'
 `$env:FRONTEND_PORT='$FRONTEND_PORT'
 npm run dev -- --port $FRONTEND_PORT
 "@
-Start-Process powershell -ArgumentList "-NoExit", "-Command", $feCmd
+Start-Process powershell -ArgumentList "-NoExit", "-Command", $feCmd -WorkingDirectory $frontendPath
 
 # ==================== Step 6: Complete ====================
 Write-Step "6/6" $lang.step6

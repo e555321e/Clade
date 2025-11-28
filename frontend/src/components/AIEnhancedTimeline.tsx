@@ -171,7 +171,7 @@ export function AIEnhancedTimeline({ reports, onClose }: Props) {
                         </div>
                         <div className="turn-stats">
                           <span className="stat">🧬 {report.species.length} 物种</span>
-                          {report.extinction_count > 0 && (
+                          {(report.extinction_count ?? 0) > 0 && (
                             <span className="stat extinct">💀 {report.extinction_count} 灭绝</span>
                           )}
                         </div>
