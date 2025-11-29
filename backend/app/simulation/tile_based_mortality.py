@@ -788,7 +788,7 @@ class TileBasedMortalityEngine:
         # ========== 阶段3: 汇总各地块结果 ==========
         results = self._aggregate_tile_results(
             species_list, species_arrays, mortality_matrix, 
-            niche_metrics, tier, extinct_codes
+            niche_metrics, tier, extinct_codes, batch_population_matrix
         )
         
         return results
@@ -1771,6 +1771,7 @@ class TileBasedMortalityEngine:
         niche_metrics: dict[str, NicheMetrics],
         tier: str,
         extinct_codes: set[str],
+        batch_population_matrix: np.ndarray | None = None,
     ) -> list[AggregatedMortalityResult]:
         """汇总各地块结果，计算物种总体死亡率
         
@@ -1806,7 +1807,12 @@ class TileBasedMortalityEngine:
                 continue
             
             # 获取该物种在各地块的种群分布
-            if self._population_matrix is not None:
+            # 【修复】使用batch_population_matrix而不是self._population_matrix
+            # 因为sp_idx是当前批次的索引，不是全局索引
+            if batch_population_matrix is not None:
+                tile_pops = batch_population_matrix[:, sp_idx]
+            elif self._population_matrix is not None:
+                # 回退：如果没有batch矩阵，尝试使用全局矩阵（可能索引不对）
                 tile_pops = self._population_matrix[:, sp_idx]
             else:
                 tile_pops = np.array([total_pop])
