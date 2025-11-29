@@ -395,6 +395,17 @@ class MapStateManager:
                 if "深海" in biome:
                     filtered.append(tile)
             
+            elif habitat_type == "hydrothermal":
+                # 热泉生物（如硫细菌）：深海+火山活动区
+                # 优先选择有火山活动的深海区域
+                if "深海" in biome:
+                    volcanic = getattr(tile, 'volcanic_potential', 0.0)
+                    if volcanic > 0.3:
+                        # 高优先级：火山活动区域
+                        filtered.insert(0, tile)
+                    else:
+                        filtered.append(tile)
+            
             elif habitat_type == "coastal":
                 # 海岸生物：海岸带和浅海
                 if "海岸" in biome or "浅海" in biome:
@@ -429,6 +440,9 @@ class MapStateManager:
         # 海洋生物通常分布更广
         if habitat_type in ["marine", "deep_sea"]:
             return 10
+        # 热泉生物：集中在热液喷口附近
+        elif habitat_type == "hydrothermal":
+            return 5
         # 淡水生物分布较集中
         elif habitat_type == "freshwater":
             return 3
@@ -2588,6 +2602,7 @@ class MapStateManager:
         """计算物种在某地块的适应性评分（0-1范围）"""
         temperature_pref = species.abstract_traits.get("耐寒性", 5)
         dryness_pref = species.abstract_traits.get("耐旱性", 5)
+        habitat_type = getattr(species, 'habitat_type', 'terrestrial')
         
         # 温度适应性
         temp_norm = (tile.temperature + 30) / 70  # map to 0-1 approximate
@@ -2605,9 +2620,25 @@ class MapStateManager:
         # 生物群系匹配度
         adjacency = 1.0 if species.description.find(tile.biome[:1]) >= 0 else 0.5
         
-        # 综合评分（权重：温度25% + 湿度25% + 资源30% + 群系20%）
-        # 资源权重提升，因为它现在更准确地反映了环境承载力
-        return max(0.0, (temp_score * 0.25 + humidity_score * 0.25 + resource_score * 0.3 + adjacency * 0.2))
+        # === 特殊栖息地加成 ===
+        special_bonus = 0.0
+        
+        # 热泉生物（如硫细菌）：火山活动区域大幅加成
+        if habitat_type == "hydrothermal":
+            volcanic = getattr(tile, 'volcanic_potential', 0.0)
+            if volcanic > 0.5:
+                special_bonus = 0.5  # 高火山活动区域大幅加成
+            elif volcanic > 0.2:
+                special_bonus = 0.3  # 中等火山活动区域加成
+        
+        # 深海生物：深海区域加成
+        elif habitat_type == "deep_sea":
+            if tile.elevation < -2000:
+                special_bonus = 0.2  # 深海区域加成
+        
+        # 综合评分（权重：温度20% + 湿度20% + 资源25% + 群系15% + 特殊20%）
+        base_score = temp_score * 0.20 + humidity_score * 0.20 + resource_score * 0.25 + adjacency * 0.15
+        return max(0.0, min(1.0, base_score + special_bonus * 0.20))
 
     def _neighbor_ids(self, tile: MapTile, coord_map: dict[tuple[int, int], int]) -> list[int]:
         """Return neighbor ids treating the east/west boundary as wrapped."""

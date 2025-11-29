@@ -240,6 +240,25 @@ class TectonicIntegration:
         """获取板块列表"""
         return [p.to_dict() for p in self.tectonic.get_plates()]
     
+    def get_tile_volcanic_data(self) -> dict[int, dict[str, float]]:
+        """获取每个地块的火山/地震相关数据
+        
+        Returns:
+            {tile_id: {"volcanic_potential": float, "earthquake_risk": float, "boundary_type": str}}
+        """
+        result = {}
+        internal_tiles = self.tectonic.get_tiles()
+        
+        for tile in internal_tiles:
+            result[tile.id] = {
+                "volcanic_potential": tile.volcanic_potential,
+                "earthquake_risk": tile.earthquake_risk,
+                "boundary_type": tile.boundary_type.value if hasattr(tile.boundary_type, 'value') else str(tile.boundary_type),
+                "distance_to_boundary": tile.distance_to_boundary,
+            }
+        
+        return result
+    
     def trigger_volcanic_eruption(
         self,
         intensity: int = 5,
