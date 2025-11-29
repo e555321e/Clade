@@ -60,6 +60,7 @@ from .environment import EnvironmentSystem
 from .species import MortalityEngine, MortalityResult
 from .tile_based_mortality import TileBasedMortalityEngine, AggregatedMortalityResult
 from ..services.analytics.embedding_integration import EmbeddingIntegrationService
+from ..services.tectonic import TectonicIntegration, create_tectonic_integration
 
 
 @dataclass(slots=True)
@@ -125,6 +126,36 @@ class SimulationEngine:
         self._use_tile_based_mortality = True  # 是否使用按地块计算的死亡率
         self._use_ai_pressure_response = True  # 是否使用AI压力响应修正
         self._use_embedding_integration = True  # 是否使用Embedding集成功能
+        self._use_tectonic_system = True  # 是否使用板块构造系统
+        
+        # 【新增】板块构造系统 - 模拟板块运动、威尔逊周期、物种隔离/接触
+        self.tectonic: TectonicIntegration | None = None
+        self._init_tectonic_system()
+    
+    def _init_tectonic_system(self) -> None:
+        """初始化板块构造系统"""
+        if not self._use_tectonic_system:
+            return
+        
+        try:
+            # 获取地图尺寸
+            width = getattr(self.map_manager, "width", 128)
+            height = getattr(self.map_manager, "height", 40)
+            
+            # 使用当前回合数作为种子的一部分，确保可重现
+            import random
+            seed = random.randint(1, 999999)
+            
+            self.tectonic = create_tectonic_integration(
+                width=width,
+                height=height,
+                seed=seed,
+            )
+            logger.info(f"[板块系统] 初始化成功: {width}x{height}")
+        except Exception as e:
+            logger.warning(f"[板块系统] 初始化失败: {e}, 将禁用板块系统")
+            self._use_tectonic_system = False
+            self.tectonic = None
     
     def _emit_event(self, event_type: str, message: str, category: str = "其他", **extra):
         """发送事件到前端"""
@@ -396,9 +427,82 @@ class SimulationEngine:
                         if abs(sea_level_change) > 0.5:
                             self.map_manager.reclassify_terrain_by_sea_level(new_sea_level)
                 
-                # 地形演化模块已退役，仅保留 MapEvolution 更新
-                logger.info(f"[地形演化] 模块已退役，跳过 AI 地形演化步骤")
-                self._emit_event("info", "⏭️ 地形演化模块已移除，采用 MapEvolution 结果", "地质")
+                # 地形演化现在由板块构造系统处理
+                if not self._use_tectonic_system:
+                    logger.info(f"[地形演化] 板块系统未启用，仅使用 MapEvolution 结果")
+                    self._emit_event("info", "⏭️ 板块系统未启用，采用 MapEvolution 结果", "地质")
+                
+                # 2.5 【新增】板块构造运动
+                tectonic_result = None
+                if self._use_tectonic_system and self.tectonic:
+                    try:
+                        self._emit_event("stage", "🌍 板块构造运动", "地质")
+                        
+                        # 获取物种和栖息地数据
+                        all_species_for_tectonic = species_repository.list_species()
+                        alive_species = [sp for sp in all_species_for_tectonic if sp.status == "alive"]
+                        
+                        # 获取栖息地数据
+                        habitat_data = []
+                        for sp in alive_species:
+                            for h in getattr(sp, "habitats", []):
+                                habitat_data.append({
+                                    "tile_id": getattr(h, "tile_id", 0),
+                                    "species_id": sp.id,
+                                    "population": getattr(h, "population", 0),
+                                })
+                        
+                        # 获取地块列表（从数据库）
+                        map_tiles = environment_repository.list_tiles()
+                        
+                        # 执行板块运动
+                        tectonic_result = self.tectonic.step(
+                            species_list=alive_species,
+                            habitat_data=habitat_data,
+                            map_tiles=map_tiles,
+                            pressure_modifiers=modifiers,
+                        )
+                        
+                        # 输出结果
+                        wilson = tectonic_result.wilson_phase
+                        logger.info(f"[板块系统] 威尔逊周期: {wilson['phase']} ({wilson['progress']:.0%})")
+                        
+                        # 发送事件
+                        for summary in tectonic_result.get_major_events_summary():
+                            self._emit_event("info", f"🌋 {summary}", "地质")
+                        
+                        # 将地形变化应用到地图并保存
+                        if tectonic_result.terrain_changes and map_tiles:
+                            tile_map = {t.id: t for t in map_tiles}
+                            updated_tiles = []
+                            
+                            for change in tectonic_result.terrain_changes:
+                                tile = tile_map.get(change["tile_id"])
+                                if tile:
+                                    tile.elevation = change["new_elevation"]
+                                    updated_tiles.append(tile)
+                            
+                            if updated_tiles:
+                                # 保存更新的地块到数据库
+                                environment_repository.upsert_tiles(updated_tiles)
+                                logger.info(f"[板块系统] 应用并保存了 {len(updated_tiles)} 处地形变化")
+                                
+                                # 如果海拔变化显著，重新分类地形
+                                max_change = max(abs(c["delta"]) for c in tectonic_result.terrain_changes)
+                                if max_change > 50:  # 变化超过50米
+                                    self.map_manager.reclassify_terrain_by_sea_level(
+                                        current_map_state.sea_level
+                                    )
+                                    logger.info(f"[板块系统] 地形重新分类完成")
+                        
+                        # 合并压力反馈
+                        for key, value in tectonic_result.pressure_feedback.items():
+                            modifiers[key] = modifiers.get(key, 0) + value
+                        
+                    except Exception as e:
+                        logger.warning(f"[板块系统] 运行失败: {e}")
+                        import traceback
+                        traceback.print_exc()
                 
                 # 3. 获取物种列表（只处理存活的物种）
                 logger.info(f"获取物种列表...")

@@ -3481,6 +3481,8 @@ def choose_divine_path(request: dict) -> dict:
     注意：主神格选择后不可更改，4级后可选副神格。
     """
     path_str = request.get("path", "")
+    logger.info(f"[神格] 收到选择请求: {path_str}")
+    
     try:
         path = DivinePath(path_str)
     except ValueError:
@@ -3492,6 +3494,8 @@ def choose_divine_path(request: dict) -> dict:
     success, message = divine_progression_service.choose_path(path)
     if not success:
         raise HTTPException(status_code=400, detail=message)
+    
+    logger.info(f"[神格] 选择成功: {path.value}, 解锁技能: {divine_progression_service.get_state().path_progress.unlocked_skills}")
     
     return {
         "success": True,
@@ -3529,14 +3533,21 @@ async def use_divine_skill(request: dict) -> dict:
     skill_id = request.get("skill_id", "")
     target = request.get("target")
     
+    logger.info(f"[技能] 尝试使用: {skill_id}, 目标: {target}")
+    
     if skill_id not in DIVINE_SKILLS:
         raise HTTPException(status_code=400, detail=f"未知的技能: {skill_id}")
     
     skill = DIVINE_SKILLS[skill_id]
     skill_info = divine_progression_service.get_skill_info(skill_id)
     
+    # 检查是否已选择神格
+    path_info = divine_progression_service.get_path_info()
+    if not path_info:
+        raise HTTPException(status_code=400, detail="请先选择一个神格路线")
+    
     if not skill_info["unlocked"]:
-        raise HTTPException(status_code=400, detail=f"技能「{skill.name}」尚未解锁")
+        raise HTTPException(status_code=400, detail=f"技能「{skill.name}」尚未解锁（需要等级 {skill.unlock_level}）")
     
     # 检查能量
     current_turn = simulation_engine.turn_counter
@@ -3550,7 +3561,11 @@ async def use_divine_skill(request: dict) -> dict:
         )
     
     # 消耗能量
-    energy_service.spend("pressure", current_turn, details=f"技能: {skill.name}", intensity=actual_cost // 3)
+    success, msg = energy_service.spend_fixed(actual_cost, current_turn, details=f"技能: {skill.name}")
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
+    
+    logger.info(f"[技能] 消耗能量成功: {actual_cost}, 技能: {skill.name}")
     
     # 增加经验
     divine_progression_service.add_experience(actual_cost)
@@ -3781,6 +3796,8 @@ def add_follower(request: dict) -> dict:
     - lineage_code: 物种代码
     """
     lineage_code = request.get("lineage_code", "")
+    logger.info(f"[信仰] 尝试添加信徒: {lineage_code}")
+    
     if not lineage_code:
         raise HTTPException(status_code=400, detail="请提供物种代码")
     
@@ -3801,6 +3818,7 @@ def add_follower(request: dict) -> dict:
     if not success:
         raise HTTPException(status_code=400, detail="该物种已是信徒")
     
+    logger.info(f"[信仰] 添加信徒成功: {species.common_name}")
     return {
         "success": True,
         "message": f"「{species.common_name}」已成为信徒",
@@ -3830,7 +3848,9 @@ def bless_follower(request: dict) -> dict:
         raise HTTPException(status_code=400, detail=message)
     
     # 消耗能量
-    energy_service.spend("pressure", current_turn, details=f"显圣: {lineage_code}", intensity=cost // 3)
+    success, msg = energy_service.spend_fixed(cost, current_turn, details=f"显圣: {lineage_code}")
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
     
     # 应用效果到物种
     species = species_repository.get_by_lineage(lineage_code)
@@ -3868,7 +3888,9 @@ def sanctify_follower(request: dict) -> dict:
         raise HTTPException(status_code=400, detail=message)
     
     # 消耗能量
-    energy_service.spend("pressure", current_turn, details=f"圣化: {lineage_code}", intensity=cost // 3)
+    success, msg = energy_service.spend_fixed(cost, current_turn, details=f"圣化: {lineage_code}")
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
     
     # 应用效果到物种
     species = species_repository.get_by_lineage(lineage_code)
@@ -3958,7 +3980,7 @@ def cancel_miracle_charge() -> dict:
 
 @router.post("/divine/miracle/execute", tags=["divine"])
 async def execute_miracle(request: dict) -> dict:
-    """手动触发已蓄力完成的神迹
+    """手动触发神迹
     
     Body:
     - miracle_id: 神迹ID
@@ -3967,11 +3989,17 @@ async def execute_miracle(request: dict) -> dict:
     miracle_id = request.get("miracle_id", "")
     target = request.get("target")
     
+    logger.info(f"[神迹] 尝试释放: {miracle_id}")
+    
     if miracle_id not in MIRACLES:
         raise HTTPException(status_code=400, detail=f"未知的神迹: {miracle_id}")
     
     miracle = MIRACLES[miracle_id]
     miracle_info = divine_progression_service.get_miracle_info(miracle_id)
+    
+    # 检查一次性神迹是否已使用
+    if miracle.one_time and miracle_id in divine_progression_service.get_state().miracle_state.used_one_time:
+        raise HTTPException(status_code=400, detail=f"「{miracle.name}」是一次性神迹，已使用过")
     
     # 检查冷却
     if miracle_info["current_cooldown"] > 0:
@@ -3980,16 +4008,20 @@ async def execute_miracle(request: dict) -> dict:
             detail=f"神迹冷却中，剩余 {miracle_info['current_cooldown']} 回合"
         )
     
-    # 检查能量（如果不是蓄力完成的）
+    # 检查能量
     current_turn = simulation_engine.turn_counter
     if energy_service.get_state().current < miracle.cost:
         raise HTTPException(
             status_code=400,
-            detail=f"能量不足！「{miracle.name}」需要 {miracle.cost} 能量"
+            detail=f"能量不足！「{miracle.name}」需要 {miracle.cost} 能量，当前只有 {energy_service.get_state().current}"
         )
     
     # 消耗能量
-    energy_service.spend("pressure", current_turn, details=f"神迹: {miracle.name}", intensity=miracle.cost // 3)
+    success, msg = energy_service.spend_fixed(miracle.cost, current_turn, details=f"神迹: {miracle.name}")
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
+    
+    logger.info(f"[神迹] 消耗能量成功: {miracle.cost}, 神迹: {miracle.name}")
     
     # 设置冷却
     state = divine_progression_service.get_state()
@@ -4035,11 +4067,80 @@ async def execute_miracle(request: dict) -> dict:
     elif miracle_id == "great_prosperity":
         # 大繁荣：增加所有物种种群
         all_species = species_repository.list_species()
+        boosted = 0
         for sp in all_species:
-            if sp.status == "alive" and sp.population:
-                sp.population = int(sp.population * 1.5)
+            if sp.status == "alive":
+                if sp.population:
+                    sp.population = int(sp.population * 1.5)
+                # 提升适应力
+                if sp.fitness_score:
+                    sp.fitness_score = min(1.0, sp.fitness_score + 0.05)
                 species_repository.upsert(sp)
-        result["details"] = "大繁荣降临，所有物种种群增长50%"
+                boosted += 1
+        result["details"] = f"大繁荣降临，{boosted} 个物种获得增长"
+    
+    elif miracle_id == "divine_sanctuary":
+        # 神圣避难所：保护所有存活物种10回合
+        all_species = species_repository.list_species()
+        protected = 0
+        for sp in all_species:
+            if sp.status == "alive":
+                sp.is_protected = True
+                sp.protection_turns = max(sp.protection_turns or 0, 10)
+                species_repository.upsert(sp)
+                protected += 1
+        result["details"] = f"神圣避难所庇护了 {protected} 个物种，持续10回合"
+    
+    elif miracle_id == "genesis_flood":
+        # 创世洪水：海岸物种受冲击
+        all_species = species_repository.list_species()
+        affected = 0
+        for sp in all_species:
+            if sp.status == "alive" and sp.habitat_type in ("coastal", "marine", "freshwater"):
+                # 海洋/水生物种受影响
+                if sp.fitness_score:
+                    sp.fitness_score = max(0.1, sp.fitness_score - 0.1)
+                affected += 1
+                species_repository.upsert(sp)
+        result["details"] = f"创世洪水重塑海岸，{affected} 个水生物种受到冲击"
+    
+    elif miracle_id == "miracle_evolution":
+        # 奇迹进化：AI生成超常规物种
+        if not target:
+            result["details"] = "奇迹进化需要指定目标物种"
+            result["error"] = True
+        else:
+            species = species_repository.get_by_lineage(target)
+            if not species:
+                result["details"] = f"目标物种 {target} 不存在"
+                result["error"] = True
+            else:
+                try:
+                    existing_species = species_repository.get_all()
+                    used_codes = {s.lineage_code for s in existing_species}
+                    suffix = 1
+                    while f"{species.lineage_code}.M{suffix}" in used_codes:
+                        suffix += 1
+                    miracle_code = f"{species.lineage_code}.M{suffix}"
+                    
+                    miracle_species = species_generator.generate_advanced(
+                        prompt=f"从「{species.common_name}」产生的奇迹进化体，拥有超越常理的能力和独特形态",
+                        lineage_code=miracle_code,
+                        existing_species=existing_species,
+                        parent_code=species.lineage_code,
+                    )
+                    species_repository.upsert(miracle_species)
+                    result["details"] = f"奇迹进化诞生了「{miracle_species.common_name}」！"
+                    result["new_species"] = {
+                        "lineage_code": miracle_species.lineage_code,
+                        "common_name": miracle_species.common_name,
+                    }
+                except Exception as e:
+                    logger.error(f"[奇迹进化] 失败: {e}")
+                    result["details"] = f"奇迹进化失败: {str(e)}"
+                    result["error"] = True
+    
+    logger.info(f"[神迹] 释放成功: {miracle.name}, 结果: {result['details']}")
     
     return {
         "success": True,
@@ -4070,6 +4171,7 @@ def place_wager(request: dict) -> dict:
     - secondary_species: 第二物种（对决预言需要）
     - predicted_outcome: 预测结果（对决预言需要，填写预测获胜者）
     """
+    logger.info(f"[预言] 收到下注请求: {request}")
     wager_type_str = request.get("wager_type", "")
     target_species = request.get("target_species", "")
     bet_amount = request.get("bet_amount", 0)
@@ -4129,7 +4231,11 @@ def place_wager(request: dict) -> dict:
         raise HTTPException(status_code=400, detail=message)
     
     # 消耗能量
-    energy_service.spend("pressure", current_turn, details=f"预言下注: {WAGER_TYPES[wager_type].name}", intensity=bet_amount // 3)
+    success2, msg2 = energy_service.spend_fixed(bet_amount, current_turn, details=f"预言下注: {WAGER_TYPES[wager_type].name}")
+    if not success2:
+        raise HTTPException(status_code=400, detail=msg2)
+    
+    logger.info(f"[预言] 下注成功: {bet_amount} 能量, 目标: {target_species}")
     
     return {
         "success": True,

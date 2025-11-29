@@ -1,4 +1,14 @@
+/**
+ * DivinePowersPanel - 神力进阶系统面板
+ * 包含四大子系统：神格专精、信仰、神迹、预言赌注
+ */
 import { useState, useEffect, useCallback } from "react";
+import { 
+  Sparkles, Crown, Shield, Zap, Leaf, 
+  Users, Star, Flame, Target, Dice6,
+  ChevronRight, Lock, Check, AlertTriangle
+} from "lucide-react";
+import { AnalysisPanel, AnalysisSection, ActionButton, StatCard, EmptyState } from "./common/AnalysisPanel";
 import { dispatchEnergyChanged } from "./EnergyBar";
 
 // ==================== 类型定义 ====================
@@ -116,12 +126,25 @@ interface DivineStatus {
 }
 
 interface Props {
-  onClose?: () => void;
+  onClose: () => void;
 }
 
-// ==================== 子标签页组件 ====================
-
 type TabType = "path" | "faith" | "miracles" | "wagers";
+
+// 神格配色映射
+const PATH_COLORS: Record<string, string> = {
+  creator: "#22c55e",
+  guardian: "#3b82f6", 
+  chaos: "#ef4444",
+  ecology: "#a855f7",
+};
+
+const PATH_ICONS: Record<string, React.ReactNode> = {
+  creator: <Leaf size={20} />,
+  guardian: <Shield size={20} />,
+  chaos: <Zap size={20} />,
+  ecology: <Sparkles size={20} />,
+};
 
 // ==================== 主组件 ====================
 
@@ -157,19 +180,32 @@ export function DivinePowersPanel({ onClose }: Props) {
       });
       const data = await res.json();
       if (res.ok) {
+        alert(data.message || "神格选择成功！");
         fetchStatus();
       } else {
         alert(data.detail || "选择神格失败");
       }
     } catch (e) {
       console.error(e);
+      alert("请求失败，请检查网络连接");
     } finally {
       setActionLoading(false);
     }
   };
 
   const handleUseSkill = async (skillId: string) => {
-    const target = prompt("请输入目标物种代码（部分技能需要）:");
+    // 需要目标的技能
+    const needsTarget = [
+      "ancestor_blessing", "life_shelter", "revival_light",
+      "divine_speciation", "chaos_mutation",
+    ];
+    
+    let target: string | null = null;
+    if (needsTarget.includes(skillId)) {
+      target = prompt("请输入目标物种代码:");
+      if (!target) return; // 用户取消
+    }
+    
     setActionLoading(true);
     try {
       const res = await fetch("/api/divine/skill/use", {
@@ -187,41 +223,26 @@ export function DivinePowersPanel({ onClose }: Props) {
       }
     } catch (e) {
       console.error(e);
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleStartMiracle = async (miracleId: string) => {
-    setActionLoading(true);
-    try {
-      const res = await fetch("/api/divine/miracle/charge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ miracle_id: miracleId }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        alert(data.message);
-        fetchStatus();
-        dispatchEnergyChanged();
-      } else {
-        alert(data.detail || "蓄力失败");
-      }
-    } catch (e) {
-      console.error(e);
+      alert("请求失败，请检查网络连接");
     } finally {
       setActionLoading(false);
     }
   };
 
   const handleExecuteMiracle = async (miracleId: string) => {
+    // miracle_evolution 需要目标物种
+    let target: string | null = null;
+    if (miracleId === "miracle_evolution") {
+      target = prompt("请输入目标物种代码（奇迹进化的起点）:");
+      if (!target) return;
+    }
+    
     setActionLoading(true);
     try {
       const res = await fetch("/api/divine/miracle/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ miracle_id: miracleId }),
+        body: JSON.stringify({ miracle_id: miracleId, target }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -281,85 +302,197 @@ export function DivinePowersPanel({ onClose }: Props) {
     }
   };
 
-  if (loading || !status) {
+  const accentColor = status?.path ? PATH_COLORS[status.path.path] || "#f59e0b" : "#f59e0b";
+
+  if (loading) {
     return (
-      <div className="divine-panel">
-        <div className="divine-loading">加载神力系统...</div>
-        <style>{styles}</style>
-      </div>
+      <AnalysisPanel
+        title="神力进阶"
+        icon={<Sparkles size={20} />}
+        accentColor="#f59e0b"
+        onClose={onClose}
+        size="large"
+      >
+        <EmptyState
+          icon={<Sparkles />}
+          title="加载中..."
+          description="正在获取神力系统状态"
+        />
+      </AnalysisPanel>
+    );
+  }
+
+  if (!status) {
+    return (
+      <AnalysisPanel
+        title="神力进阶"
+        icon={<Sparkles size={20} />}
+        accentColor="#f59e0b"
+        onClose={onClose}
+        size="large"
+      >
+        <EmptyState
+          icon={<AlertTriangle />}
+          title="加载失败"
+          description="无法获取神力系统状态"
+        />
+      </AnalysisPanel>
     );
   }
 
   return (
-    <div className="divine-panel">
-      <div className="divine-header">
-        <h2>⚡ 神力进阶</h2>
-        {onClose && (
-          <button className="close-btn" onClick={onClose}>
-            ✕
-          </button>
-        )}
+    <AnalysisPanel
+      title="神力进阶"
+      icon={<Sparkles size={20} />}
+      accentColor={accentColor}
+      onClose={onClose}
+      size="large"
+      showMaximize
+      headerExtra={
+        status.path && (
+          <div className="header-path-badge" style={{ 
+            background: `linear-gradient(135deg, ${accentColor}20, ${accentColor}10)`,
+            border: `1px solid ${accentColor}40`,
+            color: accentColor,
+          }}>
+            {status.path.icon} {status.path.name} Lv.{status.path.level}
+          </div>
+        )
+      }
+    >
+      <div className="divine-powers-content">
+        {/* 标签页导航 */}
+        <div className="divine-tabs">
+          {[
+            { key: "path", label: "神格", icon: <Crown size={16} /> },
+            { key: "faith", label: "信仰", icon: <Users size={16} /> },
+            { key: "miracles", label: "神迹", icon: <Star size={16} /> },
+            { key: "wagers", label: "预言", icon: <Dice6 size={16} /> },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              className={`divine-tab ${activeTab === tab.key ? "active" : ""}`}
+              onClick={() => setActiveTab(tab.key as TabType)}
+              style={{
+                "--tab-color": activeTab === tab.key ? accentColor : "transparent",
+              } as React.CSSProperties}
+            >
+              {tab.icon}
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* 标签页内容 */}
+        <div className="divine-tab-content">
+          {activeTab === "path" && (
+            <PathTab
+              status={status}
+              onChoosePath={handleChoosePath}
+              onUseSkill={handleUseSkill}
+              loading={actionLoading}
+            />
+          )}
+          {activeTab === "faith" && (
+            <FaithTab status={status} onRefresh={fetchStatus} />
+          )}
+          {activeTab === "miracles" && (
+            <MiraclesTab
+              status={status}
+              onExecute={handleExecuteMiracle}
+              loading={actionLoading}
+            />
+          )}
+          {activeTab === "wagers" && (
+            <WagersTab
+              status={status}
+              onPlaceWager={handlePlaceWager}
+              onRefresh={fetchStatus}
+              loading={actionLoading}
+            />
+          )}
+        </div>
       </div>
 
-      <div className="divine-tabs">
-        <button
-          className={`tab ${activeTab === "path" ? "active" : ""}`}
-          onClick={() => setActiveTab("path")}
-        >
-          🌟 神格
-        </button>
-        <button
-          className={`tab ${activeTab === "faith" ? "active" : ""}`}
-          onClick={() => setActiveTab("faith")}
-        >
-          🙏 信仰
-        </button>
-        <button
-          className={`tab ${activeTab === "miracles" ? "active" : ""}`}
-          onClick={() => setActiveTab("miracles")}
-        >
-          ✨ 神迹
-        </button>
-        <button
-          className={`tab ${activeTab === "wagers" ? "active" : ""}`}
-          onClick={() => setActiveTab("wagers")}
-        >
-          🎲 预言
-        </button>
-      </div>
+      <style>{`
+        .divine-powers-content {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+          padding: 20px;
+          gap: 20px;
+        }
 
-      <div className="divine-content">
-        {activeTab === "path" && (
-          <PathTab
-            status={status}
-            onChoosePath={handleChoosePath}
-            onUseSkill={handleUseSkill}
-            loading={actionLoading}
-          />
-        )}
-        {activeTab === "faith" && (
-          <FaithTab status={status} onRefresh={fetchStatus} />
-        )}
-        {activeTab === "miracles" && (
-          <MiraclesTab
-            status={status}
-            onStartCharge={handleStartMiracle}
-            onExecute={handleExecuteMiracle}
-            loading={actionLoading}
-          />
-        )}
-        {activeTab === "wagers" && (
-          <WagersTab
-            status={status}
-            onPlaceWager={handlePlaceWager}
-            onRefresh={fetchStatus}
-            loading={actionLoading}
-          />
-        )}
-      </div>
+        .header-path-badge {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 14px;
+          border-radius: 20px;
+          font-size: 0.85rem;
+          font-weight: 600;
+        }
 
-      <style>{styles}</style>
-    </div>
+        .divine-tabs {
+          display: flex;
+          gap: 8px;
+          padding: 6px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 14px;
+        }
+
+        .divine-tab {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          padding: 12px 16px;
+          background: transparent;
+          border: none;
+          border-radius: 10px;
+          color: rgba(255, 255, 255, 0.5);
+          font-size: 0.9rem;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.25s ease;
+          position: relative;
+        }
+
+        .divine-tab:hover {
+          color: rgba(255, 255, 255, 0.8);
+          background: rgba(255, 255, 255, 0.03);
+        }
+
+        .divine-tab.active {
+          color: #fff;
+          background: linear-gradient(135deg, 
+            color-mix(in srgb, var(--tab-color) 20%, transparent),
+            color-mix(in srgb, var(--tab-color) 10%, transparent)
+          );
+          box-shadow: 0 0 20px color-mix(in srgb, var(--tab-color) 30%, transparent);
+        }
+
+        .divine-tab.active::after {
+          content: '';
+          position: absolute;
+          bottom: -6px;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 20px;
+          height: 3px;
+          background: var(--tab-color);
+          border-radius: 2px;
+        }
+
+        .divine-tab-content {
+          flex: 1;
+          overflow-y: auto;
+          overflow-x: hidden;
+        }
+      `}</style>
+    </AnalysisPanel>
   );
 }
 
@@ -385,122 +518,483 @@ function PathTab({
       .catch(console.error);
   }, [status]);
 
-  // 未选择神格
+  // 未选择神格 - 选择界面
   if (!status.path && status.available_paths) {
     return (
       <div className="path-selection">
-        <h3>选择你的神格</h3>
-        <p className="hint">选择一条神力路线，解锁专属能力和加成。</p>
+        <div className="selection-header">
+          <h3>选择你的神格</h3>
+          <p>踏上神力之路，选择一条专精路线，解锁独特能力与加成</p>
+        </div>
+        
         <div className="paths-grid">
           {status.available_paths.map((path) => (
             <div
               key={path.path}
-              className="path-card"
-              style={{ borderColor: path.color }}
+              className="path-option-card"
+              style={{ "--path-color": PATH_COLORS[path.path] } as React.CSSProperties}
               onClick={() => !loading && onChoosePath(path.path)}
             >
-              <div className="path-icon" style={{ color: path.color }}>
-                {path.icon}
+              <div className="path-option-glow" />
+              <div className="path-option-icon">
+                {PATH_ICONS[path.path] || <Sparkles size={28} />}
               </div>
-              <div className="path-name">{path.name}</div>
-              <div className="path-desc">{path.description}</div>
-              <div className="path-bonus">
-                <strong>被动加成:</strong> {path.passive_bonus}
+              <div className="path-option-name">{path.name}</div>
+              <div className="path-option-desc">{path.description}</div>
+              <div className="path-option-bonus">
+                <Flame size={14} />
+                <span>{path.passive_bonus}</span>
               </div>
-              <div className="path-skills">
-                技能: {path.skills.join(", ")}
+              <div className="path-option-skills">
+                {path.skills.map((skill, i) => (
+                  <span key={i} className="skill-tag">{skill}</span>
+                ))}
+              </div>
+              <div className="path-option-select">
+                <ChevronRight size={18} />
+                <span>选择此神格</span>
               </div>
             </div>
           ))}
         </div>
+
+        <style>{`
+          .path-selection {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+          }
+
+          .selection-header {
+            text-align: center;
+          }
+
+          .selection-header h3 {
+            margin: 0 0 8px;
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #fff;
+          }
+
+          .selection-header p {
+            margin: 0;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 0.95rem;
+          }
+
+          .paths-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+          }
+
+          .path-option-card {
+            position: relative;
+            padding: 24px;
+            background: linear-gradient(135deg, 
+              rgba(255, 255, 255, 0.03) 0%,
+              rgba(255, 255, 255, 0.01) 100%
+            );
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            overflow: hidden;
+          }
+
+          .path-option-card:hover {
+            border-color: var(--path-color);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px color-mix(in srgb, var(--path-color) 20%, transparent);
+          }
+
+          .path-option-glow {
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(
+              circle at center,
+              color-mix(in srgb, var(--path-color) 10%, transparent) 0%,
+              transparent 50%
+            );
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+          }
+
+          .path-option-card:hover .path-option-glow {
+            opacity: 1;
+          }
+
+          .path-option-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg,
+              color-mix(in srgb, var(--path-color) 20%, transparent),
+              color-mix(in srgb, var(--path-color) 10%, transparent)
+            );
+            border: 1px solid color-mix(in srgb, var(--path-color) 30%, transparent);
+            border-radius: 14px;
+            color: var(--path-color);
+            margin-bottom: 16px;
+          }
+
+          .path-option-name {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 8px;
+          }
+
+          .path-option-desc {
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.5);
+            line-height: 1.5;
+            margin-bottom: 12px;
+          }
+
+          .path-option-bonus {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            font-size: 0.8rem;
+            color: var(--path-color);
+            margin-bottom: 12px;
+          }
+
+          .path-option-skills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 16px;
+          }
+
+          .skill-tag {
+            padding: 4px 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            font-size: 0.75rem;
+            color: rgba(255, 255, 255, 0.6);
+          }
+
+          .path-option-select {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 10px;
+            background: color-mix(in srgb, var(--path-color) 15%, transparent);
+            border: 1px solid color-mix(in srgb, var(--path-color) 30%, transparent);
+            border-radius: 10px;
+            color: var(--path-color);
+            font-size: 0.9rem;
+            font-weight: 600;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all 0.3s;
+          }
+
+          .path-option-card:hover .path-option-select {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        `}</style>
       </div>
     );
   }
 
-  // 已选择神格
+  // 已选择神格 - 展示界面
   const currentPath = status.path!;
-  const expPercent = Math.min(
-    100,
-    (currentPath.experience / currentPath.next_level_exp) * 100
-  );
+  const pathColor = PATH_COLORS[currentPath.path] || "#f59e0b";
+  const expPercent = Math.min(100, (currentPath.experience / currentPath.next_level_exp) * 100);
+  const currentSkills = skills.filter(s => s.is_current_path);
 
   return (
     <div className="path-info">
-      <div
-        className="current-path-card"
-        style={{ borderColor: currentPath.color }}
+      {/* 神格状态卡片 */}
+      <AnalysisSection
+        title={`${currentPath.icon} ${currentPath.name}`}
+        accentColor={pathColor}
       >
-        <div className="path-header">
-          <span className="path-icon" style={{ color: currentPath.color }}>
-            {currentPath.icon}
-          </span>
-          <span className="path-name">{currentPath.name}</span>
-          <span className="path-level">Lv.{currentPath.level}</span>
+        <div className="current-path-display">
+          <div className="path-level-ring">
+            <svg viewBox="0 0 100 100" className="level-svg">
+              <defs>
+                <linearGradient id="pathGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor={pathColor} />
+                  <stop offset="100%" stopColor={`${pathColor}80`} />
+                </linearGradient>
+              </defs>
+              <circle
+                cx="50" cy="50" r="42"
+                fill="none"
+                stroke="rgba(255,255,255,0.08)"
+                strokeWidth="6"
+              />
+              <circle
+                cx="50" cy="50" r="42"
+                fill="none"
+                stroke="url(#pathGrad)"
+                strokeWidth="6"
+                strokeLinecap="round"
+                strokeDasharray={`${expPercent * 2.64} 264`}
+                transform="rotate(-90 50 50)"
+              />
+            </svg>
+            <div className="level-number">
+              <span className="level-value">{currentPath.level}</span>
+              <span className="level-label">级</span>
+            </div>
+          </div>
+          
+          <div className="path-details">
+            <div className="path-exp-info">
+              <span>经验值</span>
+              <span>{currentPath.experience} / {currentPath.next_level_exp}</span>
+            </div>
+            <div className="path-exp-bar">
+              <div 
+                className="path-exp-fill" 
+                style={{ width: `${expPercent}%`, background: pathColor }}
+              />
+            </div>
+            <div className="path-passive" style={{ color: pathColor }}>
+              <Flame size={14} />
+              <span>{currentPath.passive_bonus}</span>
+            </div>
+          </div>
         </div>
-        <div className="exp-bar">
-          <div
-            className="exp-fill"
-            style={{
-              width: `${expPercent}%`,
-              background: currentPath.color,
-            }}
-          />
-          <span className="exp-text">
-            {currentPath.experience} / {currentPath.next_level_exp}
-          </span>
-        </div>
-        <div className="path-bonus">{currentPath.passive_bonus}</div>
-      </div>
+      </AnalysisSection>
 
-      <h4>技能</h4>
-      <div className="skills-list">
-        {skills
-          .filter((s) => s.is_current_path)
-          .map((skill) => (
+      {/* 技能列表 */}
+      <AnalysisSection title="神力技能" icon={<Zap size={16} />} accentColor={pathColor}>
+        <div className="skills-grid">
+          {currentSkills.map((skill) => (
             <div
               key={skill.id}
               className={`skill-card ${skill.unlocked ? "" : "locked"}`}
+              style={{ "--skill-color": pathColor } as React.CSSProperties}
             >
-              <div className="skill-header">
-                <span className="skill-icon">{skill.icon}</span>
-                <span className="skill-name">{skill.name}</span>
-                <span className="skill-cost">{skill.cost}⚡</span>
+              <div className="skill-icon-box">
+                <span>{skill.icon}</span>
+                {!skill.unlocked && <Lock size={12} className="lock-badge" />}
               </div>
-              <div className="skill-desc">{skill.description}</div>
-              <div className="skill-meta">
-                <span>冷却: {skill.cooldown}回合</span>
-                <span>使用: {skill.uses}次</span>
+              <div className="skill-info">
+                <div className="skill-name">{skill.name}</div>
+                <div className="skill-desc">{skill.description}</div>
+                <div className="skill-meta">
+                  <span className="skill-cost">{skill.cost}⚡</span>
+                  <span>CD: {skill.cooldown}回合</span>
+                  <span>使用: {skill.uses}次</span>
+                </div>
               </div>
-              {skill.unlocked && (
-                <button
-                  className="skill-btn"
+              {skill.unlocked ? (
+                <ActionButton
+                  variant="primary"
+                  size="small"
                   onClick={() => onUseSkill(skill.id)}
                   disabled={loading}
                 >
                   释放
-                </button>
-              )}
-              {!skill.unlocked && (
-                <div className="unlock-hint">
-                  需要等级 {skill.unlock_level}
-                </div>
+                </ActionButton>
+              ) : (
+                <div className="unlock-req">Lv.{skill.unlock_level}</div>
               )}
             </div>
           ))}
-      </div>
+        </div>
+      </AnalysisSection>
+
+      <style>{`
+        .path-info {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+
+        .current-path-display {
+          display: flex;
+          align-items: center;
+          gap: 24px;
+          padding: 8px;
+        }
+
+        .path-level-ring {
+          position: relative;
+          width: 100px;
+          height: 100px;
+          flex-shrink: 0;
+        }
+
+        .level-svg {
+          width: 100%;
+          height: 100%;
+        }
+
+        .level-number {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .level-value {
+          font-size: 2rem;
+          font-weight: 800;
+          color: #fff;
+          line-height: 1;
+        }
+
+        .level-label {
+          font-size: 0.75rem;
+          color: rgba(255, 255, 255, 0.5);
+          text-transform: uppercase;
+        }
+
+        .path-details {
+          flex: 1;
+        }
+
+        .path-exp-info {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.85rem;
+          color: rgba(255, 255, 255, 0.6);
+          margin-bottom: 8px;
+        }
+
+        .path-exp-bar {
+          height: 8px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 4px;
+          overflow: hidden;
+          margin-bottom: 12px;
+        }
+
+        .path-exp-fill {
+          height: 100%;
+          border-radius: 4px;
+          transition: width 0.5s ease;
+        }
+
+        .path-passive {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 0.9rem;
+          font-weight: 500;
+        }
+
+        .skills-grid {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .skill-card {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          padding: 16px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 12px;
+          transition: all 0.2s;
+        }
+
+        .skill-card:hover {
+          background: rgba(255, 255, 255, 0.04);
+          border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .skill-card.locked {
+          opacity: 0.5;
+        }
+
+        .skill-icon-box {
+          position: relative;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 48px;
+          height: 48px;
+          background: linear-gradient(135deg,
+            color-mix(in srgb, var(--skill-color) 20%, transparent),
+            color-mix(in srgb, var(--skill-color) 10%, transparent)
+          );
+          border: 1px solid color-mix(in srgb, var(--skill-color) 30%, transparent);
+          border-radius: 12px;
+          font-size: 1.4rem;
+          flex-shrink: 0;
+        }
+
+        .lock-badge {
+          position: absolute;
+          bottom: -4px;
+          right: -4px;
+          padding: 3px;
+          background: rgba(0, 0, 0, 0.8);
+          border-radius: 50%;
+          color: rgba(255, 255, 255, 0.6);
+        }
+
+        .skill-info {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .skill-name {
+          font-size: 1rem;
+          font-weight: 600;
+          color: #fff;
+          margin-bottom: 4px;
+        }
+
+        .skill-desc {
+          font-size: 0.8rem;
+          color: rgba(255, 255, 255, 0.5);
+          margin-bottom: 8px;
+          line-height: 1.4;
+        }
+
+        .skill-meta {
+          display: flex;
+          gap: 12px;
+          font-size: 0.75rem;
+          color: rgba(255, 255, 255, 0.4);
+        }
+
+        .skill-cost {
+          color: var(--skill-color);
+          font-weight: 600;
+        }
+
+        .unlock-req {
+          padding: 6px 12px;
+          background: rgba(255, 255, 255, 0.05);
+          border-radius: 8px;
+          font-size: 0.8rem;
+          color: rgba(255, 255, 255, 0.4);
+        }
+      `}</style>
     </div>
   );
 }
 
 // ==================== 信仰标签页 ====================
 
-function FaithTab({
-  status,
-  onRefresh,
-}: {
-  status: DivineStatus;
-  onRefresh: () => void;
-}) {
+function FaithTab({ status, onRefresh }: { status: DivineStatus; onRefresh: () => void }) {
   const faith = status.faith;
   const [actionLoading, setActionLoading] = useState(false);
 
@@ -517,12 +1011,15 @@ function FaithTab({
       });
       const data = await res.json();
       if (res.ok) {
+        alert(data.message || "添加信徒成功");
         onRefresh();
+        dispatchEnergyChanged();
       } else {
         alert(data.detail || "添加失败");
       }
     } catch (e) {
       console.error(e);
+      alert("请求失败，请检查网络连接");
     } finally {
       setActionLoading(false);
     }
@@ -538,7 +1035,7 @@ function FaithTab({
       });
       const data = await res.json();
       if (res.ok) {
-        alert(data.message);
+        alert(data.message || "显圣成功！消耗20能量");
         onRefresh();
         dispatchEnergyChanged();
       } else {
@@ -546,6 +1043,7 @@ function FaithTab({
       }
     } catch (e) {
       console.error(e);
+      alert("请求失败");
     } finally {
       setActionLoading(false);
     }
@@ -561,7 +1059,7 @@ function FaithTab({
       });
       const data = await res.json();
       if (res.ok) {
-        alert(data.message);
+        alert(data.message || "圣化成功！消耗40能量");
         onRefresh();
         dispatchEnergyChanged();
       } else {
@@ -569,6 +1067,7 @@ function FaithTab({
       }
     } catch (e) {
       console.error(e);
+      alert("请求失败");
     } finally {
       setActionLoading(false);
     }
@@ -576,75 +1075,147 @@ function FaithTab({
 
   return (
     <div className="faith-tab">
-      <div className="faith-summary">
-        <div className="faith-stat">
-          <span className="stat-value">{faith.total_followers}</span>
-          <span className="stat-label">信徒</span>
-        </div>
-        <div className="faith-stat">
-          <span className="stat-value">{faith.total_faith.toFixed(1)}</span>
-          <span className="stat-label">总信仰</span>
-        </div>
-        <div className="faith-stat">
-          <span className="stat-value">+{faith.faith_bonus_per_turn}</span>
-          <span className="stat-label">每回合</span>
-        </div>
+      {/* 统计卡片 */}
+      <div className="faith-stats">
+        <StatCard label="信徒" value={faith.total_followers} icon={<Users size={20} />} accentColor="#a855f7" />
+        <StatCard label="总信仰" value={faith.total_faith.toFixed(1)} icon={<Star size={20} />} accentColor="#f59e0b" />
+        <StatCard label="每回合" value={`+${faith.faith_bonus_per_turn}`} icon={<Zap size={20} />} accentColor="#22c55e" />
       </div>
 
-      <div className="action-row">
-        <button
-          className="action-btn"
-          onClick={handleAddFollower}
-          disabled={actionLoading}
-        >
-          ➕ 添加信徒
-        </button>
+      {/* 操作按钮 */}
+      <div className="faith-actions">
+        <ActionButton variant="secondary" icon={<Users size={16} />} onClick={handleAddFollower} disabled={actionLoading}>
+          添加信徒
+        </ActionButton>
       </div>
 
-      <h4>信徒列表</h4>
-      <div className="followers-list">
+      {/* 信徒列表 */}
+      <AnalysisSection title="信徒列表" icon={<Users size={16} />} accentColor="#a855f7">
         {faith.followers.length === 0 ? (
-          <div className="empty-hint">暂无信徒，保护物种后自动成为信徒</div>
+          <EmptyState
+            icon={<Users />}
+            title="暂无信徒"
+            description="保护物种后自动成为信徒，或手动添加"
+          />
         ) : (
-          faith.followers.map((f) => (
-            <div key={f.lineage_code} className="follower-card">
-              <div className="follower-header">
-                <span className="follower-name">{f.common_name}</span>
-                <span className="follower-code">{f.lineage_code}</span>
-                {f.is_sanctified && <span className="badge sanctified">圣</span>}
-                {f.is_blessed && !f.is_sanctified && (
-                  <span className="badge blessed">眷</span>
-                )}
+          <div className="followers-list">
+            {faith.followers.map((f) => (
+              <div key={f.lineage_code} className="follower-item">
+                <div className="follower-avatar">
+                  {f.is_sanctified ? "👑" : f.is_blessed ? "✨" : "🙏"}
+                </div>
+                <div className="follower-info">
+                  <div className="follower-name">
+                    {f.common_name}
+                    <span className="follower-code">{f.lineage_code}</span>
+                  </div>
+                  <div className="follower-stats">
+                    <span>信仰: {f.faith_value.toFixed(1)}</span>
+                    <span>贡献: +{f.contribution_per_turn}/回合</span>
+                    <span>追随: {f.turns_as_follower}回合</span>
+                  </div>
+                </div>
+                <div className="follower-actions">
+                  {!f.is_blessed && (
+                    <ActionButton size="small" variant="ghost" onClick={() => handleBless(f.lineage_code)} disabled={actionLoading}>
+                      显圣
+                    </ActionButton>
+                  )}
+                  {f.is_blessed && !f.is_sanctified && (
+                    <ActionButton size="small" variant="ghost" onClick={() => handleSanctify(f.lineage_code)} disabled={actionLoading}>
+                      圣化
+                    </ActionButton>
+                  )}
+                </div>
               </div>
-              <div className="follower-stats">
-                <span>信仰: {f.faith_value.toFixed(1)}</span>
-                <span>贡献: +{f.contribution_per_turn}/回合</span>
-                <span>追随: {f.turns_as_follower}回合</span>
-              </div>
-              <div className="follower-actions">
-                {!f.is_blessed && (
-                  <button
-                    className="small-btn"
-                    onClick={() => handleBless(f.lineage_code)}
-                    disabled={actionLoading}
-                  >
-                    🙏 显圣 (20⚡)
-                  </button>
-                )}
-                {f.is_blessed && !f.is_sanctified && (
-                  <button
-                    className="small-btn gold"
-                    onClick={() => handleSanctify(f.lineage_code)}
-                    disabled={actionLoading}
-                  >
-                    👑 圣化 (40⚡)
-                  </button>
-                )}
-              </div>
-            </div>
-          ))
+            ))}
+          </div>
         )}
-      </div>
+      </AnalysisSection>
+
+      <style>{`
+        .faith-tab {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+
+        .faith-stats {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 12px;
+        }
+
+        .faith-actions {
+          display: flex;
+          gap: 12px;
+        }
+
+        .followers-list {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .follower-item {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 14px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 12px;
+          transition: all 0.2s;
+        }
+
+        .follower-item:hover {
+          background: rgba(255, 255, 255, 0.04);
+        }
+
+        .follower-avatar {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 44px;
+          height: 44px;
+          background: rgba(168, 85, 247, 0.15);
+          border: 1px solid rgba(168, 85, 247, 0.25);
+          border-radius: 12px;
+          font-size: 1.3rem;
+        }
+
+        .follower-info {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .follower-name {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-weight: 600;
+          color: #fff;
+          margin-bottom: 4px;
+        }
+
+        .follower-code {
+          font-size: 0.75rem;
+          color: rgba(255, 255, 255, 0.4);
+          font-weight: 400;
+        }
+
+        .follower-stats {
+          display: flex;
+          gap: 12px;
+          font-size: 0.8rem;
+          color: rgba(255, 255, 255, 0.5);
+        }
+
+        .follower-actions {
+          display: flex;
+          gap: 8px;
+        }
+      `}</style>
     </div>
   );
 }
@@ -653,12 +1224,10 @@ function FaithTab({
 
 function MiraclesTab({
   status,
-  onStartCharge,
   onExecute,
   loading,
 }: {
   status: DivineStatus;
-  onStartCharge: (id: string) => void;
   onExecute: (id: string) => void;
   loading: boolean;
 }) {
@@ -671,60 +1240,189 @@ function MiraclesTab({
             className={`miracle-card ${m.available ? "" : "unavailable"}`}
           >
             <div className="miracle-header">
-              <span className="miracle-icon">{m.icon}</span>
-              <span className="miracle-name">{m.name}</span>
-              <span className="miracle-cost">{m.cost}⚡</span>
+              <div className="miracle-icon">{m.icon}</div>
+              <div className="miracle-title">
+                <span className="miracle-name">{m.name}</span>
+                <span className="miracle-cost">{m.cost}⚡</span>
+              </div>
             </div>
+            
             <div className="miracle-desc">{m.description}</div>
+            
             <div className="miracle-meta">
               <span>蓄力: {m.charge_turns}回合</span>
               <span>冷却: {m.cooldown}回合</span>
-              {m.one_time && <span className="one-time">一次性</span>}
+              {m.one_time && <span className="one-time-badge">一次性</span>}
             </div>
 
             {m.is_charging && (
-              <div className="charging-bar">
-                <div
-                  className="charging-fill"
-                  style={{
-                    width: `${(m.charge_progress / m.charge_turns) * 100}%`,
-                  }}
-                />
-                <span>
-                  蓄力中 {m.charge_progress}/{m.charge_turns}
-                </span>
+              <div className="charging-indicator">
+                <div className="charging-bar">
+                  <div 
+                    className="charging-fill"
+                    style={{ width: `${(m.charge_progress / m.charge_turns) * 100}%` }}
+                  />
+                </div>
+                <span>蓄力中 {m.charge_progress}/{m.charge_turns}</span>
               </div>
             )}
 
             {m.current_cooldown > 0 && (
-              <div className="cooldown-info">
+              <div className="cooldown-badge">
+                <AlertTriangle size={14} />
                 冷却中: {m.current_cooldown}回合
               </div>
             )}
 
-            <div className="miracle-actions">
-              {m.available && !m.is_charging && (
-                <button
-                  className="miracle-btn"
-                  onClick={() => onExecute(m.id)}
-                  disabled={loading}
-                >
-                  ✨ 释放神迹
-                </button>
-              )}
-              {!m.available && m.current_cooldown === 0 && !m.is_charging && (
-                <button
-                  className="miracle-btn secondary"
-                  onClick={() => onStartCharge(m.id)}
-                  disabled={loading}
-                >
-                  ⏳ 开始蓄力
-                </button>
-              )}
-            </div>
+            {m.available && (
+              <ActionButton
+                variant="primary"
+                size="small"
+                icon={<Sparkles size={14} />}
+                onClick={() => onExecute(m.id)}
+                disabled={loading}
+                fullWidth
+              >
+                释放神迹
+              </ActionButton>
+            )}
           </div>
         ))}
       </div>
+
+      <style>{`
+        .miracles-tab {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+
+        .miracles-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 16px;
+        }
+
+        .miracle-card {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          padding: 20px;
+          background: linear-gradient(135deg,
+            rgba(255, 255, 255, 0.03) 0%,
+            rgba(255, 255, 255, 0.01) 100%
+          );
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 16px;
+          transition: all 0.2s;
+        }
+
+        .miracle-card:hover {
+          border-color: rgba(168, 85, 247, 0.3);
+          box-shadow: 0 8px 32px rgba(168, 85, 247, 0.1);
+        }
+
+        .miracle-card.unavailable {
+          opacity: 0.6;
+        }
+
+        .miracle-header {
+          display: flex;
+          align-items: flex-start;
+          gap: 14px;
+        }
+
+        .miracle-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 48px;
+          height: 48px;
+          background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(168, 85, 247, 0.1));
+          border: 1px solid rgba(168, 85, 247, 0.3);
+          border-radius: 12px;
+          font-size: 1.5rem;
+        }
+
+        .miracle-title {
+          flex: 1;
+        }
+
+        .miracle-name {
+          display: block;
+          font-size: 1.1rem;
+          font-weight: 700;
+          color: #fff;
+          margin-bottom: 4px;
+        }
+
+        .miracle-cost {
+          font-size: 0.9rem;
+          color: #f59e0b;
+          font-weight: 600;
+        }
+
+        .miracle-desc {
+          font-size: 0.85rem;
+          color: rgba(255, 255, 255, 0.6);
+          line-height: 1.5;
+        }
+
+        .miracle-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          font-size: 0.75rem;
+          color: rgba(255, 255, 255, 0.4);
+        }
+
+        .one-time-badge {
+          padding: 2px 8px;
+          background: rgba(239, 68, 68, 0.2);
+          border: 1px solid rgba(239, 68, 68, 0.3);
+          border-radius: 4px;
+          color: #f87171;
+        }
+
+        .charging-indicator {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .charging-bar {
+          height: 6px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 3px;
+          overflow: hidden;
+        }
+
+        .charging-fill {
+          height: 100%;
+          background: linear-gradient(90deg, #a855f7, #c084fc);
+          border-radius: 3px;
+          transition: width 0.3s;
+        }
+
+        .charging-indicator span {
+          font-size: 0.75rem;
+          color: #a855f7;
+          text-align: center;
+        }
+
+        .cooldown-badge {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          padding: 8px;
+          background: rgba(239, 68, 68, 0.1);
+          border: 1px solid rgba(239, 68, 68, 0.2);
+          border-radius: 8px;
+          font-size: 0.8rem;
+          color: #f87171;
+        }
+      `}</style>
     </div>
   );
 }
@@ -771,774 +1469,226 @@ function WagersTab({
 
   return (
     <div className="wagers-tab">
-      <div className="wager-summary">
-        <div className="wager-stat">
-          <span className="stat-value">{wagers.total_won}</span>
-          <span className="stat-label">总赢得</span>
-        </div>
-        <div className="wager-stat">
-          <span className="stat-value">{wagers.total_lost}</span>
-          <span className="stat-label">总损失</span>
-        </div>
-        <div className="wager-stat">
-          <span
-            className={`stat-value ${wagers.net_profit >= 0 ? "positive" : "negative"}`}
-          >
-            {wagers.net_profit >= 0 ? "+" : ""}
-            {wagers.net_profit}
-          </span>
-          <span className="stat-label">净收益</span>
-        </div>
+      {/* 统计 */}
+      <div className="wager-stats">
+        <StatCard label="总赢得" value={wagers.total_won} icon={<Check size={20} />} accentColor="#22c55e" />
+        <StatCard label="总损失" value={wagers.total_lost} icon={<AlertTriangle size={20} />} accentColor="#ef4444" />
+        <StatCard 
+          label="净收益" 
+          value={`${wagers.net_profit >= 0 ? "+" : ""}${wagers.net_profit}`} 
+          icon={<Target size={20} />} 
+          accentColor={wagers.net_profit >= 0 ? "#22c55e" : "#ef4444"}
+        />
       </div>
 
       {wagers.faith_shaken_turns > 0 && (
         <div className="debuff-warning">
-          ⚠️ 神威动摇！无法下注，剩余 {wagers.faith_shaken_turns} 回合
+          <AlertTriangle size={16} />
+          神威动摇！无法下注，剩余 {wagers.faith_shaken_turns} 回合
         </div>
       )}
 
-      <h4>可用预言</h4>
-      <div className="wager-types-grid">
-        {wagers.wager_types.map((wt) => (
-          <div key={wt.type} className="wager-type-card">
-            <div className="wt-header">
-              <span className="wt-icon">{wt.icon}</span>
-              <span className="wt-name">{wt.name}</span>
-            </div>
-            <div className="wt-desc">{wt.description}</div>
-            <div className="wt-meta">
-              <span>
-                押注: {wt.min_bet}~{wt.max_bet}⚡
-              </span>
-              <span>期限: {wt.duration}回合</span>
-              <span className="multiplier">×{wt.multiplier}</span>
-            </div>
-            <button
-              className="wager-btn"
-              onClick={() => onPlaceWager(wt.type)}
-              disabled={loading || wagers.faith_shaken_turns > 0}
-            >
-              🎲 下注
-            </button>
-          </div>
-        ))}
-      </div>
-
-      <h4>进行中的预言</h4>
-      <div className="active-wagers">
-        {wagers.active_wagers.length === 0 ? (
-          <div className="empty-hint">暂无进行中的预言</div>
-        ) : (
-          wagers.active_wagers.map((w) => {
-            const typeInfo = wagers.wager_types.find(
-              (t) => t.type === w.wager_type
-            );
-            return (
-              <div key={w.id} className="active-wager-card">
-                <div className="aw-header">
-                  <span>{typeInfo?.icon}</span>
-                  <span>{typeInfo?.name}</span>
-                  <span className="aw-bet">{w.bet_amount}⚡</span>
+      {/* 预言类型 */}
+      <AnalysisSection title="可用预言" icon={<Dice6 size={16} />} accentColor="#22c55e">
+        <div className="wager-types-grid">
+          {wagers.wager_types.map((wt) => (
+            <div key={wt.type} className="wager-type-card">
+              <div className="wt-icon">{wt.icon}</div>
+              <div className="wt-info">
+                <div className="wt-name">{wt.name}</div>
+                <div className="wt-desc">{wt.description}</div>
+                <div className="wt-meta">
+                  <span>{wt.min_bet}~{wt.max_bet}⚡</span>
+                  <span>{wt.duration}回合</span>
+                  <span className="wt-mult">×{wt.multiplier}</span>
                 </div>
-                <div className="aw-target">
-                  目标: {w.target_species}
-                  {w.secondary_species && ` vs ${w.secondary_species}`}
-                </div>
-                <div className="aw-deadline">
-                  截止回合: {w.end_turn}
-                </div>
-                <button
-                  className="check-btn"
-                  onClick={() => handleCheckWager(w.id)}
-                >
-                  检查结果
-                </button>
               </div>
-            );
-          })
+              <ActionButton
+                size="small"
+                variant="success"
+                icon={<Dice6 size={14} />}
+                onClick={() => onPlaceWager(wt.type)}
+                disabled={loading || wagers.faith_shaken_turns > 0}
+              >
+                下注
+              </ActionButton>
+            </div>
+          ))}
+        </div>
+      </AnalysisSection>
+
+      {/* 进行中的预言 */}
+      <AnalysisSection title="进行中" icon={<Target size={16} />} accentColor="#f59e0b">
+        {wagers.active_wagers.length === 0 ? (
+          <EmptyState icon={<Dice6 />} title="暂无进行中的预言" description="选择一个预言类型开始下注" />
+        ) : (
+          <div className="active-wagers-list">
+            {wagers.active_wagers.map((w) => {
+              const typeInfo = wagers.wager_types.find(t => t.type === w.wager_type);
+              return (
+                <div key={w.id} className="active-wager-item">
+                  <div className="aw-icon">{typeInfo?.icon}</div>
+                  <div className="aw-info">
+                    <div className="aw-title">{typeInfo?.name}</div>
+                    <div className="aw-target">
+                      目标: {w.target_species}
+                      {w.secondary_species && ` vs ${w.secondary_species}`}
+                    </div>
+                    <div className="aw-meta">
+                      <span className="aw-bet">{w.bet_amount}⚡</span>
+                      <span>截止: 第{w.end_turn}回合</span>
+                    </div>
+                  </div>
+                  <ActionButton size="small" variant="ghost" onClick={() => handleCheckWager(w.id)}>
+                    检查
+                  </ActionButton>
+                </div>
+              );
+            })}
+          </div>
         )}
-      </div>
+      </AnalysisSection>
+
+      <style>{`
+        .wagers-tab {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+        }
+
+        .wager-stats {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 12px;
+        }
+
+        .debuff-warning {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          padding: 14px;
+          background: rgba(239, 68, 68, 0.1);
+          border: 1px solid rgba(239, 68, 68, 0.25);
+          border-radius: 12px;
+          color: #f87171;
+          font-weight: 500;
+        }
+
+        .wager-types-grid {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .wager-type-card {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 16px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 12px;
+          transition: all 0.2s;
+        }
+
+        .wager-type-card:hover {
+          background: rgba(255, 255, 255, 0.04);
+          border-color: rgba(34, 197, 94, 0.2);
+        }
+
+        .wt-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 44px;
+          height: 44px;
+          background: rgba(34, 197, 94, 0.15);
+          border: 1px solid rgba(34, 197, 94, 0.25);
+          border-radius: 12px;
+          font-size: 1.3rem;
+        }
+
+        .wt-info {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .wt-name {
+          font-weight: 600;
+          color: #fff;
+          margin-bottom: 4px;
+        }
+
+        .wt-desc {
+          font-size: 0.8rem;
+          color: rgba(255, 255, 255, 0.5);
+          margin-bottom: 6px;
+        }
+
+        .wt-meta {
+          display: flex;
+          gap: 12px;
+          font-size: 0.75rem;
+          color: rgba(255, 255, 255, 0.4);
+        }
+
+        .wt-mult {
+          color: #22c55e;
+          font-weight: 600;
+        }
+
+        .active-wagers-list {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .active-wager-item {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 14px;
+          background: linear-gradient(135deg, rgba(245, 158, 11, 0.05), transparent);
+          border: 1px solid rgba(245, 158, 11, 0.15);
+          border-radius: 12px;
+        }
+
+        .aw-icon {
+          font-size: 1.3rem;
+        }
+
+        .aw-info {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .aw-title {
+          font-weight: 600;
+          color: #fff;
+          margin-bottom: 2px;
+        }
+
+        .aw-target {
+          font-size: 0.85rem;
+          color: rgba(255, 255, 255, 0.6);
+          margin-bottom: 4px;
+        }
+
+        .aw-meta {
+          display: flex;
+          gap: 12px;
+          font-size: 0.75rem;
+          color: rgba(255, 255, 255, 0.4);
+        }
+
+        .aw-bet {
+          color: #f59e0b;
+          font-weight: 600;
+        }
+      `}</style>
     </div>
   );
 }
 
-// ==================== 样式 ====================
-
-const styles = `
-.divine-panel {
-  background: var(--bg-secondary, #1a1a2e);
-  border: 1px solid var(--border-primary, #333);
-  border-radius: 12px;
-  padding: 16px;
-  min-width: 420px;
-  max-width: 600px;
-  max-height: 80vh;
-  overflow-y: auto;
-  color: var(--text-primary, #e0e0e0);
-  font-family: 'Segoe UI', system-ui, sans-serif;
-}
-
-.divine-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-primary, #333);
-}
-
-.divine-header h2 {
-  margin: 0;
-  font-size: 1.4rem;
-  background: linear-gradient(135deg, #f59e0b, #fbbf24);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  color: var(--text-muted, #888);
-  font-size: 1.2rem;
-  cursor: pointer;
-  padding: 4px 8px;
-}
-
-.close-btn:hover {
-  color: var(--text-primary, #e0e0e0);
-}
-
-.divine-tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 16px;
-}
-
-.tab {
-  flex: 1;
-  padding: 10px 12px;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid transparent;
-  border-radius: 8px;
-  color: var(--text-secondary, #aaa);
-  cursor: pointer;
-  transition: all 0.2s;
-  font-size: 0.9rem;
-}
-
-.tab:hover {
-  background: rgba(255,255,255,0.1);
-}
-
-.tab.active {
-  background: rgba(245, 158, 11, 0.15);
-  border-color: rgba(245, 158, 11, 0.5);
-  color: #f59e0b;
-}
-
-.divine-content {
-  min-height: 300px;
-}
-
-.divine-loading {
-  text-align: center;
-  padding: 40px;
-  color: var(--text-muted, #888);
-}
-
-/* 神格选择 */
-.path-selection h3 {
-  margin: 0 0 8px 0;
-  color: var(--text-primary);
-}
-
-.hint {
-  color: var(--text-muted, #888);
-  font-size: 0.85rem;
-  margin-bottom: 16px;
-}
-
-.paths-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-}
-
-.path-card {
-  padding: 16px;
-  background: rgba(255,255,255,0.03);
-  border: 2px solid rgba(255,255,255,0.1);
-  border-radius: 12px;
-  cursor: pointer;
-  transition: all 0.3s;
-}
-
-.path-card:hover {
-  background: rgba(255,255,255,0.08);
-  transform: translateY(-2px);
-}
-
-.path-icon {
-  font-size: 2rem;
-  margin-bottom: 8px;
-}
-
-.path-name {
-  font-size: 1.1rem;
-  font-weight: 600;
-  margin-bottom: 6px;
-}
-
-.path-desc {
-  font-size: 0.8rem;
-  color: var(--text-secondary, #aaa);
-  margin-bottom: 8px;
-}
-
-.path-bonus {
-  font-size: 0.75rem;
-  color: #10b981;
-  margin-bottom: 6px;
-}
-
-.path-skills {
-  font-size: 0.7rem;
-  color: var(--text-muted, #888);
-}
-
-/* 当前神格信息 */
-.current-path-card {
-  padding: 16px;
-  background: rgba(255,255,255,0.03);
-  border: 2px solid;
-  border-radius: 12px;
-  margin-bottom: 16px;
-}
-
-.path-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.path-level {
-  margin-left: auto;
-  font-weight: 600;
-  font-size: 1.1rem;
-}
-
-.exp-bar {
-  position: relative;
-  height: 20px;
-  background: rgba(0,0,0,0.3);
-  border-radius: 10px;
-  overflow: hidden;
-  margin-bottom: 10px;
-}
-
-.exp-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 100%;
-  border-radius: 10px;
-  transition: width 0.3s;
-}
-
-.exp-text {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: white;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-}
-
-/* 技能列表 */
-.skills-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.skill-card {
-  padding: 12px;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 8px;
-}
-
-.skill-card.locked {
-  opacity: 0.5;
-}
-
-.skill-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.skill-icon {
-  font-size: 1.2rem;
-}
-
-.skill-name {
-  font-weight: 600;
-}
-
-.skill-cost {
-  margin-left: auto;
-  color: #f59e0b;
-}
-
-.skill-desc {
-  font-size: 0.8rem;
-  color: var(--text-secondary, #aaa);
-  margin-bottom: 6px;
-}
-
-.skill-meta {
-  display: flex;
-  gap: 12px;
-  font-size: 0.7rem;
-  color: var(--text-muted, #888);
-  margin-bottom: 8px;
-}
-
-.skill-btn {
-  padding: 6px 16px;
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  border: none;
-  border-radius: 6px;
-  color: white;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.skill-btn:hover:not(:disabled) {
-  transform: scale(1.02);
-}
-
-.skill-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.unlock-hint {
-  font-size: 0.75rem;
-  color: var(--text-muted, #888);
-  font-style: italic;
-}
-
-/* 信仰标签 */
-.faith-summary {
-  display: flex;
-  justify-content: space-around;
-  padding: 16px;
-  background: rgba(139, 92, 246, 0.1);
-  border-radius: 12px;
-  margin-bottom: 16px;
-}
-
-.faith-stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.stat-value {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #8b5cf6;
-}
-
-.stat-label {
-  font-size: 0.75rem;
-  color: var(--text-muted, #888);
-}
-
-.action-row {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.action-btn {
-  padding: 8px 16px;
-  background: rgba(139, 92, 246, 0.2);
-  border: 1px solid rgba(139, 92, 246, 0.4);
-  border-radius: 8px;
-  color: #a78bfa;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.action-btn:hover:not(:disabled) {
-  background: rgba(139, 92, 246, 0.3);
-}
-
-.followers-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.follower-card {
-  padding: 12px;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 8px;
-}
-
-.follower-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.follower-name {
-  font-weight: 600;
-}
-
-.follower-code {
-  font-size: 0.75rem;
-  color: var(--text-muted, #888);
-}
-
-.badge {
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 0.65rem;
-  font-weight: 600;
-}
-
-.badge.blessed {
-  background: rgba(59, 130, 246, 0.3);
-  color: #60a5fa;
-}
-
-.badge.sanctified {
-  background: rgba(234, 179, 8, 0.3);
-  color: #facc15;
-}
-
-.follower-stats {
-  display: flex;
-  gap: 12px;
-  font-size: 0.75rem;
-  color: var(--text-secondary, #aaa);
-  margin-bottom: 8px;
-}
-
-.follower-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.small-btn {
-  padding: 4px 10px;
-  font-size: 0.75rem;
-  background: rgba(59, 130, 246, 0.2);
-  border: 1px solid rgba(59, 130, 246, 0.4);
-  border-radius: 6px;
-  color: #60a5fa;
-  cursor: pointer;
-}
-
-.small-btn.gold {
-  background: rgba(234, 179, 8, 0.2);
-  border-color: rgba(234, 179, 8, 0.4);
-  color: #facc15;
-}
-
-.empty-hint {
-  text-align: center;
-  padding: 20px;
-  color: var(--text-muted, #888);
-  font-style: italic;
-}
-
-/* 神迹标签 */
-.miracles-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-}
-
-.miracle-card {
-  padding: 14px;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 10px;
-}
-
-.miracle-card.unavailable {
-  opacity: 0.6;
-}
-
-.miracle-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.miracle-icon {
-  font-size: 1.3rem;
-}
-
-.miracle-name {
-  font-weight: 600;
-}
-
-.miracle-cost {
-  margin-left: auto;
-  color: #f59e0b;
-  font-weight: 600;
-}
-
-.miracle-desc {
-  font-size: 0.8rem;
-  color: var(--text-secondary, #aaa);
-  margin-bottom: 8px;
-}
-
-.miracle-meta {
-  display: flex;
-  gap: 10px;
-  font-size: 0.7rem;
-  color: var(--text-muted, #888);
-  margin-bottom: 10px;
-}
-
-.one-time {
-  color: #ef4444;
-}
-
-.charging-bar {
-  position: relative;
-  height: 18px;
-  background: rgba(0,0,0,0.3);
-  border-radius: 9px;
-  overflow: hidden;
-  margin-bottom: 10px;
-}
-
-.charging-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  height: 100%;
-  background: linear-gradient(90deg, #8b5cf6, #a78bfa);
-  border-radius: 9px;
-}
-
-.charging-bar span {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 0.7rem;
-  color: white;
-  font-weight: 600;
-}
-
-.cooldown-info {
-  padding: 6px;
-  background: rgba(239, 68, 68, 0.2);
-  border-radius: 6px;
-  font-size: 0.75rem;
-  color: #f87171;
-  text-align: center;
-  margin-bottom: 10px;
-}
-
-.miracle-actions {
-  display: flex;
-  justify-content: center;
-}
-
-.miracle-btn {
-  padding: 8px 16px;
-  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
-  border: none;
-  border-radius: 8px;
-  color: white;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.miracle-btn.secondary {
-  background: rgba(139, 92, 246, 0.2);
-  border: 1px solid rgba(139, 92, 246, 0.4);
-  color: #a78bfa;
-}
-
-.miracle-btn:hover:not(:disabled) {
-  transform: scale(1.02);
-}
-
-.miracle-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* 预言标签 */
-.wager-summary {
-  display: flex;
-  justify-content: space-around;
-  padding: 16px;
-  background: rgba(16, 185, 129, 0.1);
-  border-radius: 12px;
-  margin-bottom: 16px;
-}
-
-.wager-stat .stat-value {
-  color: #10b981;
-}
-
-.wager-stat .stat-value.positive {
-  color: #10b981;
-}
-
-.wager-stat .stat-value.negative {
-  color: #ef4444;
-}
-
-.debuff-warning {
-  padding: 10px;
-  background: rgba(239, 68, 68, 0.2);
-  border: 1px solid rgba(239, 68, 68, 0.4);
-  border-radius: 8px;
-  color: #f87171;
-  text-align: center;
-  margin-bottom: 16px;
-}
-
-.wager-types-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-  margin-bottom: 20px;
-}
-
-.wager-type-card {
-  padding: 12px;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 8px;
-}
-
-.wt-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-
-.wt-icon {
-  font-size: 1.2rem;
-}
-
-.wt-name {
-  font-weight: 600;
-}
-
-.wt-desc {
-  font-size: 0.75rem;
-  color: var(--text-secondary, #aaa);
-  margin-bottom: 6px;
-}
-
-.wt-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 0.7rem;
-  color: var(--text-muted, #888);
-  margin-bottom: 8px;
-}
-
-.multiplier {
-  color: #10b981;
-  font-weight: 600;
-}
-
-.wager-btn {
-  width: 100%;
-  padding: 6px;
-  background: rgba(16, 185, 129, 0.2);
-  border: 1px solid rgba(16, 185, 129, 0.4);
-  border-radius: 6px;
-  color: #34d399;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.wager-btn:hover:not(:disabled) {
-  background: rgba(16, 185, 129, 0.3);
-}
-
-.wager-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.active-wagers {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.active-wager-card {
-  padding: 12px;
-  background: rgba(16, 185, 129, 0.05);
-  border: 1px solid rgba(16, 185, 129, 0.2);
-  border-radius: 8px;
-}
-
-.aw-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.aw-bet {
-  margin-left: auto;
-  color: #10b981;
-  font-weight: 600;
-}
-
-.aw-target, .aw-deadline {
-  font-size: 0.8rem;
-  color: var(--text-secondary, #aaa);
-  margin-bottom: 4px;
-}
-
-.check-btn {
-  margin-top: 8px;
-  padding: 6px 12px;
-  background: rgba(16, 185, 129, 0.2);
-  border: 1px solid rgba(16, 185, 129, 0.4);
-  border-radius: 6px;
-  color: #34d399;
-  cursor: pointer;
-}
-
-h4 {
-  margin: 16px 0 10px 0;
-  font-size: 0.9rem;
-  color: var(--text-primary);
-}
-`;
-
 export default DivinePowersPanel;
-

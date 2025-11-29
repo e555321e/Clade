@@ -765,15 +765,7 @@ export default function App() {
 
         {/* 神力进阶面板 */}
         {showDivinePowers && (
-          <div style={{
-            position: 'fixed',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            zIndex: 1000,
-          }}>
-            <DivinePowersPanel onClose={() => setShowDivinePowers(false)} />
-          </div>
+          <DivinePowersPanel onClose={() => setShowDivinePowers(false)} />
         )}
 
         {/* 成就解锁通知 */}
