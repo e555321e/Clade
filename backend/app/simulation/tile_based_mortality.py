@@ -28,6 +28,7 @@ from ..models.environment import HabitatPopulation, MapTile
 from ..models.species import Species
 from ..services.species.niche import NicheMetrics
 from ..services.species.predation import PredationService
+from ..services.geo.suitability import get_habitat_type_mask as unified_habitat_mask
 from ..core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -336,31 +337,11 @@ class TileBasedMortalityEngine:
         logger.debug(f"[地块竞争] 物种相似度矩阵构建完成 ({n}×{n})")
     
     def _get_habitat_type_mask(self, habitat_type: str) -> np.ndarray:
-        """获取适合某种栖息地类型的地块掩码"""
-        n_tiles = len(self._tiles)
-        mask = np.zeros(n_tiles, dtype=bool)
+        """获取适合某种栖息地类型的地块掩码
         
-        for idx, tile in enumerate(self._tiles):
-            biome = tile.biome.lower()
-            
-            if habitat_type == "marine":
-                if "浅海" in biome or "中层" in biome or "海" in biome:
-                    mask[idx] = True
-            elif habitat_type == "deep_sea":
-                if "深海" in biome:
-                    mask[idx] = True
-            elif habitat_type == "coastal":
-                if "海岸" in biome or "浅海" in biome:
-                    mask[idx] = True
-            elif habitat_type in ("terrestrial", "amphibious", "aerial"):
-                if "海" not in biome:
-                    mask[idx] = True
-            else:
-                # 默认陆地
-                if "海" not in biome:
-                    mask[idx] = True
-        
-        return mask
+        【优化】使用统一的栖息地类型筛选器
+        """
+        return unified_habitat_mask(self._tiles, habitat_type)
     
     def _build_tile_adjacency(self, tiles: list[MapTile]) -> None:
         """构建地块邻接关系

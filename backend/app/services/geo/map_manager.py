@@ -22,6 +22,12 @@ from ...schemas.responses import (
 )
 from .hydrology import HydrologyService
 from .map_coloring import ViewMode, map_coloring_service
+from .suitability import (
+    compute_consumer_aware_suitability,
+    filter_tiles_by_habitat_type as unified_filter_tiles,
+    get_habitat_type_mask,
+    separate_producers_consumers,
+)
 
 
 class MapStateManager:
@@ -191,18 +197,9 @@ class MapStateManager:
         logger.debug(f"[地图管理器] 强制重算模式，为 {len(species_list)} 个物种初始化栖息地分布")
         habitats: list[HabitatPopulation] = []
         
-        # 【修复v3】分两阶段处理：先生产者，再消费者
-        # 这样消费者计算宜居性时可以知道猎物在哪
-        producers = []
-        consumers = []
-        for sp in species_list:
-            if getattr(sp, 'status', 'alive') != 'alive':
-                continue
-            trophic = getattr(sp, 'trophic_level', 1.0) or 1.0
-            if trophic < 2.0:
-                producers.append(sp)
-            else:
-                consumers.append(sp)
+        # 【优化】使用统一的生产者/消费者分离函数
+        # 分两阶段处理：先生产者，再消费者（消费者需要知道猎物在哪）
+        producers, consumers = separate_producers_consumers(species_list)
         
         # 记录生产者所在的地块（供消费者参考）
         producer_tiles: set[int] = set()
