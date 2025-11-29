@@ -790,8 +790,26 @@ class SimulationEngine:
                         
                         except asyncio.TimeoutError:
                             logger.warning("[AI综合评估] 超时，跳过AI修正")
+                            # 【修复】超时时也要发送完成事件，让前端不再卡住
+                            self._emit_event(
+                                "ai_progress",
+                                "AI评估超时，使用规则fallback",
+                                "AI",
+                                total=species_count,
+                                completed=species_count,
+                                current_task="超时(fallback)"
+                            )
                         except Exception as e:
                             logger.warning(f"[AI综合评估] 失败: {e}")
+                            # 【修复】失败时也要发送完成事件
+                            self._emit_event(
+                                "ai_progress",
+                                f"AI评估失败: {str(e)[:50]}",
+                                "AI",
+                                total=species_count,
+                                completed=species_count,
+                                current_task="失败(fallback)"
+                            )
                     else:
                         logger.debug(f"[AI综合评估] 压力不足 ({total_pressure:.1f}), 跳过AI评估")
                 

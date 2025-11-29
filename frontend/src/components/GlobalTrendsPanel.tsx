@@ -2182,6 +2182,7 @@ const styles: Record<string, React.CSSProperties> = {
   chartContainer: {
     flex: 1,
     minHeight: '220px',
+    minWidth: '200px',
     position: 'relative',
   },
   emptyState: {

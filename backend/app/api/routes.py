@@ -64,6 +64,7 @@ from ..services.species.hybridization import HybridizationService
 from ..services.analytics.critical_analyzer import CriticalAnalyzer
 from ..services.analytics.exporter import ExportService
 from ..services.system.embedding import EmbeddingService
+from ..services.system.divine_progression import divine_progression_service
 from ..services.analytics.focus_processor import FocusBatchProcessor
 from ..services.geo.map_evolution import MapEvolutionService
 from ..services.geo.map_manager import MapStateManager
@@ -751,11 +752,7 @@ async def run_turns(command: TurnCommand, background_tasks: BackgroundTasks):
         command.pressures = pressures
         logger.info(f"[推演执行] 应用压力: {[p.kind for p in pressures]}")
         
-        # 【能量系统】回合开始前恢复能量
         current_turn = simulation_engine.turn_counter
-        regen = energy_service.regenerate(current_turn)
-        if regen > 0:
-            push_simulation_event("energy", f"⚡ 神力恢复 +{regen}", "系统")
         
         # 【能量系统】检查压力消耗
         if pressures and energy_service.enabled:
@@ -806,6 +803,12 @@ async def run_turns(command: TurnCommand, background_tasks: BackgroundTasks):
         if reports:
             total_species = sum(len(r.species) for r in reports)
             logger.info(f"[响应准备] 返回 {len(reports)} 个报告, 共 {total_species} 个物种快照")
+        
+        # 【能量系统】回合结束后恢复能量
+        final_turn = simulation_engine.turn_counter
+        regen = energy_service.regenerate(final_turn)
+        if regen > 0:
+            push_simulation_event("energy", f"⚡ 神力恢复 +{regen}", "系统")
         
         # 【关键】先发送完成事件，让前端知道推演已完成
         push_simulation_event("complete", f"推演完成！生成了 {len(reports)} 个报告", "系统")
@@ -1160,6 +1163,13 @@ async def create_save(request: CreateSaveRequest) -> dict:
         # 【关键修复】重置回合计数器
         simulation_engine.turn_counter = 0
         logger.debug(f"[存档API] 回合计数器已重置为 0")
+        
+        # 【重置游戏服务状态】
+        energy_service.reset()
+        divine_progression_service.reset()
+        achievement_service.reset()
+        game_hints_service.clear_cooldown()
+        logger.debug(f"[存档API] 游戏服务状态已重置")
         
         # 设置当前存档名称（用于自动保存）
         current_save_name = request.save_name
@@ -3425,4 +3435,820 @@ async def execute_forced_hybridization(request: dict) -> dict:
             f"嵌合体可育性仅为 {chimera.hybrid_fertility:.1%}",
             "基因不稳定可能导致后代变异或寿命缩短",
         ],
+    }
+
+
+# ==================== 神力进阶系统 API ====================
+
+from ..services.system.divine_progression import (
+    DivinePath,
+    DIVINE_SKILLS,
+    MIRACLES,
+    WagerType,
+    WAGER_TYPES,
+)
+# divine_progression_service 已在文件顶部导入
+
+# 【关键】将神力进阶服务注入存档管理器
+save_manager.set_progression_service(divine_progression_service)
+
+
+@router.get("/divine/status", tags=["divine"])
+def get_divine_status() -> dict:
+    """获取神力进阶系统完整状态
+    
+    包括：神格、信仰、神迹、预言四大子系统。
+    """
+    return divine_progression_service.get_full_status()
+
+
+@router.get("/divine/paths", tags=["divine"])
+def get_available_paths() -> dict:
+    """获取可选择的神格路线"""
+    return {
+        "paths": divine_progression_service.get_available_paths(),
+        "current_path": divine_progression_service.get_path_info(),
+    }
+
+
+@router.post("/divine/path/choose", tags=["divine"])
+def choose_divine_path(request: dict) -> dict:
+    """选择神格路线
+    
+    Body:
+    - path: 神格路线 (creator/guardian/chaos/ecology)
+    
+    注意：主神格选择后不可更改，4级后可选副神格。
+    """
+    path_str = request.get("path", "")
+    try:
+        path = DivinePath(path_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"未知的神格路线: {path_str}")
+    
+    if path == DivinePath.NONE:
+        raise HTTPException(status_code=400, detail="请选择一个有效的神格")
+    
+    success, message = divine_progression_service.choose_path(path)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    
+    return {
+        "success": True,
+        "message": message,
+        "path_info": divine_progression_service.get_path_info(),
+    }
+
+
+@router.get("/divine/skills", tags=["divine"])
+def get_divine_skills() -> dict:
+    """获取所有神力技能信息"""
+    path_info = divine_progression_service.get_path_info()
+    current_path = path_info["path"] if path_info else None
+    
+    all_skills = []
+    for skill_id, skill in DIVINE_SKILLS.items():
+        info = divine_progression_service.get_skill_info(skill_id)
+        info["is_current_path"] = skill.path.value == current_path
+        all_skills.append(info)
+    
+    return {
+        "skills": all_skills,
+        "current_path": current_path,
+    }
+
+
+@router.post("/divine/skill/use", tags=["divine"])
+async def use_divine_skill(request: dict) -> dict:
+    """使用神力技能
+    
+    Body:
+    - skill_id: 技能ID
+    - target: 目标（物种代码或坐标，取决于技能）
+    """
+    skill_id = request.get("skill_id", "")
+    target = request.get("target")
+    
+    if skill_id not in DIVINE_SKILLS:
+        raise HTTPException(status_code=400, detail=f"未知的技能: {skill_id}")
+    
+    skill = DIVINE_SKILLS[skill_id]
+    skill_info = divine_progression_service.get_skill_info(skill_id)
+    
+    if not skill_info["unlocked"]:
+        raise HTTPException(status_code=400, detail=f"技能「{skill.name}」尚未解锁")
+    
+    # 检查能量
+    current_turn = simulation_engine.turn_counter
+    can_afford, cost = energy_service.can_afford("pressure", intensity=skill.cost // 3)
+    actual_cost = skill.cost
+    
+    if energy_service.get_state().current < actual_cost:
+        raise HTTPException(
+            status_code=400,
+            detail=f"能量不足！{skill.name}需要 {actual_cost} 能量"
+        )
+    
+    # 消耗能量
+    energy_service.spend("pressure", current_turn, details=f"技能: {skill.name}", intensity=actual_cost // 3)
+    
+    # 增加经验
+    divine_progression_service.add_experience(actual_cost)
+    
+    # 记录技能使用
+    state = divine_progression_service.get_state()
+    state.path_progress.skills_used[skill_id] = state.path_progress.skills_used.get(skill_id, 0) + 1
+    state.total_skills_used += 1
+    
+    # 执行技能效果（根据技能类型）
+    result = {"effect": "executed", "details": f"技能「{skill.name}」已释放"}
+    
+    # 特定技能的额外效果
+    if skill_id == "ancestor_blessing" and target:
+        species = species_repository.get_by_lineage(target)
+        if species:
+            species.can_open_lineage = True
+            species_repository.upsert(species)
+            result["details"] = f"已赐予「{species.common_name}」始祖标记"
+    
+    elif skill_id == "life_shelter" and target:
+        species = species_repository.get_by_lineage(target)
+        if species:
+            species.is_protected = True
+            species.protection_turns = 999  # 永久保护（一次性）
+            species_repository.upsert(species)
+            result["details"] = f"「{species.common_name}」获得生命庇护"
+    
+    elif skill_id == "mass_extinction":
+        all_species = species_repository.list_species()
+        culled = 0
+        for sp in all_species:
+            if sp.status == "alive" and sp.fitness_score and sp.fitness_score < 0.25:
+                sp.status = "extinct"
+                sp.extinction_turn = current_turn
+                sp.extinction_cause = "divine_judgement"
+                species_repository.upsert(sp)
+                culled += 1
+        result["details"] = f"大灭绝清除了 {culled} 个低适应力物种"
+    
+    elif skill_id == "life_spark":
+        # 生命火种：使用AI创造一个基础生产者物种
+        try:
+            # 自动生成lineage_code
+            existing_species = species_repository.get_all()
+            used_codes = {s.lineage_code for s in existing_species}
+            prefix = "P"  # Plant prefix
+            index = 1
+            while f"{prefix}{index}" in used_codes:
+                index += 1
+            new_code = f"{prefix}{index}"
+            
+            # 使用AI生成物种
+            new_species = species_generator.generate_advanced(
+                prompt="一种能够在当前环境中自给自足的基础光合生物，作为生态系统的初级生产者",
+                lineage_code=new_code,
+                existing_species=existing_species,
+                is_plant=True,
+                diet_type="autotroph",
+            )
+            species_repository.upsert(new_species)
+            result["details"] = f"生命火种诞生了「{new_species.common_name}」({new_code})"
+            result["new_species"] = {
+                "lineage_code": new_species.lineage_code,
+                "common_name": new_species.common_name,
+                "latin_name": new_species.latin_name,
+            }
+        except Exception as e:
+            logger.error(f"[生命火种] 创造物种失败: {e}")
+            result["details"] = f"生命火种创造失败: {str(e)}"
+            result["error"] = True
+    
+    elif skill_id == "revival_light":
+        # 复苏之光：复活最近灭绝的物种
+        all_species = species_repository.list_species()
+        extinct_species = [
+            sp for sp in all_species 
+            if sp.status == "extinct" and sp.extinction_turn is not None
+        ]
+        
+        if not extinct_species:
+            result["details"] = "没有可复活的已灭绝物种"
+            result["error"] = True
+        else:
+            # 找到最近灭绝的物种
+            extinct_species.sort(key=lambda x: x.extinction_turn or 0, reverse=True)
+            target = extinct_species[0]
+            
+            # 获取灭绝前的种群快照
+            from ..models.species import PopulationSnapshot
+            from ..core.database import session_scope
+            
+            last_population = 100000  # 默认值
+            try:
+                with session_scope() as session:
+                    # 查找该物种灭绝前最后一个种群快照
+                    snapshots = session.exec(
+                        select(PopulationSnapshot)
+                        .where(PopulationSnapshot.species_id == target.id)
+                        .order_by(PopulationSnapshot.turn_index.desc())
+                    ).all()
+                    if snapshots:
+                        # 取最后一个快照的种群总数
+                        total_pop = sum(s.count for s in snapshots if s.turn_index == snapshots[0].turn_index)
+                        if total_pop > 0:
+                            last_population = total_pop
+            except Exception as e:
+                logger.warning(f"[复苏之光] 获取种群快照失败: {e}")
+            
+            # 恢复物种
+            target.status = "alive"
+            target.extinction_turn = None
+            target.extinction_cause = None
+            # 设置初始种群为灭绝前的50%
+            restored_population = max(1000, int(last_population * 0.5))
+            target.population = restored_population
+            species_repository.upsert(target)
+            
+            result["details"] = f"复苏之光复活了「{target.common_name}」，种群恢复至 {restored_population:,}"
+            result["revived_species"] = {
+                "lineage_code": target.lineage_code,
+                "common_name": target.common_name,
+                "restored_population": restored_population,
+            }
+    
+    elif skill_id == "divine_speciation":
+        # 神启分化：强制物种立即产生分化
+        if not target:
+            result["details"] = "请指定目标物种"
+            result["error"] = True
+        else:
+            species = species_repository.get_by_lineage(target)
+            if not species:
+                result["details"] = f"物种 {target} 不存在"
+                result["error"] = True
+            elif species.status != "alive":
+                result["details"] = f"物种 {target} 已灭绝，无法分化"
+                result["error"] = True
+            else:
+                try:
+                    # 生成分化后代
+                    existing_species = species_repository.get_all()
+                    used_codes = {s.lineage_code for s in existing_species}
+                    
+                    # 生成子代编码
+                    base = species.lineage_code
+                    suffix = 1
+                    while f"{base}.{suffix}" in used_codes:
+                        suffix += 1
+                    child_code = f"{base}.{suffix}"
+                    
+                    child = species_generator.generate_advanced(
+                        prompt=f"从「{species.common_name}」分化出的适应性变种，保留部分祖先特征但有明显差异",
+                        lineage_code=child_code,
+                        existing_species=existing_species,
+                        parent_code=species.lineage_code,
+                        habitat_type=species.habitat_type,
+                    )
+                    species_repository.upsert(child)
+                    result["details"] = f"「{species.common_name}」分化出新物种「{child.common_name}」"
+                    result["new_species"] = {
+                        "lineage_code": child.lineage_code,
+                        "common_name": child.common_name,
+                        "parent_code": species.lineage_code,
+                    }
+                except Exception as e:
+                    logger.error(f"[神启分化] 失败: {e}")
+                    result["details"] = f"分化失败: {str(e)}"
+                    result["error"] = True
+    
+    elif skill_id == "chaos_mutation":
+        # 混沌突变：随机大幅改变物种特征
+        if not target:
+            result["details"] = "请指定目标物种"
+            result["error"] = True
+        else:
+            species = species_repository.get_by_lineage(target)
+            if not species:
+                result["details"] = f"物种 {target} 不存在"
+                result["error"] = True
+            elif species.status != "alive":
+                result["details"] = f"物种 {target} 已灭绝"
+                result["error"] = True
+            else:
+                import random
+                # 随机修改形态特征
+                mutations = []
+                for trait, value in species.morphology_stats.items():
+                    if random.random() < 0.5:  # 50%概率改变每个特征
+                        change = random.uniform(-0.3, 0.3)
+                        new_value = max(0.1, min(1.0, value + change))
+                        species.morphology_stats[trait] = round(new_value, 3)
+                        mutations.append(f"{trait}: {value:.2f}→{new_value:.2f}")
+                
+                # 可能改变食性
+                if random.random() < 0.2:
+                    new_diet = random.choice(["herbivore", "carnivore", "omnivore", "detritivore"])
+                    if new_diet != species.diet_type:
+                        mutations.append(f"食性: {species.diet_type}→{new_diet}")
+                        species.diet_type = new_diet
+                
+                species_repository.upsert(species)
+                result["details"] = f"混沌突变改变了「{species.common_name}」的 {len(mutations)} 个特征"
+                result["mutations"] = mutations[:5]  # 只返回前5个
+    
+    return {
+        "success": True,
+        "skill": skill.name,
+        "cost": actual_cost,
+        "result": result,
+        "energy_remaining": energy_service.get_state().current,
+    }
+
+
+# ========== 信仰系统 API ==========
+
+@router.get("/divine/faith", tags=["divine"])
+def get_faith_status() -> dict:
+    """获取信仰系统状态"""
+    return divine_progression_service.get_faith_summary()
+
+
+@router.post("/divine/faith/add", tags=["divine"])
+def add_follower(request: dict) -> dict:
+    """添加信徒
+    
+    Body:
+    - lineage_code: 物种代码
+    """
+    lineage_code = request.get("lineage_code", "")
+    if not lineage_code:
+        raise HTTPException(status_code=400, detail="请提供物种代码")
+    
+    species = species_repository.get_by_lineage(lineage_code)
+    if not species:
+        raise HTTPException(status_code=404, detail=f"物种 {lineage_code} 不存在")
+    
+    if species.status != "alive":
+        raise HTTPException(status_code=400, detail=f"物种 {lineage_code} 已灭绝")
+    
+    population = species.population or 100000
+    trophic = species.trophic_level or 1
+    
+    success = divine_progression_service.add_follower(
+        lineage_code, species.common_name, population, trophic
+    )
+    
+    if not success:
+        raise HTTPException(status_code=400, detail="该物种已是信徒")
+    
+    return {
+        "success": True,
+        "message": f"「{species.common_name}」已成为信徒",
+        "faith_summary": divine_progression_service.get_faith_summary(),
+    }
+
+
+@router.post("/divine/faith/bless", tags=["divine"])
+def bless_follower(request: dict) -> dict:
+    """显圣 - 赐福信徒
+    
+    Body:
+    - lineage_code: 信徒物种代码
+    
+    消耗20能量，使信徒获得神眷标记。
+    """
+    lineage_code = request.get("lineage_code", "")
+    
+    # 检查能量
+    current_turn = simulation_engine.turn_counter
+    cost = 20
+    if energy_service.get_state().current < cost:
+        raise HTTPException(status_code=400, detail=f"能量不足！显圣需要 {cost} 能量")
+    
+    success, message = divine_progression_service.bless_follower(lineage_code)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    
+    # 消耗能量
+    energy_service.spend("pressure", current_turn, details=f"显圣: {lineage_code}", intensity=cost // 3)
+    
+    # 应用效果到物种
+    species = species_repository.get_by_lineage(lineage_code)
+    if species and species.fitness_score:
+        species.fitness_score = min(1.0, species.fitness_score + 0.2)
+        species_repository.upsert(species)
+    
+    return {
+        "success": True,
+        "message": message,
+        "energy_spent": cost,
+        "faith_summary": divine_progression_service.get_faith_summary(),
+    }
+
+
+@router.post("/divine/faith/sanctify", tags=["divine"])
+def sanctify_follower(request: dict) -> dict:
+    """圣化 - 将信徒提升为圣物种
+    
+    Body:
+    - lineage_code: 信徒物种代码
+    
+    消耗40能量，使信徒成为圣物种，永久免疫压制。
+    """
+    lineage_code = request.get("lineage_code", "")
+    
+    # 检查能量
+    current_turn = simulation_engine.turn_counter
+    cost = 40
+    if energy_service.get_state().current < cost:
+        raise HTTPException(status_code=400, detail=f"能量不足！圣化需要 {cost} 能量")
+    
+    success, message = divine_progression_service.sanctify_follower(lineage_code)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    
+    # 消耗能量
+    energy_service.spend("pressure", current_turn, details=f"圣化: {lineage_code}", intensity=cost // 3)
+    
+    # 应用效果到物种
+    species = species_repository.get_by_lineage(lineage_code)
+    if species:
+        species.is_protected = True
+        species.protection_turns = 999
+        species_repository.upsert(species)
+    
+    return {
+        "success": True,
+        "message": message,
+        "energy_spent": cost,
+        "faith_summary": divine_progression_service.get_faith_summary(),
+    }
+
+
+# ========== 神迹系统 API ==========
+
+@router.get("/divine/miracles", tags=["divine"])
+def get_miracles() -> dict:
+    """获取所有神迹信息"""
+    return {
+        "miracles": divine_progression_service.get_all_miracles(),
+        "charging": divine_progression_service.get_state().miracle_state.charging,
+    }
+
+
+@router.post("/divine/miracle/charge", tags=["divine"])
+def start_miracle_charge(request: dict) -> dict:
+    """开始蓄力神迹
+    
+    Body:
+    - miracle_id: 神迹ID
+    
+    神迹需要蓄力多回合，蓄力期间能量被锁定。
+    """
+    miracle_id = request.get("miracle_id", "")
+    
+    if miracle_id not in MIRACLES:
+        raise HTTPException(status_code=400, detail=f"未知的神迹: {miracle_id}")
+    
+    miracle = MIRACLES[miracle_id]
+    
+    # 检查能量
+    if energy_service.get_state().current < miracle.cost:
+        raise HTTPException(
+            status_code=400,
+            detail=f"能量不足！「{miracle.name}」需要 {miracle.cost} 能量"
+        )
+    
+    success, message, cost = divine_progression_service.start_miracle_charge(miracle_id)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    
+    # 锁定能量（实际扣除）
+    current_turn = simulation_engine.turn_counter
+    energy_service.spend("pressure", current_turn, details=f"神迹蓄力: {miracle.name}", intensity=cost // 3)
+    
+    return {
+        "success": True,
+        "message": message,
+        "miracle": divine_progression_service.get_miracle_info(miracle_id),
+        "energy_locked": cost,
+    }
+
+
+@router.post("/divine/miracle/cancel", tags=["divine"])
+def cancel_miracle_charge() -> dict:
+    """取消蓄力神迹
+    
+    取消蓄力返还80%能量。
+    """
+    success, refund = divine_progression_service.cancel_miracle_charge()
+    if not success:
+        raise HTTPException(status_code=400, detail="没有正在蓄力的神迹")
+    
+    # 返还能量
+    energy_service.add_energy(refund, "取消神迹蓄力")
+    
+    return {
+        "success": True,
+        "message": f"已取消蓄力，返还 {refund} 能量",
+        "energy_refunded": refund,
+        "current_energy": energy_service.get_state().current,
+    }
+
+
+@router.post("/divine/miracle/execute", tags=["divine"])
+async def execute_miracle(request: dict) -> dict:
+    """手动触发已蓄力完成的神迹
+    
+    Body:
+    - miracle_id: 神迹ID
+    - target: 目标（某些神迹需要）
+    """
+    miracle_id = request.get("miracle_id", "")
+    target = request.get("target")
+    
+    if miracle_id not in MIRACLES:
+        raise HTTPException(status_code=400, detail=f"未知的神迹: {miracle_id}")
+    
+    miracle = MIRACLES[miracle_id]
+    miracle_info = divine_progression_service.get_miracle_info(miracle_id)
+    
+    # 检查冷却
+    if miracle_info["current_cooldown"] > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"神迹冷却中，剩余 {miracle_info['current_cooldown']} 回合"
+        )
+    
+    # 检查能量（如果不是蓄力完成的）
+    current_turn = simulation_engine.turn_counter
+    if energy_service.get_state().current < miracle.cost:
+        raise HTTPException(
+            status_code=400,
+            detail=f"能量不足！「{miracle.name}」需要 {miracle.cost} 能量"
+        )
+    
+    # 消耗能量
+    energy_service.spend("pressure", current_turn, details=f"神迹: {miracle.name}", intensity=miracle.cost // 3)
+    
+    # 设置冷却
+    state = divine_progression_service.get_state()
+    state.miracle_state.cooldowns[miracle_id] = miracle.cooldown
+    state.miracle_state.miracles_cast += 1
+    
+    if miracle.one_time:
+        state.miracle_state.used_one_time.append(miracle_id)
+    
+    # 执行神迹效果
+    result = {"effect": "executed", "details": f"神迹「{miracle.name}」已释放"}
+    
+    if miracle_id == "tree_of_life":
+        # 随机选择3个物种产生分化
+        all_species = species_repository.list_species()
+        alive = [sp for sp in all_species if sp.status == "alive"]
+        import random
+        selected = random.sample(alive, min(3, len(alive)))
+        result["details"] = f"生命之树触发，{len(selected)} 个物种即将分化"
+        result["affected_species"] = [sp.lineage_code for sp in selected]
+    
+    elif miracle_id == "judgement_day":
+        # 清除低适应力物种
+        all_species = species_repository.list_species()
+        culled = 0
+        survivors = []
+        for sp in all_species:
+            if sp.status == "alive":
+                if sp.fitness_score and sp.fitness_score < 0.25:
+                    sp.status = "extinct"
+                    sp.extinction_turn = current_turn
+                    sp.extinction_cause = "divine_judgement"
+                    species_repository.upsert(sp)
+                    culled += 1
+                else:
+                    # 存活者获得加成
+                    if sp.fitness_score:
+                        sp.fitness_score = min(1.0, sp.fitness_score + 0.1)
+                    survivors.append(sp.lineage_code)
+                    species_repository.upsert(sp)
+        result["details"] = f"末日审判清除了 {culled} 个物种，{len(survivors)} 个物种获得神恩"
+    
+    elif miracle_id == "great_prosperity":
+        # 大繁荣：增加所有物种种群
+        all_species = species_repository.list_species()
+        for sp in all_species:
+            if sp.status == "alive" and sp.population:
+                sp.population = int(sp.population * 1.5)
+                species_repository.upsert(sp)
+        result["details"] = "大繁荣降临，所有物种种群增长50%"
+    
+    return {
+        "success": True,
+        "miracle": miracle.name,
+        "cost": miracle.cost,
+        "result": result,
+        "cooldown": miracle.cooldown,
+        "energy_remaining": energy_service.get_state().current,
+    }
+
+
+# ========== 预言赌注系统 API ==========
+
+@router.get("/divine/wagers", tags=["divine"])
+def get_wagers() -> dict:
+    """获取预言赌注系统状态"""
+    return divine_progression_service.get_wager_summary()
+
+
+@router.post("/divine/wager/place", tags=["divine"])
+def place_wager(request: dict) -> dict:
+    """下注预言
+    
+    Body:
+    - wager_type: 预言类型 (dominance/extinction/expansion/evolution/duel)
+    - target_species: 目标物种代码
+    - bet_amount: 下注金额
+    - secondary_species: 第二物种（对决预言需要）
+    - predicted_outcome: 预测结果（对决预言需要，填写预测获胜者）
+    """
+    wager_type_str = request.get("wager_type", "")
+    target_species = request.get("target_species", "")
+    bet_amount = request.get("bet_amount", 0)
+    secondary_species = request.get("secondary_species")
+    predicted_outcome = request.get("predicted_outcome", "")
+    
+    try:
+        wager_type = WagerType(wager_type_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"未知的预言类型: {wager_type_str}")
+    
+    # 验证物种存在
+    species = species_repository.get_by_lineage(target_species)
+    if not species:
+        raise HTTPException(status_code=404, detail=f"物种 {target_species} 不存在")
+    
+    if species.status != "alive":
+        raise HTTPException(status_code=400, detail=f"物种 {target_species} 已灭绝")
+    
+    # 对决预言需要第二物种
+    if wager_type == WagerType.DUEL:
+        if not secondary_species:
+            raise HTTPException(status_code=400, detail="对决预言需要指定第二物种")
+        sp2 = species_repository.get_by_lineage(secondary_species)
+        if not sp2:
+            raise HTTPException(status_code=404, detail=f"物种 {secondary_species} 不存在")
+        if sp2.status != "alive":
+            raise HTTPException(status_code=400, detail=f"物种 {secondary_species} 已灭绝")
+    
+    # 检查能量
+    if energy_service.get_state().current < bet_amount:
+        raise HTTPException(
+            status_code=400,
+            detail=f"能量不足！下注 {bet_amount} 能量，当前只有 {energy_service.get_state().current}"
+        )
+    
+    # 记录初始状态
+    initial_state = {
+        "population": species.population,
+        "fitness": species.fitness_score,
+        "regions": len(species.regions) if species.regions else 1,
+    }
+    
+    current_turn = simulation_engine.turn_counter
+    
+    success, message, wager_id = divine_progression_service.place_wager(
+        wager_type=wager_type,
+        target_species=target_species,
+        bet_amount=bet_amount,
+        current_turn=current_turn,
+        secondary_species=secondary_species,
+        predicted_outcome=predicted_outcome,
+        initial_state=initial_state,
+    )
+    
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    
+    # 消耗能量
+    energy_service.spend("pressure", current_turn, details=f"预言下注: {WAGER_TYPES[wager_type].name}", intensity=bet_amount // 3)
+    
+    return {
+        "success": True,
+        "message": message,
+        "wager_id": wager_id,
+        "wager_type": WAGER_TYPES[wager_type].name,
+        "potential_return": int(bet_amount * WAGER_TYPES[wager_type].multiplier),
+        "energy_bet": bet_amount,
+        "energy_remaining": energy_service.get_state().current,
+    }
+
+
+@router.post("/divine/wager/check", tags=["divine"])
+def check_wager(request: dict) -> dict:
+    """检查预言结果
+    
+    Body:
+    - wager_id: 预言ID
+    
+    手动触发预言结算（通常在回合处理时自动检查）。
+    """
+    wager_id = request.get("wager_id", "")
+    
+    state = divine_progression_service.get_state()
+    if wager_id not in state.wager_state.active_wagers:
+        raise HTTPException(status_code=404, detail=f"预言 {wager_id} 不存在或已结算")
+    
+    wager = state.wager_state.active_wagers[wager_id]
+    current_turn = simulation_engine.turn_counter
+    
+    # 检查是否到期
+    if current_turn < wager.end_turn:
+        remaining = wager.end_turn - current_turn
+        return {
+            "status": "in_progress",
+            "message": f"预言进行中，剩余 {remaining} 回合",
+            "wager": wager.to_dict(),
+        }
+    
+    # 判断结果
+    species = species_repository.get_by_lineage(wager.target_species)
+    success = False
+    reason = ""
+    
+    wager_type = wager.wager_type
+    
+    if wager_type == WagerType.EXTINCTION:
+        # 灭绝预言
+        success = species is None or species.status != "alive"
+        reason = "物种已灭绝" if success else "物种仍存活"
+    
+    elif wager_type == WagerType.DOMINANCE:
+        # 霸主预言 - 检查是否是同生态位最大种群
+        if species and species.status == "alive":
+            all_species = species_repository.list_species()
+            same_niche = [sp for sp in all_species 
+                         if sp.status == "alive" 
+                         and sp.trophic_level == species.trophic_level]
+            max_pop = max((sp.population or 0) for sp in same_niche)
+            success = (species.population or 0) >= max_pop
+            reason = "已成为霸主" if success else "未能成为霸主"
+        else:
+            reason = "物种已灭绝"
+    
+    elif wager_type == WagerType.EXPANSION:
+        # 扩张预言
+        if species and species.status == "alive":
+            initial_regions = wager.initial_state.get("regions", 1)
+            current_regions = len(species.regions) if species.regions else 1
+            new_regions = current_regions - initial_regions
+            success = new_regions >= 3
+            reason = f"扩展了 {new_regions} 个区域" if success else f"只扩展了 {new_regions} 个区域"
+        else:
+            reason = "物种已灭绝"
+    
+    elif wager_type == WagerType.EVOLUTION:
+        # 演化预言 - 检查是否有后代
+        all_species = species_repository.list_species()
+        descendants = [sp for sp in all_species 
+                       if sp.parent_code == wager.target_species 
+                       and sp.born_turn and sp.born_turn > wager.start_turn]
+        success = len(descendants) > 0
+        reason = f"产生了 {len(descendants)} 个后代" if success else "未产生后代"
+    
+    elif wager_type == WagerType.DUEL:
+        # 对决预言
+        sp1 = species
+        sp2 = species_repository.get_by_lineage(wager.secondary_species) if wager.secondary_species else None
+        
+        sp1_alive = sp1 and sp1.status == "alive"
+        sp2_alive = sp2 and sp2.status == "alive"
+        
+        if sp1_alive and not sp2_alive:
+            winner = wager.target_species
+        elif sp2_alive and not sp1_alive:
+            winner = wager.secondary_species
+        elif sp1_alive and sp2_alive:
+            # 都存活，比较种群
+            if (sp1.population or 0) > (sp2.population or 0):
+                winner = wager.target_species
+            else:
+                winner = wager.secondary_species
+        else:
+            winner = None
+        
+        success = winner == wager.predicted_outcome
+        reason = f"胜者: {winner}" if winner else "双方都灭绝"
+    
+    # 结算
+    reward = divine_progression_service.resolve_wager(wager_id, success)
+    
+    if reward > 0:
+        energy_service.add_energy(reward, f"预言成功: {WAGER_TYPES[wager_type].name}")
+    
+    return {
+        "status": "resolved",
+        "success": success,
+        "reason": reason,
+        "reward": reward,
+        "current_energy": energy_service.get_state().current,
+        "wager_summary": divine_progression_service.get_wager_summary(),
     }

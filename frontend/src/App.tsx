@@ -43,6 +43,7 @@ import { GameHintsPanel, AchievementNotification } from "./components/GameHintsP
 
 // 杂交与能量
 import { HybridizationPanel } from "./components/HybridizationPanel";
+import { DivinePowersPanel } from "./components/DivinePowersPanel";
 import { dispatchEnergyChanged } from "./components/EnergyBar";
 
 // 界面增强效果
@@ -218,6 +219,7 @@ export default function App() {
   const [showAchievements, setShowAchievements] = useState(false); // 成就面板
   const [showHints, setShowHints] = useState(false); // 智能提示面板（点击打开）
   const [showHybridization, setShowHybridization] = useState(false); // 杂交面板
+  const [showDivinePowers, setShowDivinePowers] = useState(false); // 神力进阶面板
   const [hintsInfo, setHintsInfo] = useState<{count: number; criticalCount: number; highCount: number}>({ count: 0, criticalCount: 0, highCount: 0 });
   const [pendingAchievement, setPendingAchievement] = useState<{name: string; icon: string; description: string; rarity: string} | null>(null);
 
@@ -708,7 +710,8 @@ export default function App() {
     showAIAssistant || // AI 助手
     showAITimeline || // AI 增强年鉴
     showAchievements || // 成就面板
-    showHybridization // 杂交面板
+    showHybridization || // 杂交面板
+    showDivinePowers // 神力进阶面板
   );
 
   // 3. Modals Layer
@@ -750,6 +753,19 @@ export default function App() {
               dispatchEnergyChanged();
             }}
           />
+        )}
+
+        {/* 神力进阶面板 */}
+        {showDivinePowers && (
+          <div style={{
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 1000,
+          }}>
+            <DivinePowersPanel onClose={() => setShowDivinePowers(false)} />
+          </div>
         )}
 
         {/* 成就解锁通知 */}
@@ -965,6 +981,7 @@ export default function App() {
           onLoadGame={handleLoadGame}
           onOpenLedger={() => setShowLedger(true)}
           onOpenPressure={() => setShowPressureModal(true)}
+          onOpenDivinePowers={() => setShowDivinePowers(true)}
         />
       }
       outlinerCollapsed={!showOutliner}

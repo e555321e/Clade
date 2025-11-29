@@ -68,7 +68,7 @@ PRESSURE_TO_MODIFIER_MAP = {
         "storm_damage": 1.0,   # 物理破坏
         "flood": 0.5,          # 暴雨洪涝
         "habitat_fragmentation": 0.4,  # 栖息地破碎
-        "mortality_spike": 0.3,  # 直接死亡
+        "mortality_spike": 0.5,  # 【增强】直接死亡（从0.3提高到0.5）
     },
     
     # ============================================================
@@ -82,6 +82,8 @@ PRESSURE_TO_MODIFIER_MAP = {
         "sulfur_aerosol": 0.8, # 硫酸盐气溶胶
         "acidity": 0.4,        # 酸雨
         "light_reduction": 0.5, # 火山灰遮光
+        "mortality_spike": 0.5, # 【新增】直接死亡率：高强度火山喷发直接杀伤
+        "toxin_level": 0.4,    # 【新增】火山毒气（SO2、HF等）
     },
     "orogeny": {              # 造山期（如喜马拉雅造山）
         "tectonic": 1.0,       # 构造活动
@@ -117,7 +119,7 @@ PRESSURE_TO_MODIFIER_MAP = {
         "tectonic": 0.8,       # 构造活动
         "habitat_fragmentation": 0.6,  # 地形破碎
         "landslide_risk": 0.7, # 滑坡风险
-        "mortality_spike": 0.2,  # 直接死亡
+        "mortality_spike": 0.4,  # 【增强】直接死亡（从0.2提高到0.4）
     },
     
     # ============================================================

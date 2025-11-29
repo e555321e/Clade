@@ -276,9 +276,34 @@ class MortalityEngine:
             adjusted_sensitivity *= (1.0 - arrays['salinity_resistance'] * 0.3)
         
         # 压力因子和竞争因子
-        # 【强化】提高生态位重叠的影响，促进"最适者生存"
-        pressure_factor = (pressure_score / 25) * adjusted_sensitivity
+        # 【强化v2】大幅提高压力影响系数，确保高强度压力有明显效果
+        # 10级压力应该产生显著死亡率（~40-60%基础）
+        pressure_factor = (pressure_score / 12) * adjusted_sensitivity  # 从/25改为/12，提升2倍多
         overlap_factor = np.maximum(arrays['overlap'], 0.0) * 0.55  # 从0.4提高到0.55
+        
+        # 【新增】灾难类压力直接死亡率加成
+        # 火山、地震、极端天气等灾难类型需要更高的直接死亡率
+        disaster_modifiers = {
+            'volcano': 0.08,        # 火山喷发：每级+8%死亡率
+            'volcanic': 0.08,       # 同上（兼容两种写法）
+            'mortality_spike': 0.10, # 直接死亡率事件：每级+10%
+            'sulfide': 0.12,        # 硫化事件：每级+12%（剧毒）
+            'toxin_level': 0.06,    # 毒素：每级+6%
+            'wildfire': 0.07,       # 野火：每级+7%
+        }
+        disaster_mortality = np.zeros(n)
+        for modifier_key, rate_per_level in disaster_modifiers.items():
+            modifier_value = pressure_modifiers.get(modifier_key, 0.0)
+            if modifier_value > 0:
+                # 灾难死亡率 = 修饰符值 × 每级死亡率 × (1 - 相关抗性)
+                # 对于火山，使用耐热性作为部分抗性
+                if modifier_key in ('volcano', 'volcanic', 'wildfire'):
+                    resistance = arrays['heat_resistance'] * 0.3
+                elif modifier_key in ('sulfide', 'toxin_level'):
+                    resistance = arrays['salinity_resistance'] * 0.2  # 化学抗性近似
+                else:
+                    resistance = 0.0
+                disaster_mortality += modifier_value * rate_per_level * (1.0 - resistance)
         
         # 营养级相关压力（需要逐个处理因为有条件分支）
         grazing_pressure = np.zeros(n)
@@ -337,13 +362,16 @@ class MortalityEngine:
         survival_resource = 1.0 - np.minimum(0.65, resource_factor)
         survival_grazing = 1.0 - np.minimum(0.7, grazing_pressure)
         survival_predation = 1.0 - np.minimum(0.7, predation_effect)
+        # 【新增】灾难存活率（火山、毒气等直接杀伤）
+        survival_disaster = 1.0 - np.minimum(0.85, disaster_mortality)
         
         compound_survival = (
             survival_pressure * 
             survival_competition * 
             survival_resource * 
             survival_grazing * 
-            survival_predation
+            survival_predation *
+            survival_disaster  # 新增灾难因子
         )
         
         base_mortality = 1.0 - compound_survival

@@ -614,6 +614,33 @@
   box-shadow: 0 4px 15px rgba(45, 212, 191, 0.2);
 }
 
+/* 神力按钮 */
+.btn-divine-powers {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(217, 119, 6, 0.1));
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 20px;
+  color: #fbbf24;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-divine-powers:hover {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(217, 119, 6, 0.2));
+  border-color: rgba(245, 158, 11, 0.5);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 15px rgba(245, 158, 11, 0.25);
+}
+
+.btn-divine-powers:active {
+  transform: scale(0.98);
+}
+
 /* ==================== LensBar V2 - 重新设计的地图工具栏 ==================== */
 .lensbar-v2 {
   position: fixed;
