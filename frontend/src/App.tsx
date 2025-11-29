@@ -22,7 +22,7 @@ import { NicheCompareView } from "./components/NicheCompareView";
 import { PressureModal } from "./components/PressureModal";
 import { GameSettingsMenu } from "./components/GameSettingsMenu";
 import { SettingsDrawer } from "./components/SettingsDrawer";
-import { CreateSpeciesModal } from "./components/CreateSpeciesModal";
+import { EnhancedCreateSpeciesModal } from "./components/EnhancedCreateSpeciesModal";
 import { GlobalTrendsPanel } from "./components/GlobalTrendsPanel";
 import { SpeciesLedger } from "./components/SpeciesLedger";
 import { FoodWebGraph } from "./components/FoodWebGraph";
@@ -31,6 +31,7 @@ import { TurnSummaryModal } from "./components/TurnSummaryModal";
 import { MapHistoryView } from "./components/MapHistoryView";
 import { LogPanel } from "./components/LogPanel";
 import { MapLegend } from "./components/MapLegend";
+import { MapModeToast } from "./components/MapModeToast";
 
 // AI 增强组件
 import { AIAssistantPanel } from "./components/AIAssistantPanel";
@@ -42,6 +43,7 @@ import { GameHintsPanel, AchievementNotification } from "./components/GameHintsP
 
 // 杂交与能量
 import { HybridizationPanel } from "./components/HybridizationPanel";
+import { DivinePowersPanel } from "./components/DivinePowersPanel";
 import { dispatchEnergyChanged } from "./components/EnergyBar";
 
 // 界面增强效果
@@ -69,6 +71,7 @@ import {
   fetchSpeciesList,
   fetchUIConfig,
   runTurn,
+  runBatchTurns,
   updateUIConfig,
   fetchHistory,
   saveGame,
@@ -217,6 +220,7 @@ export default function App() {
   const [showAchievements, setShowAchievements] = useState(false); // 成就面板
   const [showHints, setShowHints] = useState(false); // 智能提示面板（点击打开）
   const [showHybridization, setShowHybridization] = useState(false); // 杂交面板
+  const [showDivinePowers, setShowDivinePowers] = useState(false); // 神力进阶面板
   const [hintsInfo, setHintsInfo] = useState<{count: number; criticalCount: number; highCount: number}>({ count: 0, criticalCount: 0, highCount: 0 });
   const [pendingAchievement, setPendingAchievement] = useState<{name: string; icon: string; description: string; rarity: string} | null>(null);
 
@@ -227,6 +231,9 @@ export default function App() {
   const [lineageLoading, setLineageLoading] = useState(false);
   const [lineageError, setLineageError] = useState<string | null>(null);
   const [speciesRefreshTrigger, setSpeciesRefreshTrigger] = useState(0); // 物种数据刷新触发器
+  
+  // 批量执行状态
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; message: string } | null>(null);
 
   // Refs
   const mapPanelRef = useRef<CanvasMapPanelHandle | null>(null);
@@ -520,24 +527,8 @@ export default function App() {
       
       setReports((prev) => normalizeReports([...prev, ...next]));
       
-      // 并行刷新，加快速度，并捕获错误避免阻塞
-      console.log("🔄 [演化] 刷新地图和物种列表...");
-      const refreshStart = Date.now();
-      await Promise.all([
-        refreshMap().catch(e => console.error("刷新地图失败:", e)),
-        refreshSpeciesList().catch(e => console.error("刷新物种列表失败:", e)),
-        refreshQueue().catch(e => console.error("刷新队列失败:", e)),
-      ]);
-      console.log(`✅ [演化] 刷新完成，耗时: ${Date.now() - refreshStart}ms`);
-      
-      setSpeciesRefreshTrigger(prev => prev + 1); // 触发物种详情刷新
-      setPendingPressures([]);
-      setShowPressureModal(false);
-      
-      // 清除族谱缓存，下次打开时会重新获取最新数据
-      setLineageTree(null);
-      
-      // 显示回合总结
+      // 【关键】先更新回合状态和显示回合总结，再进行后台刷新
+      // 这样即使刷新卡住，用户也能看到回合总结
       if (next.length > 0) {
         const latestReport = next[next.length - 1];
         console.log("🎉 [演化] 回合", latestReport.turn_index, "完成");
@@ -550,6 +541,30 @@ export default function App() {
         // 刷新能量状态
         dispatchEnergyChanged();
       }
+      
+      // 并行刷新，加快速度，并捕获错误避免阻塞
+      // 【优化】添加超时保护，避免无限等待
+      console.log("🔄 [演化] 刷新地图和物种列表...");
+      const refreshStart = Date.now();
+      const withTimeout = <T,>(promise: Promise<T>, ms: number, name: string): Promise<T | null> =>
+        Promise.race([
+          promise,
+          new Promise<null>((_, reject) => setTimeout(() => reject(new Error(`${name} 超时`)), ms))
+        ]).catch(e => { console.warn(`⚠️ ${name}:`, e.message); return null; });
+      
+      await Promise.all([
+        withTimeout(refreshMap(), 30000, "刷新地图"),
+        withTimeout(refreshSpeciesList(), 15000, "刷新物种列表"),
+        withTimeout(refreshQueue(), 5000, "刷新队列"),
+      ]);
+      console.log(`✅ [演化] 刷新完成，耗时: ${Date.now() - refreshStart}ms`);
+      
+      setSpeciesRefreshTrigger(prev => prev + 1); // 触发物种详情刷新
+      setPendingPressures([]);
+      setShowPressureModal(false);
+      
+      // 清除族谱缓存，下次打开时会重新获取最新数据
+      setLineageTree(null);
     } catch (error: any) {
       console.error("❌ [演化] 推演失败:", error);
       setError(`推演失败: ${error.message || "未知错误"}`);
@@ -581,6 +596,84 @@ export default function App() {
       setError(`队列添加失败: ${error.message}`);
     } finally {
       setLoading(false);
+    }
+  }
+
+  /**
+   * 批量执行多回合
+   * @param rounds 执行回合数
+   * @param pressures 每回合的压力（空数组则使用随机压力）
+   * @param randomEnergy 每回合随机压力消耗的能量（0表示使用pressures）
+   */
+  async function handleBatchExecute(rounds: number, pressures: PressureDraft[], randomEnergy: number) {
+    setLoading(true);
+    setShowPressureModal(false);
+    setBatchProgress({ current: 0, total: rounds, message: "准备开始..." });
+    
+    try {
+      console.log(`🚀 [批量执行] 开始执行 ${rounds} 回合，随机能量: ${randomEnergy}`);
+      
+      const allReports: TurnReport[] = [];
+      
+      for (let i = 0; i < rounds; i++) {
+        setBatchProgress({ 
+          current: i + 1, 
+          total: rounds, 
+          message: `正在执行第 ${i + 1}/${rounds} 回合...` 
+        });
+        
+        let turnPressures = pressures;
+        
+        // 如果指定了随机能量，则生成随机压力
+        if (randomEnergy > 0 && pressures.length === 0) {
+          const { generateRandomPressures } = await import("./services/api");
+          turnPressures = await generateRandomPressures(randomEnergy);
+          console.log(`🎲 [批量执行] 回合 ${i + 1} 随机压力:`, turnPressures.map(p => `${p.label}(${p.intensity})`));
+        }
+        
+        const reports = await runTurn(turnPressures);
+        allReports.push(...reports);
+        
+        if (reports.length > 0) {
+          const latestReport = reports[reports.length - 1] as any;
+          setBatchProgress({ 
+            current: i + 1, 
+            total: rounds, 
+            message: `回合 ${latestReport.turn_index} 完成，存活物种: ${latestReport.species_summary?.alive_species || latestReport.species?.filter((s: any) => s.status === "alive").length || 0}` 
+          });
+        }
+      }
+      
+      console.log(`✅ [批量执行] 完成，共生成 ${allReports.length} 个报告`);
+      
+      // 更新报告和状态
+      setReports((prev) => normalizeReports([...prev, ...allReports]));
+      
+      if (allReports.length > 0) {
+        const latestReport = allReports[allReports.length - 1];
+        setCurrentTurnIndex(latestReport.turn_index + 1);
+        setShowTurnSummary(true);
+        checkPendingAchievements();
+        dispatchEnergyChanged();
+      }
+      
+      // 刷新数据
+      await Promise.all([
+        refreshMap().catch(console.warn),
+        refreshSpeciesList().catch(console.warn),
+        refreshQueue().catch(console.warn),
+      ]);
+      
+      setSpeciesRefreshTrigger(prev => prev + 1);
+      setPendingPressures([]);
+      setLineageTree(null);
+      
+    } catch (error: any) {
+      console.error("❌ [批量执行] 失败:", error);
+      setError(`批量执行失败: ${error.message || "未知错误"}`);
+    } finally {
+      setLoading(false);
+      setBatchProgress(null);
     }
   }
 
@@ -707,7 +800,8 @@ export default function App() {
     showAIAssistant || // AI 助手
     showAITimeline || // AI 增强年鉴
     showAchievements || // 成就面板
-    showHybridization // 杂交面板
+    showHybridization || // 杂交面板
+    showDivinePowers // 神力进阶面板
   );
 
   // 3. Modals Layer
@@ -751,6 +845,11 @@ export default function App() {
           />
         )}
 
+        {/* 神力进阶面板 */}
+        {showDivinePowers && (
+          <DivinePowersPanel onClose={() => setShowDivinePowers(false)} />
+        )}
+
         {/* 成就解锁通知 */}
         {pendingAchievement && (
           <AchievementNotification 
@@ -759,8 +858,17 @@ export default function App() {
           />
         )}
 
-        {/* 推演进度提示 - 最高优先级 */}
-        {loading && <TurnProgressOverlay message="AI 正在分析生态系统变化..." showDetails={true} />}
+        {/* 推演进度提示 - 如果已显示回合总结则不显示进度覆盖层 */}
+        {loading && !showTurnSummary && (
+          <TurnProgressOverlay 
+            message={
+              batchProgress 
+                ? `🎲 自动演化 ${batchProgress.current}/${batchProgress.total} - ${batchProgress.message}`
+                : "AI 正在分析生态系统变化..."
+            } 
+            showDetails={!batchProgress}
+          />
+        )}
         
         {/* 回合总结模态窗 */}
         {showTurnSummary && latestReport && (
@@ -838,11 +946,12 @@ export default function App() {
             onChange={setPendingPressures}
             onQueue={handleQueueAdd}
             onExecute={executeTurn}
+            onBatchExecute={handleBatchExecute}
             onClose={() => setShowPressureModal(false)}
           />
         )}
         {showCreateSpecies && (
-          <CreateSpeciesModal 
+          <EnhancedCreateSpeciesModal 
             onClose={() => setShowCreateSpecies(false)}
             onSuccess={() => {
               refreshMap();
@@ -900,13 +1009,11 @@ export default function App() {
           <SpeciesLedger
             speciesList={speciesList}
             onClose={() => setShowLedger(false)}
+            selectedSpeciesId={selectedSpeciesId}
             onSelectSpecies={(id) => {
               handleSpeciesSelect(id);
-              // Optional: close ledger on select, or keep it open? 
-              // Vic3 usually keeps ledger open, but here we have a drawer.
-              // Let's keep it open for now, or maybe close it if it covers the drawer.
-              // Given it's a modal, let's close it to show the drawer.
-              setShowLedger(false);
+              // 保持图鉴打开，方便用户快速切换物种查看分布
+              // 地图会自动同步显示选中物种的分布
             }}
           />
         )}
@@ -943,6 +1050,10 @@ export default function App() {
             temperature={latestReport?.global_temperature ?? 15}
             hasSelectedSpecies={!!selectedSpeciesId}
           />
+          <MapModeToast
+            viewMode={viewMode}
+            hasSelectedSpecies={!!selectedSpeciesId}
+          />
         </>
       }
       topBar={
@@ -960,6 +1071,7 @@ export default function App() {
           onLoadGame={handleLoadGame}
           onOpenLedger={() => setShowLedger(true)}
           onOpenPressure={() => setShowPressureModal(true)}
+          onOpenDivinePowers={() => setShowDivinePowers(true)}
         />
       }
       outlinerCollapsed={!showOutliner}

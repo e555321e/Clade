@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useReducer, useMemo } from "react";
-import type { UIConfig, ProviderConfig, CapabilityRouteConfig } from "../services/api.types";
-import { testApiConnection } from "../services/api";
+import type { UIConfig, ProviderConfig, CapabilityRouteConfig, ProviderType } from "../services/api.types";
+import { testApiConnection, fetchProviderModels, type ModelInfo } from "../services/api";
 import { GamePanel } from "./common/GamePanel";
 import { ConfirmDialog } from "./common/ConfirmDialog";
 import { Tooltip } from "./common/Tooltip";
@@ -16,71 +16,97 @@ type Tab = "connection" | "models" | "memory" | "autosave" | "performance";
 
 // ========== 常量定义 ==========
 
-const PROVIDER_TYPES = ["openai", "deepseek", "anthropic", "custom", "local"] as const;
+// API 类型：决定如何调用 API
+const PROVIDER_API_TYPES: { value: ProviderType; label: string; desc: string }[] = [
+  { value: "openai", label: "OpenAI 兼容", desc: "适用于 OpenAI、DeepSeek、硅基流动等" },
+  { value: "anthropic", label: "Claude 原生", desc: "Anthropic Claude 官方 API" },
+  { value: "google", label: "Gemini 原生", desc: "Google Gemini 官方 API" },
+];
 
-// 服务商预设配置（含 Logo）
+// 服务商预设配置（含 Logo）- 分组展示
 const PROVIDER_PRESETS = [
+  // ===== OpenAI 兼容格式 =====
   {
     id: "deepseek_official",
-    name: "DeepSeek 官方",
-    type: "openai",
+    name: "DeepSeek",
+    provider_type: "openai" as ProviderType,
     base_url: "https://api.deepseek.com/v1",
-    description: "DeepSeek 官方 API（支持 deepseek-chat, deepseek-reasoner 等模型）",
-    models: ["deepseek-chat", "deepseek-reasoner"],
+    description: "DeepSeek 官方 API",
+    models: [],
     logo: "🔮",
     color: "#6366f1",
+    category: "openai",
   },
   {
     id: "siliconflow",
     name: "硅基流动",
-    type: "openai",
+    provider_type: "openai" as ProviderType,
     base_url: "https://api.siliconflow.cn/v1",
-    description: "硅基流动 API（支持多种开源模型，支持思维链功能）",
-    models: ["Pro/deepseek-ai/DeepSeek-V3.2-Exp"],
+    description: "硅基流动 API，支持思维链",
+    models: [],
     logo: "⚡",
     color: "#f59e0b",
     supportsThinking: true,
+    category: "openai",
   },
   {
     id: "volcengine",
     name: "火山引擎（豆包）",
-    type: "openai",
+    provider_type: "openai" as ProviderType,
     base_url: "https://ark.cn-beijing.volces.com/api/v3",
-    description: "火山引擎 API（支持思维链功能，需要填写端点ID作为模型名）",
+    description: "火山引擎 API，需填写端点ID作为模型名",
     models: [],
     logo: "🌋",
     color: "#ef4444",
     supportsThinking: true,
+    category: "openai",
   },
   {
     id: "openai_official",
-    name: "OpenAI 官方",
-    type: "openai",
+    name: "OpenAI",
+    provider_type: "openai" as ProviderType,
     base_url: "https://api.openai.com/v1",
-    description: "OpenAI 官方 API（ChatGPT）",
-    models: ["gpt-4.1"],
+    description: "OpenAI 官方 API",
+    models: [],
     logo: "🤖",
     color: "#10b981",
+    category: "openai",
   },
+  // ===== Claude 原生 API =====
   {
-    id: "anthropic_proxy",
-    name: "Claude (OpenAI 兼容)",
-    type: "openai",
+    id: "claude_official",
+    name: "Claude",
+    provider_type: "anthropic" as ProviderType,
     base_url: "https://api.anthropic.com/v1",
-    description: "Claude API（需使用支持 OpenAI 格式的代理）",
-    models: ["claude-3-5-sonnet-20241022", "claude-3-opus-20240229"],
+    description: "Anthropic Claude 官方 API",
+    models: [],
     logo: "🎭",
-    color: "#8b5cf6",
+    color: "#d97706",
+    category: "anthropic",
   },
+  // ===== Gemini 原生 API =====
   {
-    id: "gemini_proxy",
-    name: "Gemini (OpenAI 兼容)",
-    type: "openai",
-    base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
-    description: "Google Gemini API（OpenAI 兼容格式）",
-    models: ["gemini-2.5-flash", "gemini-2.5-pro"],
+    id: "gemini_official",
+    name: "Gemini",
+    provider_type: "google" as ProviderType,
+    base_url: "https://generativelanguage.googleapis.com/v1beta",
+    description: "Google Gemini 官方 API",
+    models: [],
     logo: "💎",
     color: "#3b82f6",
+    category: "google",
+  },
+  // ===== 聚合服务 =====
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    provider_type: "openai" as ProviderType,
+    base_url: "https://openrouter.ai/api/v1",
+    description: "聚合 API，一个 Key 访问多种模型",
+    models: [],
+    logo: "🔀",
+    color: "#8b5cf6",
+    category: "openai",
   },
 ] as const;
 
@@ -111,32 +137,6 @@ const EMBEDDING_PRESETS = [
   { id: "text-embedding-3-small", name: "text-embedding-3-small", dimensions: 1536 },
 ];
 
-// 服务商模型预设（用于功能路由）
-const PROVIDER_MODEL_PRESETS: Record<string, Array<{ model: string; label: string; hint?: string }>> = {
-  deepseek_official: [
-    { model: "deepseek-chat", label: "deepseek-chat", hint: "通用对话模型" },
-    { model: "deepseek-reasoner", label: "deepseek-reasoner 🧠", hint: "带思考功能，更强推理能力" },
-  ],
-  siliconflow: [
-    { model: "deepseek-ai/DeepSeek-V3.2-Exp", label: "DeepSeek-V3.2 (免费)", hint: "可使用免费额度" },
-    { model: "Pro/deepseek-ai/DeepSeek-V3.2-Exp", label: "DeepSeek-V3.2 (付费)", hint: "付费，并行量更大" },
-  ],
-};
-
-// 根据服务商 URL 获取模型预设
-function getModelPresetsForProvider(provider: ProviderConfig | null): Array<{ model: string; label: string; hint?: string }> {
-  if (!provider?.base_url) return [];
-  
-  if (provider.base_url.includes("deepseek.com")) {
-    return PROVIDER_MODEL_PRESETS.deepseek_official || [];
-  }
-  if (provider.base_url.includes("siliconflow")) {
-    return PROVIDER_MODEL_PRESETS.siliconflow || [];
-  }
-  
-  return [];
-}
-
 // ========== 状态管理 ==========
 
 type ConfirmState = {
@@ -162,6 +162,10 @@ interface State {
   showApiKeys: Record<string, boolean>;
   confirmDialog: ConfirmState;
   validationErrors: Record<string, string>;
+  // 模型列表相关
+  fetchingModels: string | null;  // 正在获取模型的服务商 ID
+  providerModels: Record<string, ModelInfo[]>;  // 各服务商的模型列表
+  modelFetchError: Record<string, string>;  // 获取模型错误信息
 }
 
 type Action =
@@ -183,7 +187,17 @@ type Action =
   | { type: 'SET_CONFIRM_DIALOG'; dialog: ConfirmState }
   | { type: 'CLOSE_CONFIRM' }
   | { type: 'SET_VALIDATION_ERRORS'; errors: Record<string, string> }
-  | { type: 'RESET_TO_DEFAULT' };
+  | { type: 'RESET_TO_DEFAULT' }
+  // 模型列表相关
+  | { type: 'SET_FETCHING_MODELS'; providerId: string | null }
+  | { type: 'SET_PROVIDER_MODELS'; providerId: string; models: ModelInfo[] }
+  | { type: 'SET_MODEL_FETCH_ERROR'; providerId: string; error: string }
+  | { type: 'CLEAR_MODEL_FETCH_ERROR'; providerId: string }
+  | { type: 'TOGGLE_MODEL_SELECTION'; providerId: string; modelId: string }
+  | { type: 'SELECT_ALL_MODELS'; providerId: string }
+  | { type: 'DESELECT_ALL_MODELS'; providerId: string }
+  // 多服务商负载均衡
+  | { type: 'TOGGLE_ROUTE_PROVIDER'; capKey: string; providerId: string };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -265,6 +279,98 @@ function reducer(state: State, action: Action): State {
       return { ...state, validationErrors: action.errors };
     case 'RESET_TO_DEFAULT':
       return { ...state, form: createDefaultConfig() };
+    // 模型列表相关
+    case 'SET_FETCHING_MODELS':
+      return { ...state, fetchingModels: action.providerId };
+    case 'SET_PROVIDER_MODELS':
+      return { 
+        ...state, 
+        providerModels: { ...state.providerModels, [action.providerId]: action.models },
+        // 同时更新 provider 的 models 字段
+        form: {
+          ...state.form,
+          providers: {
+            ...state.form.providers,
+            [action.providerId]: {
+              ...state.form.providers[action.providerId],
+              models: action.models.map(m => m.id)
+            }
+          }
+        }
+      };
+    case 'SET_MODEL_FETCH_ERROR':
+      return { ...state, modelFetchError: { ...state.modelFetchError, [action.providerId]: action.error } };
+    case 'CLEAR_MODEL_FETCH_ERROR': {
+      const newErrors = { ...state.modelFetchError };
+      delete newErrors[action.providerId];
+      return { ...state, modelFetchError: newErrors };
+    }
+    case 'TOGGLE_MODEL_SELECTION': {
+      const provider = state.form.providers[action.providerId];
+      if (!provider) return state;
+      const currentSelected = provider.selected_models || [];
+      const isSelected = currentSelected.includes(action.modelId);
+      const newSelected = isSelected
+        ? currentSelected.filter(m => m !== action.modelId)
+        : [...currentSelected, action.modelId];
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          providers: {
+            ...state.form.providers,
+            [action.providerId]: { ...provider, selected_models: newSelected }
+          }
+        }
+      };
+    }
+    case 'SELECT_ALL_MODELS': {
+      const provider = state.form.providers[action.providerId];
+      const models = state.providerModels[action.providerId] || [];
+      if (!provider || models.length === 0) return state;
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          providers: {
+            ...state.form.providers,
+            [action.providerId]: { ...provider, selected_models: models.map(m => m.id) }
+          }
+        }
+      };
+    }
+    case 'DESELECT_ALL_MODELS': {
+      const provider = state.form.providers[action.providerId];
+      if (!provider) return state;
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          providers: {
+            ...state.form.providers,
+            [action.providerId]: { ...provider, selected_models: [] }
+          }
+        }
+      };
+    }
+    case 'TOGGLE_ROUTE_PROVIDER': {
+      const currentRoute = state.form.capability_routes[action.capKey] || { timeout: 60 };
+      const currentIds = currentRoute.provider_ids || [];
+      const isSelected = currentIds.includes(action.providerId);
+      const newIds = isSelected
+        ? currentIds.filter(id => id !== action.providerId)
+        : [...currentIds, action.providerId];
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          capability_routes: {
+            ...state.form.capability_routes,
+            [action.capKey]: { ...currentRoute, provider_ids: newIds }
+          }
+        }
+      };
+    }
     default:
       return state;
   }
@@ -280,7 +386,8 @@ function createDefaultConfig(): UIConfig {
     providers[preset.id] = {
       id: preset.id,
       name: preset.name,
-      type: preset.type,
+      type: preset.provider_type,  // 兼容旧字段
+      provider_type: preset.provider_type,
       base_url: preset.base_url,
       api_key: "",
       models: [...preset.models]
@@ -301,14 +408,25 @@ function getInitialProviders(config: UIConfig): Record<string, ProviderConfig> {
   if (Object.keys(providers).length === 0) {
     return createDefaultConfig().providers;
   }
-  return providers;
+  // 确保所有 provider 都有 provider_type 字段（兼容旧数据）
+  const updated: Record<string, ProviderConfig> = {};
+  for (const [id, p] of Object.entries(providers)) {
+    updated[id] = {
+      ...p,
+      provider_type: p.provider_type || (p.type as ProviderType) || "openai",
+    };
+  }
+  return updated;
 }
 
 function getProviderLogo(provider: ProviderConfig): string {
   const preset = PROVIDER_PRESETS.find(p => p.id === provider.id);
   if (preset) return preset.logo;
   
-  // 根据 URL 猜测
+  // 根据 provider_type 或 URL 猜测
+  if (provider.provider_type === "anthropic") return '🎭';
+  if (provider.provider_type === "google") return '💎';
+  
   const url = provider.base_url || '';
   if (url.includes('deepseek')) return '🔮';
   if (url.includes('siliconflow')) return '⚡';
@@ -316,7 +434,16 @@ function getProviderLogo(provider: ProviderConfig): string {
   if (url.includes('openai')) return '🤖';
   if (url.includes('anthropic')) return '🎭';
   if (url.includes('google')) return '💎';
+  if (url.includes('openrouter')) return '🔀';
   return '🔧';
+}
+
+function getProviderTypeBadge(providerType: ProviderType): { text: string; color: string } {
+  switch (providerType) {
+    case "anthropic": return { text: "Claude", color: "#d97706" };
+    case "google": return { text: "Gemini", color: "#3b82f6" };
+    default: return { text: "OpenAI", color: "#10b981" };
+  }
 }
 
 function supportsThinking(provider: ProviderConfig | null): boolean {
@@ -351,11 +478,15 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
     showApiKeys: {},
     confirmDialog: { isOpen: false, title: '', message: '', variant: 'warning', onConfirm: () => {} },
     validationErrors: {},
+    fetchingModels: null,
+    providerModels: {},
+    modelFetchError: {},
   });
 
   const { form, tab, selectedProviderId, testResults, testingProviderId, 
           testingEmbedding, testResultEmbedding, saving, saveSuccess, 
-          showApiKeys, confirmDialog, validationErrors } = state;
+          showApiKeys, confirmDialog, validationErrors,
+          fetchingModels, providerModels, modelFetchError } = state;
 
   const selectedProvider = selectedProviderId ? form.providers[selectedProviderId] : null;
   
@@ -399,11 +530,17 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
     });
   }, []);
 
-  const addCustomProvider = useCallback(() => {
+  const addCustomProvider = useCallback((providerType: ProviderType = "openai") => {
+    const typeNames: Record<ProviderType, string> = {
+      openai: "OpenAI 兼容",
+      anthropic: "Claude",
+      google: "Gemini"
+    };
     const newProvider: ProviderConfig = {
       id: generateId(),
-      name: "自定义服务商",
-      type: "openai",
+      name: `自定义 ${typeNames[providerType]}`,
+      type: providerType,
+      provider_type: providerType,
       models: []
     };
     dispatch({ type: 'ADD_PROVIDER', provider: newProvider });
@@ -433,31 +570,83 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
       return;
     }
 
-    // 根据服务商自动选择测试模型
-    let testModel = form.default_model;
+    const providerType = provider.provider_type || "openai";
+    
+    // 优先使用该服务商的已收藏模型，否则根据服务商类型选择默认模型
+    let testModel = provider.selected_models?.[0];
+    
     if (!testModel) {
-      // 根据 URL 自动选择合适的测试模型
-      if (provider.base_url.includes("deepseek.com")) {
+      if (providerType === "anthropic") {
+        testModel = "claude-3-5-sonnet-20241022";
+      } else if (providerType === "google") {
+        testModel = "gemini-2.0-flash";
+      } else if (provider.base_url?.includes("deepseek.com")) {
         testModel = "deepseek-chat";
-      } else if (provider.base_url.includes("siliconflow")) {
-        testModel = "deepseek-ai/DeepSeek-V3.2-Exp";
-      } else if (provider.base_url.includes("openai.com")) {
-        testModel = "gpt-3.5-turbo";
+      } else if (provider.base_url?.includes("siliconflow")) {
+        testModel = "deepseek-ai/DeepSeek-V3";
+      } else if (provider.base_url?.includes("openai.com")) {
+        testModel = "gpt-4o-mini";
+      } else if (provider.base_url?.includes("openrouter")) {
+        testModel = "openai/gpt-4o-mini";
+      } else if (provider.base_url?.includes("volces.com")) {
+        // 火山引擎需要端点ID，提示用户
+        dispatch({ 
+          type: 'SET_TEST_RESULT', 
+          providerId, 
+          result: { success: false, message: "火山引擎需要先添加端点ID作为模型名" } 
+        });
+        return;
       } else {
-        testModel = "gpt-3.5-turbo"; // 默认回退
+        testModel = "gpt-3.5-turbo";
       }
     }
 
     dispatch({ type: 'SET_TESTING_PROVIDER', id: providerId });
+    
+    // 获取默认的备用测试模型
+    const getDefaultModel = () => {
+      if (providerType === "anthropic") return "claude-3-5-sonnet-20241022";
+      if (providerType === "google") return "gemini-2.0-flash";
+      if (provider.base_url?.includes("deepseek.com")) return "deepseek-chat";
+      if (provider.base_url?.includes("siliconflow")) return "deepseek-ai/DeepSeek-V3";
+      if (provider.base_url?.includes("openai.com")) return "gpt-4o-mini";
+      if (provider.base_url?.includes("openrouter")) return "openai/gpt-4o-mini";
+      return "gpt-3.5-turbo";
+    };
+    
+    const defaultModel = getDefaultModel();
+    const isUsingCustomModel = testModel !== defaultModel;
+    
+    console.log(`[测试连接] 服务商: ${provider.name}, 模型: ${testModel}`);
 
     try {
-      const result = await testApiConnection({
+      let result = await testApiConnection({
         type: "chat",
         base_url: provider.base_url,
         api_key: provider.api_key,
-        provider: provider.type,
+        provider_type: providerType,
         model: testModel
       });
+      
+      // 如果使用收藏模型失败且是400错误，尝试用默认模型重试
+      if (!result.success && isUsingCustomModel && result.message?.includes("400")) {
+        console.log(`[测试连接] 收藏模型失败，尝试默认模型: ${defaultModel}`);
+        const retryResult = await testApiConnection({
+          type: "chat",
+          base_url: provider.base_url,
+          api_key: provider.api_key,
+          provider_type: providerType,
+          model: defaultModel
+        });
+        
+        if (retryResult.success) {
+          result = {
+            ...retryResult,
+            message: `${retryResult.message}\n⚠️ 注意：收藏的模型 "${testModel}" 测试失败，建议检查模型名称`,
+          };
+        }
+      }
+      
       dispatch({ type: 'SET_TEST_RESULT', providerId, result });
     } catch (e) {
       dispatch({ 
@@ -467,6 +656,48 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
       });
     } finally {
       dispatch({ type: 'SET_TESTING_PROVIDER', id: null });
+    }
+  }, [form]);
+
+  // 获取服务商的模型列表
+  const handleFetchModels = useCallback(async (providerId: string) => {
+    const provider = form.providers[providerId];
+    if (!provider?.base_url || !provider?.api_key) {
+      dispatch({ 
+        type: 'SET_MODEL_FETCH_ERROR', 
+        providerId, 
+        error: "请先填写 Base URL 和 API Key" 
+      });
+      return;
+    }
+
+    dispatch({ type: 'SET_FETCHING_MODELS', providerId });
+    dispatch({ type: 'CLEAR_MODEL_FETCH_ERROR', providerId });
+
+    try {
+      const result = await fetchProviderModels({
+        base_url: provider.base_url,
+        api_key: provider.api_key,
+        provider_type: provider.provider_type || "openai",
+      });
+      
+      if (result.success && result.models.length > 0) {
+        dispatch({ type: 'SET_PROVIDER_MODELS', providerId, models: result.models });
+      } else {
+        dispatch({ 
+          type: 'SET_MODEL_FETCH_ERROR', 
+          providerId, 
+          error: result.message || "未获取到模型" 
+        });
+      }
+    } catch (e) {
+      dispatch({ 
+        type: 'SET_MODEL_FETCH_ERROR', 
+        providerId, 
+        error: String(e) 
+      });
+    } finally {
+      dispatch({ type: 'SET_FETCHING_MODELS', providerId: null });
     }
   }, [form]);
 
@@ -594,12 +825,12 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
 
   return (
     <GamePanel
-      title="系统设置"
+      title="⚙️ 系统设置"
       onClose={onClose}
       variant="modal"
-      width="clamp(700px, 85vw, 1300px)"
-      height="clamp(550px, 85vh, 950px)"
-      icon={<span>⚙️</span>}
+      width="clamp(800px, 88vw, 1400px)"
+      height="clamp(600px, 88vh, 1000px)"
+      icon={<span style={{ filter: 'drop-shadow(0 0 8px rgba(99, 102, 241, 0.5))' }}>⚙️</span>}
     >
       <div className="settings-container">
         {/* 侧边导航 */}
@@ -609,36 +840,36 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
               active={tab === "connection"} 
               onClick={() => dispatch({ type: 'SET_TAB', tab: 'connection' })} 
               icon="🔌" 
-              label="服务商管理" 
-              desc="配置 AI 接入点"
+              label="服务商配置" 
+              desc="管理 AI API 接入"
             />
             <NavButton 
               active={tab === "models"} 
               onClick={() => dispatch({ type: 'SET_TAB', tab: 'models' })} 
               icon="🧠" 
-              label="功能路由" 
-              desc="分配模型任务"
+              label="智能路由" 
+              desc="分配模型能力"
             />
             <NavButton 
               active={tab === "memory"} 
               onClick={() => dispatch({ type: 'SET_TAB', tab: 'memory' })} 
               icon="🧬" 
               label="向量记忆" 
-              desc="Embedding 设置"
+              desc="语义搜索引擎"
             />
             <NavButton 
               active={tab === "autosave"} 
               onClick={() => dispatch({ type: 'SET_TAB', tab: 'autosave' })} 
               icon="💾" 
-              label="自动保存" 
-              desc="回合自动存档"
+              label="自动存档" 
+              desc="进度保护策略"
             />
             <NavButton 
               active={tab === "performance"} 
               onClick={() => dispatch({ type: 'SET_TAB', tab: 'performance' })} 
               icon="⚡" 
               label="性能调优" 
-              desc="超时与并发"
+              desc="超时与并发控制"
             />
           </div>
           
@@ -653,13 +884,14 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
               <div className="providers-layout">
                 {/* 左侧：服务商列表 */}
                 <div className="provider-list-panel">
-                  <h4 className="panel-title">服务商列表</h4>
+                  <h4 className="panel-title">AI 服务商</h4>
                   
                   <div className="provider-list">
                     {providerList.map(p => {
                       const hasApiKey = !!p.api_key;
                       const hasThinking = supportsThinking(p);
                       const testResult = testResults[p.id];
+                      const typeBadge = getProviderTypeBadge(p.provider_type || "openai");
                       
                       return (
                         <div 
@@ -675,19 +907,24 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                             <span className="provider-logo">{getProviderLogo(p)}</span>
                             <span className="provider-name">{p.name}</span>
                             <div className="provider-badges">
-                              {hasThinking && <span className="badge-thinking" title="支持思维链">🧠</span>}
-                              {/* 连接状态指示 */}
+                              <span 
+                                className="badge-type" 
+                                style={{ backgroundColor: `${typeBadge.color}18`, color: typeBadge.color, borderColor: `${typeBadge.color}40` }}
+                              >
+                                {typeBadge.text}
+                              </span>
+                              {hasThinking && <span className="badge-thinking" title="支持思维链推理">🧠</span>}
                               {testResult && (
                                 <span 
                                   className={`status-dot ${testResult.success ? 'success' : 'error'}`}
-                                  title={testResult.success ? "连接正常" : "连接失败"}
+                                  title={testResult.success ? "✓ 连接正常" : "✗ 连接失败"}
                                 />
                               )}
                             </div>
                           </div>
                           {!hasApiKey && (
                             <div className="provider-warning">
-                              <span>⚠️</span>
+                              <span>🔑</span>
                               <span>需要配置 API Key</span>
                             </div>
                           )}
@@ -697,14 +934,28 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                     
                   </div>
                   
-                  <button onClick={addCustomProvider} className="btn-add-provider">
-                    + 添加自定义服务商
-                  </button>
+                  <div className="add-provider-group">
+                    <span className="add-label">➕ 添加自定义服务商</span>
+                    <div className="add-provider-buttons">
+                      <button onClick={() => addCustomProvider("openai")} className="btn-add-mini" title="OpenAI 兼容格式（大多数服务商）">
+                        <span>🤖</span>
+                        <span>OpenAI</span>
+                      </button>
+                      <button onClick={() => addCustomProvider("anthropic")} className="btn-add-mini" title="Anthropic Claude 原生API">
+                        <span>🎭</span>
+                        <span>Claude</span>
+                      </button>
+                      <button onClick={() => addCustomProvider("google")} className="btn-add-mini" title="Google Gemini 原生API">
+                        <span>💎</span>
+                        <span>Gemini</span>
+                      </button>
+                    </div>
+                  </div>
 
                   <div className="global-defaults">
                     <label className="form-field">
                       <span className="field-label">
-                        全局默认服务商
+                        默认服务商
                         {validationErrors.default_provider && (
                           <span className="field-error"> ⚠️</span>
                         )}
@@ -715,9 +966,9 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                         onChange={(e) => dispatch({ type: 'UPDATE_GLOBAL', field: 'default_provider_id', value: e.target.value })}
                         aria-invalid={!!validationErrors.default_provider}
                       >
-                        <option value="">未选择</option>
-                        {Object.values(form.providers).map(p => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
+                        <option value="">-- 请选择 --</option>
+                        {Object.values(form.providers).filter(p => !!p.api_key).map(p => (
+                          <option key={p.id} value={p.id}>{getProviderLogo(p)} {p.name}</option>
                         ))}
                       </select>
                     </label>
@@ -730,9 +981,10 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                       </span>
                       <GlobalModelSelect 
                         value={form.default_model ?? ""}
-                        defaultProvider={form.default_provider_id ? form.providers[form.default_provider_id] : null}
                         onChange={(value) => dispatch({ type: 'UPDATE_GLOBAL', field: 'default_model', value })}
                         hasError={!!validationErrors.default_model}
+                        fetchedModels={form.default_provider_id ? providerModels[form.default_provider_id] : undefined}
+                        selectedModels={form.default_provider_id ? form.providers[form.default_provider_id]?.selected_models : undefined}
                       />
                     </label>
                   </div>
@@ -746,7 +998,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                         <div className="edit-title-row">
                           <span className="edit-logo">{getProviderLogo(selectedProvider)}</span>
                           <div>
-                            <h3>编辑服务商</h3>
+                            <h3>{selectedProvider.name}</h3>
                             {PROVIDER_PRESETS.some(p => p.id === selectedProviderId) && (
                               <span className="badge-preset">⭐ 预设服务商</span>
                             )}
@@ -757,20 +1009,19 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                           className="btn-delete"
                           aria-label="删除服务商"
                         >
-                          🗑️ 删除
+                          🗑️ 移除
                         </button>
                       </div>
 
-                      {selectedProvider.base_url && (
-                        <div className="tip-box">
-                          💡 <strong>配置提示：</strong>
-                          {getProviderTip(selectedProvider.base_url)}
-                        </div>
-                      )}
+                      <div className="tip-box">
+                        <strong>💡 配置指南</strong>
+                        <br/>
+                        {getProviderTip(selectedProvider.base_url || "", selectedProvider.provider_type || "openai")}
+                      </div>
 
                       <div className="form-fields">
                         <label className="form-field">
-                          <span className="field-label">名称</span>
+                          <span className="field-label">📝 显示名称</span>
                           <input
                             className="field-input"
                             value={selectedProvider.name}
@@ -780,28 +1031,37 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                               field: 'name', 
                               value: e.target.value 
                             })}
-                            placeholder="My AI Provider"
+                            placeholder="自定义名称..."
                           />
                         </label>
 
-                        <label className="form-field">
-                          <span className="field-label">类型</span>
-                          <select
-                            className="field-input"
-                            value={selectedProvider.type}
-                            onChange={(e) => selectedProviderId && dispatch({ 
-                              type: 'UPDATE_PROVIDER', 
-                              id: selectedProviderId, 
-                              field: 'type', 
-                              value: e.target.value 
-                            })}
-                          >
-                            {PROVIDER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                          </select>
-                        </label>
+                        <div className="form-field">
+                          <span className="field-label">🔧 API 协议 <span className="field-hint-inline">（决定调用方式）</span></span>
+                          <div className="api-type-selector">
+                            {PROVIDER_API_TYPES.map(t => (
+                              <button
+                                key={t.value}
+                                type="button"
+                                className={`api-type-btn ${selectedProvider.provider_type === t.value ? 'active' : ''}`}
+                                onClick={() => selectedProviderId && dispatch({ 
+                                  type: 'UPDATE_PROVIDER', 
+                                  id: selectedProviderId, 
+                                  field: 'provider_type', 
+                                  value: t.value 
+                                })}
+                                title={t.desc}
+                              >
+                                {t.value === "openai" && "🤖"}
+                                {t.value === "anthropic" && "🎭"}
+                                {t.value === "google" && "💎"}
+                                <span>{t.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
 
                         <label className="form-field">
-                          <span className="field-label">Base URL</span>
+                          <span className="field-label">🌐 API 地址</span>
                           <input
                             className="field-input"
                             value={selectedProvider.base_url ?? ""}
@@ -811,12 +1071,19 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                               field: 'base_url', 
                               value: e.target.value 
                             })}
-                            placeholder="https://api.openai.com/v1"
+                            placeholder={
+                              selectedProvider.provider_type === "anthropic" 
+                                ? "https://api.anthropic.com/v1"
+                                : selectedProvider.provider_type === "google"
+                                ? "https://generativelanguage.googleapis.com/v1beta"
+                                : "https://api.openai.com/v1"
+                            }
                           />
+                          <span className="field-hint">一般以 /v1 结尾，不需要添加 /chat/completions</span>
                         </label>
 
                         <label className="form-field">
-                          <span className="field-label">API Key</span>
+                          <span className="field-label">🔑 API 密钥</span>
                           <div className="input-with-toggle">
                             <input
                               className="field-input"
@@ -828,7 +1095,13 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                                 field: 'api_key', 
                                 value: e.target.value 
                               })}
-                              placeholder="sk-..."
+                              placeholder={
+                                selectedProvider.provider_type === "anthropic" 
+                                  ? "sk-ant-api03-..."
+                                  : selectedProvider.provider_type === "google"
+                                  ? "AIzaSy..."
+                                  : "sk-..."
+                              }
                             />
                             <button
                               type="button"
@@ -837,7 +1110,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                                 type: 'TOGGLE_API_KEY_VISIBILITY', 
                                 providerId: selectedProviderId 
                               })}
-                              aria-label={showApiKeys[selectedProviderId || ''] ? "隐藏 API Key" : "显示 API Key"}
+                              aria-label={showApiKeys[selectedProviderId || ''] ? "隐藏密钥" : "显示密钥"}
                             >
                               {showApiKeys[selectedProviderId || ''] ? '🙈' : '👁️'}
                             </button>
@@ -845,24 +1118,133 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                         </label>
                       </div>
 
+                      {/* 已收藏模型列表 */}
+                      <div className="models-section">
+                        <div className="models-header">
+                          <span className="field-label">⭐ 已收藏模型</span>
+                          <span className="models-count">{selectedProvider.selected_models?.length || 0} 个</span>
+                        </div>
+                        
+                        {selectedProvider.selected_models && selectedProvider.selected_models.length > 0 && selectedProviderId ? (
+                          <div className="saved-models-list">
+                            {selectedProvider.selected_models.map(modelId => {
+                              const modelInfo = providerModels[selectedProviderId]?.find((m: ModelInfo) => m.id === modelId);
+                              return (
+                                <div key={modelId} className="saved-model-item">
+                                  <span className="saved-model-name" title={modelId}>
+                                    {modelInfo?.name || modelId}
+                                  </span>
+                                  {modelInfo?.context_window && (
+                                    <span className="model-context">
+                                      {modelInfo.context_window >= 1000000 
+                                        ? `${(modelInfo.context_window / 1000000).toFixed(1)}M` 
+                                        : `${Math.round(modelInfo.context_window / 1000)}K`}
+                                    </span>
+                                  )}
+                                  <button
+                                    className="btn-remove-model"
+                                    onClick={() => dispatch({ type: 'TOGGLE_MODEL_SELECTION', providerId: selectedProviderId, modelId })}
+                                    title="移除收藏"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="saved-models-empty">
+                            暂无收藏，从下方列表添加常用模型
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 可用模型列表 */}
+                      <div className="models-section available-models">
+                        <div className="models-header">
+                          <span className="field-label">📦 可用模型</span>
+                          <button
+                            onClick={() => selectedProviderId && handleFetchModels(selectedProviderId)}
+                            disabled={fetchingModels === selectedProviderId || !selectedProvider.api_key}
+                            className="btn-fetch-models"
+                            title={!selectedProvider.api_key ? "请先填写 API Key" : "从服务商获取模型列表"}
+                          >
+                            {fetchingModels === selectedProviderId ? (
+                              <><span className="spinner-small"></span> 加载中...</>
+                            ) : "🔄 获取列表"}
+                          </button>
+                        </div>
+                        
+                        {/* 错误提示 */}
+                        {selectedProviderId && modelFetchError[selectedProviderId] && (
+                          <div className="models-error">
+                            ⚠️ {modelFetchError[selectedProviderId]}
+                          </div>
+                        )}
+                        
+                        {/* 模型列表 */}
+                        {selectedProviderId && providerModels[selectedProviderId] && providerModels[selectedProviderId].length > 0 && (
+                          <div className="models-list">
+                            {providerModels[selectedProviderId].map(model => {
+                              const isAdded = selectedProvider.selected_models?.includes(model.id) || false;
+                              return (
+                                <div 
+                                  key={model.id} 
+                                  className={`model-item ${isAdded ? 'added' : ''}`}
+                                  title={model.description || model.id}
+                                >
+                                  <span className="model-name">{model.name}</span>
+                                  {model.context_window && (
+                                    <span className="model-context">
+                                      {model.context_window >= 1000000 
+                                        ? `${(model.context_window / 1000000).toFixed(1)}M` 
+                                        : `${Math.round(model.context_window / 1000)}K`}
+                                    </span>
+                                  )}
+                                  <button
+                                    className={`btn-add-model ${isAdded ? 'added' : ''}`}
+                                    onClick={() => !isAdded && dispatch({ type: 'TOGGLE_MODEL_SELECTION', providerId: selectedProviderId, modelId: model.id })}
+                                    disabled={isAdded}
+                                    title={isAdded ? "已添加" : "添加到收藏"}
+                                  >
+                                    {isAdded ? '✓' : '+'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        
+                        {/* 未获取提示 */}
+                        {selectedProviderId && (!providerModels[selectedProviderId] || providerModels[selectedProviderId].length === 0) && !modelFetchError[selectedProviderId] && (
+                          <div className="models-empty">
+                            {selectedProvider.api_key 
+                              ? "💡 点击「获取列表」按钮加载可用模型" 
+                              : "🔒 填写 API Key 后可获取模型列表"}
+                          </div>
+                        )}
+                      </div>
+
                       <div className="test-section">
                         <div className="test-row">
                           <button
                             onClick={() => selectedProviderId && handleTestProvider(selectedProviderId)}
-                            disabled={testingProviderId === selectedProviderId}
+                            disabled={testingProviderId === selectedProviderId || !selectedProvider.api_key}
                             className="btn-primary btn-test"
                           >
                             {testingProviderId === selectedProviderId ? (
-                              <><span className="spinner-small"></span> 连接中...</>
-                            ) : "🔌 测试连接"}
+                              <><span className="spinner-small"></span> 测试中...</>
+                            ) : "⚡ 测试连接"}
                           </button>
-                          <span className="test-hint">(使用默认模型)</span>
+                          <span className="test-hint">发送简单请求验证配置</span>
                         </div>
                         
                         {selectedProviderId && testResults[selectedProviderId] && (
                           <div className={`test-result ${testResults[selectedProviderId].success ? 'success' : 'error'}`}>
-                            <span>{testResults[selectedProviderId].success ? "✅" : "❌"}</span>
-                            <span>{testResults[selectedProviderId].message}</span>
+                            <div className="result-header">
+                              {testResults[selectedProviderId].success ? "✅ 连接成功" : "❌ 连接失败"}
+                            </div>
+                            <div className="result-details">{testResults[selectedProviderId].message}</div>
                           </div>
                         )}
                       </div>
@@ -870,7 +1252,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                   ) : (
                     <div className="empty-state">
                       <span className="empty-icon">🔌</span>
-                      <p>请选择或添加一个服务商</p>
+                      <p>从左侧选择或添加一个 AI 服务商</p>
                     </div>
                   )}
                 </div>
@@ -882,16 +1264,16 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
           {tab === "models" && (
             <div className="tab-content fade-in">
               <div className="section-header">
-                <h3>🧠 大脑皮层：功能路由</h3>
-                <p>为每个具体的认知功能指定专用服务商与模型，可单独设置超时时间。</p>
+                <h3>🧠 AI 能力路由配置</h3>
+                <p>为不同的 AI 功能分配专属模型。未配置的功能将使用全局默认服务商。每个功能可独立设置超时时间和思考模式。</p>
               </div>
               
               {/* 高优先级 */}
               <div className="capability-group">
                 <div className="group-header high">
                   <span className="group-icon">🔴</span>
-                  <span className="group-title">高优先级</span>
-                  <span className="group-desc">核心推演功能，建议使用高性能模型</span>
+                  <span className="group-title">核心推演</span>
+                  <span className="group-desc">主要叙事与关键决策，推荐使用高性能模型</span>
                 </div>
                 <div className="capabilities-grid">
                   {AI_CAPABILITIES.high.map(cap => (
@@ -904,6 +1286,9 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                       defaultProviderId={form.default_provider_id}
                       defaultModel={form.default_model}
                       onUpdate={(field, value) => dispatch({ type: 'UPDATE_ROUTE', capKey: cap.key, field, value })}
+                      providerModels={providerModels}
+                      loadBalanceEnabled={form.load_balance_enabled}
+                      onToggleProvider={(providerId) => dispatch({ type: 'TOGGLE_ROUTE_PROVIDER', capKey: cap.key, providerId })}
                     />
                   ))}
                 </div>
@@ -913,8 +1298,8 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
               <div className="capability-group">
                 <div className="group-header medium">
                   <span className="group-icon">🟡</span>
-                  <span className="group-title">中优先级</span>
-                  <span className="group-desc">物种生成相关功能</span>
+                  <span className="group-title">物种演化</span>
+                  <span className="group-desc">新物种诞生与基因分化判定</span>
                 </div>
                 <div className="capabilities-grid">
                   {AI_CAPABILITIES.medium.map(cap => (
@@ -927,6 +1312,9 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                       defaultProviderId={form.default_provider_id}
                       defaultModel={form.default_model}
                       onUpdate={(field, value) => dispatch({ type: 'UPDATE_ROUTE', capKey: cap.key, field, value })}
+                      providerModels={providerModels}
+                      loadBalanceEnabled={form.load_balance_enabled}
+                      onToggleProvider={(providerId) => dispatch({ type: 'TOGGLE_ROUTE_PROVIDER', capKey: cap.key, providerId })}
                     />
                   ))}
                 </div>
@@ -936,8 +1324,8 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
               <div className="capability-group">
                 <div className="group-header low">
                   <span className="group-icon">🟢</span>
-                  <span className="group-title">普通优先级</span>
-                  <span className="group-desc">辅助功能，可使用轻量模型</span>
+                  <span className="group-title">辅助功能</span>
+                  <span className="group-desc">迁徙、命名等轻量任务，可使用经济模型</span>
                 </div>
                 <div className="capabilities-grid">
                   {AI_CAPABILITIES.low.map(cap => (
@@ -950,6 +1338,9 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                       defaultProviderId={form.default_provider_id}
                       defaultModel={form.default_model}
                       onUpdate={(field, value) => dispatch({ type: 'UPDATE_ROUTE', capKey: cap.key, field, value })}
+                      providerModels={providerModels}
+                      loadBalanceEnabled={form.load_balance_enabled}
+                      onToggleProvider={(providerId) => dispatch({ type: 'TOGGLE_ROUTE_PROVIDER', capKey: cap.key, providerId })}
                     />
                   ))}
                 </div>
@@ -1359,6 +1750,43 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                     </label>
                   </div>
 
+                  {/* 负载均衡配置 */}
+                  <div className="load-balance-section">
+                    <h4>⚖️ 多服务商负载均衡</h4>
+                    <div className="tip-box info">
+                      💡 启用后可为每个AI能力配置多个服务商，并行请求会自动分散到不同服务商，提高整体吞吐量并避免单一服务商限流。
+                    </div>
+                    
+                    <div className="form-field toggle-field">
+                      <label className="toggle-container">
+                        <input
+                          type="checkbox"
+                          checked={form.load_balance_enabled ?? false}
+                          onChange={(e) => dispatch({ type: 'UPDATE_GLOBAL', field: 'load_balance_enabled', value: e.target.checked })}
+                        />
+                        <span className="toggle-slider"></span>
+                        <span className="toggle-label">启用负载均衡</span>
+                      </label>
+                      <span className="field-hint">在「智能路由」页面为每个能力选择多个服务商</span>
+                    </div>
+
+                    {form.load_balance_enabled && (
+                      <label className="form-field">
+                        <span className="field-label">负载均衡策略</span>
+                        <select
+                          className="field-input"
+                          value={form.load_balance_strategy ?? "round_robin"}
+                          onChange={(e) => dispatch({ type: 'UPDATE_GLOBAL', field: 'load_balance_strategy', value: e.target.value })}
+                        >
+                          <option value="round_robin">🔄 轮询 - 依次使用每个服务商</option>
+                          <option value="random">🎲 随机 - 随机选择服务商</option>
+                          <option value="least_latency">⚡ 最低延迟 - 优先使用响应最快的服务商</option>
+                        </select>
+                        <span className="field-hint">选择如何在多个服务商之间分配请求</span>
+                      </label>
+                    )}
+                  </div>
+
                   {/* 快速预设 */}
                   <div className="preset-section">
                     <h4>快速配置</h4>
@@ -1535,7 +1963,10 @@ function CapabilityCard({
   providers, 
   defaultProviderId,
   defaultModel,
-  onUpdate 
+  onUpdate,
+  providerModels,
+  loadBalanceEnabled,
+  onToggleProvider,
 }: {
   cap: { key: string; label: string; desc: string; defaultTimeout: number };
   priority: 'high' | 'medium' | 'low';
@@ -1544,96 +1975,159 @@ function CapabilityCard({
   defaultProviderId?: string | null;
   defaultModel?: string | null;
   onUpdate: (field: keyof CapabilityRouteConfig, value: any) => void;
+  providerModels?: Record<string, ModelInfo[]>;
+  loadBalanceEnabled?: boolean;
+  onToggleProvider?: (providerId: string) => void;
 }) {
-  const routeProvider = route.provider_id 
-    ? providers[route.provider_id] 
-    : (defaultProviderId ? providers[defaultProviderId] : null);
+  const effectiveProviderId = route.provider_id || defaultProviderId;
+  const routeProvider = effectiveProviderId ? providers[effectiveProviderId] : null;
   
   const hasThinking = supportsThinking(routeProvider);
-  const modelPresets = getModelPresetsForProvider(routeProvider);
+  const poolProviderIds = route.provider_ids || [];
+  
+  // 获取已获取的模型列表
+  const fetchedModels = effectiveProviderId && providerModels ? providerModels[effectiveProviderId] : undefined;
+  const hasFetchedModels = fetchedModels && fetchedModels.length > 0;
+  const isKnownModel = hasFetchedModels && fetchedModels.some(m => m.id === route.model);
+
+  // 有效的服务商列表（有API Key的）
+  const validProviders = Object.values(providers).filter(p => !!p.api_key);
+
+  // 获取用户已选择的模型
+  const selectedModels = routeProvider?.selected_models || [];
+  const hasSelectedModels = selectedModels.length > 0;
+  
+  // 分离已选模型和其他模型
+  const selectedModelInfos = hasFetchedModels 
+    ? fetchedModels.filter(m => selectedModels.includes(m.id)) 
+    : [];
+  const otherModels = hasFetchedModels 
+    ? fetchedModels.filter(m => !selectedModels.includes(m.id)).slice(0, 30) 
+    : [];
 
   return (
     <div className={`capability-card ${priority}`}>
       <div className="capability-header">
         <strong>{cap.label}</strong>
+        <div className="capability-provider-badges">
+          {loadBalanceEnabled && poolProviderIds.length > 1 ? (
+            <span className="badge-lb" title={`负载均衡: ${poolProviderIds.length}个服务商`}>
+              ⚖️ {poolProviderIds.length}
+            </span>
+          ) : route.provider_id && (
+            <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>
+              {getProviderLogo(providers[route.provider_id])}
+            </span>
+          )}
+        </div>
       </div>
       <p className="capability-desc">{cap.desc}</p>
       
       <div className="capability-controls">
-        <select
-          className="field-input"
-          value={route.provider_id ?? ""}
-          onChange={(e) => {
-            const newProviderId = e.target.value || null;
-            onUpdate("provider_id", newProviderId);
-            
-            const newProvider = newProviderId 
-              ? providers[newProviderId] 
-              : (defaultProviderId ? providers[defaultProviderId] : null);
-            
-            if (!supportsThinking(newProvider) && route.enable_thinking) {
-              onUpdate("enable_thinking", false);
-            }
-            
-            // 切换服务商时清空模型选择
-            onUpdate("model", "");
-          }}
-          aria-label={`${cap.label} 服务商`}
-        >
-          <option value="">
-            默认 ({defaultProviderId ? (providers[defaultProviderId]?.name || "Unknown") : "未设置"})
-          </option>
-          {Object.values(providers).map(p => (
-            <option key={p.id} value={p.id}>{getProviderLogo(p)} {p.name}</option>
-          ))}
-        </select>
+        {/* 负载均衡模式：多选服务商 */}
+        {loadBalanceEnabled ? (
+          <div className="provider-pool-select">
+            <span className="pool-label">⚖️ 服务商池（多选）:</span>
+            <div className="pool-checkboxes">
+              {validProviders.map(p => (
+                <label key={p.id} className={`pool-checkbox ${poolProviderIds.includes(p.id) ? 'selected' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={poolProviderIds.includes(p.id)}
+                    onChange={() => onToggleProvider?.(p.id)}
+                  />
+                  <span className="pool-provider-logo">{getProviderLogo(p)}</span>
+                  <span className="pool-provider-name">{p.name}</span>
+                </label>
+              ))}
+            </div>
+            {poolProviderIds.length === 0 && (
+              <span className="pool-hint">请选择至少一个服务商</span>
+            )}
+          </div>
+        ) : (
+          /* 单服务商模式 */
+          <select
+            className="field-input"
+            value={route.provider_id ?? ""}
+            onChange={(e) => {
+              const newProviderId = e.target.value || null;
+              onUpdate("provider_id", newProviderId);
+              
+              const newProvider = newProviderId 
+                ? providers[newProviderId] 
+                : (defaultProviderId ? providers[defaultProviderId] : null);
+              
+              if (!supportsThinking(newProvider) && route.enable_thinking) {
+                onUpdate("enable_thinking", false);
+              }
+              
+              // 切换服务商时清空模型选择
+              onUpdate("model", "");
+            }}
+            aria-label={`${cap.label} 服务商`}
+          >
+            <option value="">
+              🌐 使用默认 {defaultProviderId ? `(${providers[defaultProviderId]?.name || ""})` : "(未设置)"}
+            </option>
+            {validProviders.map(p => (
+              <option key={p.id} value={p.id}>{getProviderLogo(p)} {p.name}</option>
+            ))}
+          </select>
+        )}
 
-        {/* 模型选择：有预设时显示下拉+输入，否则只显示输入 */}
-        {modelPresets.length > 0 ? (
+        {/* 模型选择 - 只显示已收藏的模型 */}
+        {hasSelectedModels ? (
           <div className="model-select-group">
             <select
               className="field-input model-select"
-              value={modelPresets.some(p => p.model === route.model) ? (route.model || "") : ""}
-              onChange={(e) => onUpdate("model", e.target.value)}
-              aria-label={`${cap.label} 模型预设`}
+              value={isKnownModel ? (route.model || "") : (route.model ? "__custom__" : "")}
+              onChange={(e) => {
+                if (e.target.value !== "__custom__") {
+                  onUpdate("model", e.target.value);
+                }
+              }}
+              aria-label={`${cap.label} 模型`}
             >
               <option value="">选择模型...</option>
-              {modelPresets.map(preset => (
-                <option key={preset.model} value={preset.model} title={preset.hint}>
-                  {preset.label}
+              {selectedModelInfos.map(model => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                  {model.context_window ? ` (${model.context_window >= 1000000 ? `${(model.context_window/1000000).toFixed(1)}M` : `${Math.round(model.context_window / 1000)}K`})` : ''}
                 </option>
               ))}
-              <option value="__custom__">自定义...</option>
+              {/* 如果有收藏但没有模型信息（未获取），显示原始ID */}
+              {selectedModels.filter(id => !selectedModelInfos.some(m => m.id === id)).map(modelId => (
+                <option key={modelId} value={modelId}>{modelId}</option>
+              ))}
+              <option value="__custom__">✏️ 手动输入...</option>
             </select>
-            {(!modelPresets.some(p => p.model === route.model) && route.model) && (
+            {(!isKnownModel && route.model) && (
               <input
                 className="field-input model-custom-input"
                 type="text"
-                placeholder="输入模型名称"
+                placeholder="模型名称"
                 value={route.model || ""}
                 onChange={(e) => onUpdate("model", e.target.value)}
               />
             )}
-            {/* 显示当前模型的提示 */}
-            {route.model && modelPresets.find(p => p.model === route.model)?.hint && (
-              <span className="model-hint">
-                💡 {modelPresets.find(p => p.model === route.model)?.hint}
-              </span>
-            )}
           </div>
         ) : (
-          <input
-            className="field-input"
-            type="text"
-            placeholder={`模型 (默认: ${defaultModel || "未设置"})`}
-            value={route.model || ""}
-            onChange={(e) => onUpdate("model", e.target.value)}
-            aria-label={`${cap.label} 模型`}
-          />
+          <div className="model-input-group">
+            <input
+              className="field-input"
+              type="text"
+              placeholder={defaultModel ? `默认: ${defaultModel}` : "输入模型名称..."}
+              value={route.model || ""}
+              onChange={(e) => onUpdate("model", e.target.value)}
+              aria-label={`${cap.label} 模型`}
+            />
+            <span className="model-input-hint">在服务商页面收藏模型</span>
+          </div>
         )}
 
         <div className="timeout-row">
-          <label className="timeout-label">超时</label>
+          <span className="timeout-label">⏱️ 超时</span>
           <input
             className="field-input timeout-input"
             type="number"
@@ -1653,7 +2147,7 @@ function CapabilityCard({
               checked={route.enable_thinking || false}
               onChange={(e) => onUpdate("enable_thinking", e.target.checked)}
             />
-            <span>开启思考模式 🧠</span>
+            <span>🧠 深度思考模式</span>
           </label>
         )}
       </div>
@@ -1664,27 +2158,40 @@ function CapabilityCard({
 // 全局默认模型选择组件
 function GlobalModelSelect({ 
   value, 
-  defaultProvider, 
   onChange, 
-  hasError 
+  hasError,
+  fetchedModels,
+  selectedModels,
 }: { 
   value: string;
-  defaultProvider: ProviderConfig | null;
   onChange: (value: string) => void;
   hasError: boolean;
+  fetchedModels?: ModelInfo[];
+  selectedModels?: string[];
 }) {
-  const modelPresets = getModelPresetsForProvider(defaultProvider);
-  const isPresetModel = modelPresets.some(p => p.model === value);
+  const hasFetchedModels = fetchedModels && fetchedModels.length > 0;
+  const hasSelectedModels = selectedModels && selectedModels.length > 0;
   
-  if (modelPresets.length === 0) {
-    // 没有预设时显示普通输入框
+  // 获取已收藏模型的详情
+  const selectedModelInfos = hasFetchedModels && hasSelectedModels
+    ? fetchedModels.filter(m => selectedModels.includes(m.id))
+    : [];
+  
+  // 检查当前值是否在收藏列表中
+  const isInSelected = hasSelectedModels && selectedModels.includes(value);
+  
+  if (!hasSelectedModels) {
+    // 没有收藏模型时显示普通输入框
     return (
-      <input
-        className={`field-input ${hasError ? 'has-error' : ''}`}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="输入模型名称"
-      />
+      <div className="global-model-select">
+        <input
+          className={`field-input ${hasError ? 'has-error' : ''}`}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="输入模型名称"
+        />
+        <span className="model-input-hint">在服务商页面收藏模型后可下拉选择</span>
+      </div>
     );
   }
 
@@ -1692,24 +2199,27 @@ function GlobalModelSelect({
     <div className="global-model-select">
       <select
         className={`field-input ${hasError ? 'has-error' : ''}`}
-        value={isPresetModel ? value : "__custom__"}
+        value={isInSelected ? value : (value ? "__custom__" : "")}
         onChange={(e) => {
-          if (e.target.value === "__custom__") {
-            onChange("");
-          } else {
+          if (e.target.value !== "__custom__") {
             onChange(e.target.value);
           }
         }}
       >
         <option value="">选择模型...</option>
-        {modelPresets.map(preset => (
-          <option key={preset.model} value={preset.model}>
-            {preset.label}
+        {selectedModelInfos.map(model => (
+          <option key={model.id} value={model.id}>
+            {model.name}
+            {model.context_window ? ` (${model.context_window >= 1000000 ? `${(model.context_window/1000000).toFixed(1)}M` : `${Math.round(model.context_window / 1000)}K`})` : ''}
           </option>
         ))}
-        <option value="__custom__">自定义...</option>
+        {/* 如果有收藏但没有模型信息（未获取），显示原始ID */}
+        {selectedModels.filter(id => !selectedModelInfos.some(m => m.id === id)).map(modelId => (
+          <option key={modelId} value={modelId}>{modelId}</option>
+        ))}
+        <option value="__custom__">✏️ 手动输入...</option>
       </select>
-      {(!isPresetModel && value !== "") && (
+      {(!isInSelected && value !== "") && (
         <input
           className="field-input global-model-custom"
           value={value}
@@ -1717,22 +2227,25 @@ function GlobalModelSelect({
           placeholder="输入模型名称"
         />
       )}
-      {value && modelPresets.find(p => p.model === value)?.hint && (
-        <span className="model-hint">
-          💡 {modelPresets.find(p => p.model === value)?.hint}
-        </span>
-      )}
     </div>
   );
 }
 
 // 工具函数
-function getProviderTip(baseUrl: string): string {
+function getProviderTip(baseUrl: string, providerType: ProviderType = "openai"): string {
+  // 根据 API 类型给出不同提示
+  if (providerType === "anthropic") {
+    return "Claude 原生 API，直接连接 Anthropic 服务。支持 claude-sonnet-4、claude-3.5-sonnet 等模型。";
+  }
+  if (providerType === "google") {
+    return "Gemini 原生 API，直接连接 Google AI。支持 gemini-2.5-flash、gemini-2.5-pro 等模型。";
+  }
+  
+  // OpenAI 兼容格式，根据 URL 细分
   if (baseUrl.includes("deepseek.com")) return "DeepSeek 官方 API，支持 deepseek-chat 和 deepseek-reasoner 模型。";
   if (baseUrl.includes("siliconflow")) return "硅基流动支持多种开源模型。✨ 支持思维链功能，可在功能路由中开启。";
   if (baseUrl.includes("volces.com")) return "火山引擎需要在模型名处填写端点 ID（如 ep-xxxxx）。✨ 支持思维链功能。";
-  if (baseUrl.includes("openai.com")) return "OpenAI 官方 API，支持 GPT 系列模型。";
-  if (baseUrl.includes("anthropic.com")) return "Claude API，需确保代理支持 OpenAI 格式。";
-  if (baseUrl.includes("generativelanguage.googleapis.com")) return "Google Gemini API，使用 OpenAI 兼容端点。";
-  return "请确保 API 端点支持 OpenAI 兼容格式。";
+  if (baseUrl.includes("openai.com")) return "OpenAI 官方 API，支持 GPT-4o、GPT-4 等模型。";
+  if (baseUrl.includes("openrouter")) return "OpenRouter 聚合 API，一个 Key 可访问多家模型（包括 Claude、Gemini）。";
+  return "OpenAI 兼容格式 API。大多数 LLM 服务商都支持此格式。";
 }

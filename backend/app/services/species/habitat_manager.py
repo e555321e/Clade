@@ -919,6 +919,546 @@ class HabitatManager:
         
         return capacities
 
+    def handle_terrain_type_changes(
+        self,
+        species_list: Sequence[Species],
+        tiles: list[MapTile],
+        turn_index: int,
+        dispersal_engine: 'DispersalEngine | None' = None,
+    ) -> dict[str, int]:
+        """处理海陆变化导致的物种强制迁徙
+        
+        当海洋变成陆地（或陆地变成海洋）时：
+        - 海洋生物必须迁离变成陆地的地块
+        - 陆生生物必须迁离变成海洋的地块
+        
+        使用矩阵计算寻找最佳迁徙目的地（如果提供了dispersal_engine）
+        
+        Returns:
+            {"forced_relocations": int, "extinctions": int}
+        """
+        import numpy as np
+        
+        habitats = self.repo.latest_habitats()
+        if not habitats:
+            return {"forced_relocations": 0, "extinctions": 0}
+        
+        # 构建地块映射
+        tile_map = {t.id: t for t in tiles}
+        coord_to_tile = {(t.x, t.y): t for t in tiles}
+        species_map = {sp.id: sp for sp in species_list if sp.id}
+        
+        # 更新扩散引擎的地块缓存（如果可用）
+        if dispersal_engine:
+            dispersal_engine.update_tile_cache(tiles)
+        
+        # 预计算地块的水/陆状态
+        tile_is_water = {t.id: t.elevation < 0 for t in tiles}
+        
+        # 按物种分组栖息地
+        species_habitats: dict[int, list[HabitatPopulation]] = {}
+        for h in habitats:
+            if h.species_id not in species_habitats:
+                species_habitats[h.species_id] = []
+            species_habitats[h.species_id].append(h)
+        
+        relocations = 0
+        extinctions = 0
+        updated_habitats: list[HabitatPopulation] = []
+        removed_habitats: list[tuple[int, int]] = []
+        
+        for species_id, sp_habitats in species_habitats.items():
+            species = species_map.get(species_id)
+            if not species:
+                continue
+            
+            habitat_type = (getattr(species, 'habitat_type', 'terrestrial') or 'terrestrial').lower()
+            is_aquatic = habitat_type in {'marine', 'deep_sea', 'coastal', 'freshwater'}
+            
+            valid_habitats = []
+            invalid_habitats = []
+            
+            for hab in sp_habitats:
+                is_water = tile_is_water.get(hab.tile_id, False)
+                
+                # 检查物种是否还能在这个地块生存
+                if is_aquatic and not is_water:
+                    invalid_habitats.append(hab)
+                elif not is_aquatic and is_water and habitat_type != 'amphibious':
+                    invalid_habitats.append(hab)
+                else:
+                    valid_habitats.append(hab)
+            
+            if not invalid_habitats:
+                continue
+            
+            # 需要迁移
+            total_displaced = sum(h.population for h in invalid_habitats)
+            
+            if valid_habitats:
+                # === 使用矩阵计算分配种群 ===
+                if dispersal_engine and dispersal_engine._tile_matrix is not None:
+                    # 使用扩散引擎计算适宜度
+                    suitability = dispersal_engine.compute_suitability_matrix(
+                        species, 
+                        exclude_tiles={h.tile_id for h in invalid_habitats}
+                    )
+                    
+                    # 只考虑有效栖息地
+                    valid_tile_ids = {h.tile_id for h in valid_habitats}
+                    valid_indices = [
+                        dispersal_engine._tile_map.get(tid, -1) 
+                        for tid in valid_tile_ids
+                    ]
+                    valid_indices = [i for i in valid_indices if i >= 0]
+                    
+                    if valid_indices:
+                        valid_scores = suitability[valid_indices]
+                        total_score = valid_scores.sum() or 1.0
+                        
+                        for i, valid_hab in enumerate(valid_habitats):
+                            idx = dispersal_engine._tile_map.get(valid_hab.tile_id, -1)
+                            if idx >= 0 and idx in valid_indices:
+                                portion = suitability[idx] / total_score
+                            else:
+                                portion = 1.0 / len(valid_habitats)
+                            
+                            added_pop = int(total_displaced * portion * 0.7)
+                            updated_habitats.append(HabitatPopulation(
+                                tile_id=valid_hab.tile_id,
+                                species_id=species_id,
+                                population=valid_hab.population + added_pop,
+                                suitability=valid_hab.suitability,
+                                turn_index=turn_index,
+                            ))
+                    else:
+                        # fallback: 简单分配
+                        for valid_hab in valid_habitats:
+                            portion = 1.0 / len(valid_habitats)
+                            added_pop = int(total_displaced * portion * 0.7)
+                            updated_habitats.append(HabitatPopulation(
+                                tile_id=valid_hab.tile_id,
+                                species_id=species_id,
+                                population=valid_hab.population + added_pop,
+                                suitability=valid_hab.suitability,
+                                turn_index=turn_index,
+                            ))
+                else:
+                    # 无扩散引擎：按适宜度比例分配
+                    total_valid_suit = sum(h.suitability for h in valid_habitats) or 1.0
+                    for valid_hab in valid_habitats:
+                        portion = valid_hab.suitability / total_valid_suit
+                        added_pop = int(total_displaced * portion * 0.7)
+                        updated_habitats.append(HabitatPopulation(
+                            tile_id=valid_hab.tile_id,
+                            species_id=species_id,
+                            population=valid_hab.population + added_pop,
+                            suitability=valid_hab.suitability,
+                            turn_index=turn_index,
+                        ))
+                
+                relocations += len(invalid_habitats)
+                logger.info(f"[栖息地] {species.common_name} 从 {len(invalid_habitats)} 个不适宜地块迁出")
+            else:
+                # 没有有效栖息地，尝试寻找新栖息地
+                if dispersal_engine and dispersal_engine._tile_matrix is not None:
+                    # 使用矩阵计算找到最适宜的新地块
+                    suitability = dispersal_engine.compute_suitability_matrix(
+                        species,
+                        exclude_tiles={h.tile_id for h in invalid_habitats}
+                    )
+                    
+                    # 找到最适宜的地块
+                    best_indices = np.argsort(suitability)[-5:][::-1]  # top 5
+                    best_indices = [i for i in best_indices if suitability[i] > 0.3]
+                    
+                    if best_indices:
+                        total_score = sum(suitability[i] for i in best_indices)
+                        for idx in best_indices:
+                            tile_id = dispersal_engine._tile_ids[idx]
+                            portion = suitability[idx] / total_score
+                            added_pop = int(total_displaced * portion * 0.5)  # 紧急迁徙损失更大
+                            
+                            updated_habitats.append(HabitatPopulation(
+                                tile_id=tile_id,
+                                species_id=species_id,
+                                population=added_pop,
+                                suitability=float(suitability[idx]),
+                                turn_index=turn_index,
+                            ))
+                        
+                        relocations += len(invalid_habitats)
+                        logger.info(f"[栖息地] {species.common_name} 紧急迁徙到 {len(best_indices)} 个新地块")
+                    else:
+                        extinctions += 1
+                        logger.warning(f"[栖息地] {species.common_name} 找不到适宜栖息地！")
+                else:
+                    extinctions += 1
+                    logger.warning(f"[栖息地] {species.common_name} 所有栖息地变得不适宜！")
+            
+            # 标记需要移除的栖息地
+            for inv_hab in invalid_habitats:
+                removed_habitats.append((inv_hab.tile_id, species_id))
+        
+        # 保存更新
+        if updated_habitats:
+            self.repo.write_habitats(updated_habitats)
+        
+        # 移除不适宜的栖息地记录
+        if removed_habitats:
+            remove_records = []
+            for tile_id, species_id in removed_habitats:
+                remove_records.append(HabitatPopulation(
+                    tile_id=tile_id,
+                    species_id=species_id,
+                    population=0,
+                    suitability=0.0,
+                    turn_index=turn_index,
+                ))
+            self.repo.write_habitats(remove_records)
+        
+        if relocations > 0 or extinctions > 0:
+            logger.info(f"[栖息地] 海陆变化: {relocations} 次迁移, {extinctions} 个物种危机")
+        
+        # 【改进v4】地质变化后检查消费者的食物来源
+        hunger_migrations = self.trigger_hunger_migration(
+            species_list, tiles, turn_index, dispersal_engine
+        )
+        
+        return {
+            "forced_relocations": relocations, 
+            "extinctions": extinctions,
+            "hunger_migrations": hunger_migrations
+        }
+    
+    def check_consumer_food_availability(
+        self,
+        species_list: Sequence[Species],
+        tiles: list[MapTile],
+    ) -> dict[int, dict]:
+        """检查消费者是否有食物来源
+        
+        返回每个消费者的食物可用性状态：
+        {species_id: {
+            "has_food": bool,
+            "prey_overlap_ratio": float,  # 与猎物重叠的地块比例
+            "nearest_prey_distance": float,  # 最近猎物的距离
+            "prey_tiles": set[int]  # 猎物所在地块
+        }}
+        """
+        import math
+        
+        habitats = self.repo.latest_habitats()
+        if not habitats:
+            return {}
+        
+        # 更新地块坐标缓存
+        self._update_tile_coords_cache(tiles)
+        
+        # 构建物种映射
+        species_map = {sp.id: sp for sp in species_list if sp.id}
+        
+        # 按物种分组栖息地
+        species_habitats: dict[int, set[int]] = {}
+        for h in habitats:
+            if h.species_id not in species_habitats:
+                species_habitats[h.species_id] = set()
+            species_habitats[h.species_id].add(h.tile_id)
+        
+        def _get_trophic_range(trophic: float) -> float:
+            return math.floor(trophic * 2) / 2.0
+        
+        # 构建各营养级的分布
+        trophic_tiles: dict[float, set[int]] = {}
+        for species_id, tile_ids in species_habitats.items():
+            sp = species_map.get(species_id)
+            if sp:
+                trophic = getattr(sp, 'trophic_level', 1.0) or 1.0
+                trophic_range = _get_trophic_range(trophic)
+                if trophic_range not in trophic_tiles:
+                    trophic_tiles[trophic_range] = set()
+                trophic_tiles[trophic_range].update(tile_ids)
+        
+        def _get_prey_tiles(consumer_trophic: float) -> set[int]:
+            """根据消费者营养级获取猎物地块"""
+            consumer_range = _get_trophic_range(consumer_trophic)
+            prey_set: set[int] = set()
+            
+            if consumer_range >= 5.0:
+                prey_ranges = [4.0, 4.5, 3.5, 3.0]
+            elif consumer_range >= 4.0:
+                prey_ranges = [3.0, 3.5, 2.5, 2.0]
+            elif consumer_range >= 3.0:
+                prey_ranges = [2.0, 2.5, 1.5]
+            elif consumer_range >= 2.0:
+                prey_ranges = [1.0, 1.5]
+            else:
+                prey_ranges = []
+            
+            for pr in prey_ranges:
+                if pr in trophic_tiles:
+                    prey_set.update(trophic_tiles[pr])
+            return prey_set
+        
+        # 检查每个消费者
+        result: dict[int, dict] = {}
+        
+        for species_id, my_tiles in species_habitats.items():
+            sp = species_map.get(species_id)
+            if not sp:
+                continue
+            
+            trophic = getattr(sp, 'trophic_level', 1.0) or 1.0
+            if trophic < 2.0:
+                # 生产者不需要检查食物
+                continue
+            
+            prey_tiles = _get_prey_tiles(trophic)
+            
+            # 计算重叠比例
+            overlap = my_tiles & prey_tiles
+            overlap_ratio = len(overlap) / len(my_tiles) if my_tiles else 0.0
+            
+            # 计算最近猎物距离
+            if prey_tiles and my_tiles:
+                min_distance = float('inf')
+                for my_tile in my_tiles:
+                    for prey_tile in prey_tiles:
+                        dist = self._calculate_tile_distance(my_tile, prey_tile)
+                        if dist < min_distance:
+                            min_distance = dist
+            else:
+                min_distance = float('inf')
+            
+            has_food = overlap_ratio > 0.1 or (prey_tiles and min_distance <= 3)
+            
+            result[species_id] = {
+                "has_food": has_food,
+                "prey_overlap_ratio": overlap_ratio,
+                "nearest_prey_distance": min_distance,
+                "prey_tiles": prey_tiles,
+                "my_tiles": my_tiles,
+            }
+            
+            if not has_food and prey_tiles:
+                logger.debug(
+                    f"[栖息地] {sp.common_name} (T{trophic:.1f}) 缺少食物! "
+                    f"重叠率={overlap_ratio:.1%}, 最近猎物距离={min_distance}"
+                )
+        
+        return result
+    
+    def trigger_hunger_migration(
+        self,
+        species_list: Sequence[Species],
+        tiles: list[MapTile],
+        turn_index: int,
+        dispersal_engine: 'DispersalEngine | None' = None,
+    ) -> int:
+        """触发饥饿迁徙：消费者向猎物方向迁移
+        
+        【改进v4.1】利用矩阵计算选择最佳迁徙目标
+        
+        当消费者的栖息地与猎物不重叠时，触发向猎物方向的迁徙
+        
+        Returns:
+            迁徙的物种数量
+        """
+        import numpy as np
+        
+        food_status = self.check_consumer_food_availability(species_list, tiles)
+        
+        if not food_status:
+            return 0
+        
+        species_map = {sp.id: sp for sp in species_list if sp.id}
+        habitats = self.repo.latest_habitats()
+        
+        # 按物种分组栖息地
+        species_habitats: dict[int, list[HabitatPopulation]] = {}
+        for h in habitats:
+            if h.species_id not in species_habitats:
+                species_habitats[h.species_id] = []
+            species_habitats[h.species_id].append(h)
+        
+        # 【优化】更新扩散引擎的地块缓存
+        if dispersal_engine:
+            dispersal_engine.update_tile_cache(tiles)
+        
+        migrations = 0
+        updated_habitats: list[HabitatPopulation] = []
+        
+        for species_id, status in food_status.items():
+            if status["has_food"]:
+                continue  # 有食物，不需要迁徙
+            
+            prey_tiles = status["prey_tiles"]
+            my_tiles = status["my_tiles"]
+            
+            if not prey_tiles:
+                # 完全没有猎物（可能猎物灭绝了）
+                continue
+            
+            sp = species_map.get(species_id)
+            if not sp:
+                continue
+            
+            sp_habitats = species_habitats.get(species_id, [])
+            if not sp_habitats:
+                continue
+            
+            # 计算总种群
+            total_pop = sum(h.population for h in sp_habitats)
+            
+            # 迁徙比例：根据饥饿程度决定
+            overlap_ratio = status["prey_overlap_ratio"]
+            if overlap_ratio == 0:
+                migrate_ratio = 0.6  # 完全没有重叠，迁徙60%
+            elif overlap_ratio < 0.1:
+                migrate_ratio = 0.4  # 少量重叠，迁徙40%
+            else:
+                migrate_ratio = 0.2  # 有一些重叠，迁徙20%
+            
+            migrate_pop = int(total_pop * migrate_ratio)
+            if migrate_pop < 10:
+                continue
+            
+            # === 【改进】使用矩阵计算选择最佳迁徙目标 ===
+            target_tiles_with_scores: list[tuple[int, float]] = []
+            
+            if dispersal_engine and dispersal_engine._tile_matrix is not None:
+                # 使用扩散引擎计算适宜度
+                suitability = dispersal_engine.compute_suitability_matrix(
+                    sp, 
+                    exclude_tiles=my_tiles  # 排除当前栖息地
+                )
+                
+                # 筛选有猎物的地块
+                for prey_tile_id in prey_tiles:
+                    idx = dispersal_engine._tile_map.get(prey_tile_id, -1)
+                    if idx >= 0 and suitability[idx] > 0.2:
+                        # 计算综合得分：适宜度 * 0.6 + 猎物加成 * 0.4
+                        combined_score = suitability[idx] * 0.6 + 0.4
+                        target_tiles_with_scores.append((prey_tile_id, combined_score))
+                
+                # 按综合得分排序
+                target_tiles_with_scores.sort(key=lambda x: x[1], reverse=True)
+                target_tiles_with_scores = target_tiles_with_scores[:8]  # 最多8个地块
+                
+                if target_tiles_with_scores:
+                    logger.debug(
+                        f"[饥饿迁徙] {sp.common_name} 使用矩阵计算，"
+                        f"找到 {len(target_tiles_with_scores)} 个优质猎物地块"
+                    )
+            
+            # 降级：使用距离计算
+            if not target_tiles_with_scores:
+                habitat_type = getattr(sp, 'habitat_type', 'terrestrial')
+                tile_map = {t.id: t for t in tiles}
+                
+                for prey_tile_id in prey_tiles:
+                    prey_tile = tile_map.get(prey_tile_id)
+                    if not prey_tile:
+                        continue
+                    
+                    # 检查地形是否适合
+                    is_water = prey_tile.elevation < 0
+                    
+                    if habitat_type == "marine" and is_water:
+                        pass
+                    elif habitat_type == "terrestrial" and not is_water:
+                        pass
+                    elif habitat_type in ("amphibious", "coastal"):
+                        pass
+                    else:
+                        continue
+                    
+                    # 计算到最近当前栖息地的距离
+                    if my_tiles and self._tile_coords_cache:
+                        min_dist = float('inf')
+                        for my_tid in my_tiles:
+                            d = self._calculate_tile_distance(my_tid, prey_tile_id)
+                            if d < min_dist:
+                                min_dist = d
+                        # 距离转换为得分（越近越高）
+                        score = max(0.1, 1.0 - min_dist / 20.0)
+                    else:
+                        score = 0.5
+                    
+                    target_tiles_with_scores.append((prey_tile_id, score))
+                
+                # 按得分排序
+                target_tiles_with_scores.sort(key=lambda x: x[1], reverse=True)
+                target_tiles_with_scores = target_tiles_with_scores[:5]
+            
+            if not target_tiles_with_scores:
+                logger.debug(f"[栖息地] {sp.common_name} 没有可迁徙的猎物地块")
+                continue
+            
+            # 从各地块按比例抽取迁徙种群
+            remaining_pop = migrate_pop
+            for habitat in sp_habitats:
+                if remaining_pop <= 0:
+                    break
+                
+                take = min(int(habitat.population * migrate_ratio), remaining_pop)
+                if take > 0:
+                    # 减少原地块种群
+                    updated_habitats.append(HabitatPopulation(
+                        tile_id=habitat.tile_id,
+                        species_id=species_id,
+                        population=habitat.population - take,
+                        suitability=habitat.suitability,
+                        turn_index=turn_index,
+                    ))
+                    remaining_pop -= take
+            
+            # 分配到猎物地块（按适宜度得分加权）
+            actual_migrate = migrate_pop - remaining_pop
+            if actual_migrate > 0:
+                # 按得分加权分配
+                total_score = sum(score for _, score in target_tiles_with_scores)
+                if total_score <= 0:
+                    total_score = 1.0
+                
+                distributed = 0
+                for i, (tile_id, score) in enumerate(target_tiles_with_scores):
+                    if i == len(target_tiles_with_scores) - 1:
+                        # 最后一个地块获得剩余所有
+                        tile_pop = actual_migrate - distributed
+                    else:
+                        tile_pop = int(actual_migrate * score / total_score)
+                    
+                    if tile_pop > 0:
+                        # 获取该地块的适宜度
+                        tile_suit = 0.6
+                        if dispersal_engine and dispersal_engine._tile_map:
+                            idx = dispersal_engine._tile_map.get(tile_id, -1)
+                            if idx >= 0:
+                                suit_matrix = dispersal_engine.compute_suitability_matrix(sp)
+                                if len(suit_matrix) > idx:
+                                    tile_suit = float(suit_matrix[idx])
+                        
+                        updated_habitats.append(HabitatPopulation(
+                            tile_id=tile_id,
+                            species_id=species_id,
+                            population=tile_pop,
+                            suitability=max(0.3, tile_suit),
+                            turn_index=turn_index,
+                        ))
+                        distributed += tile_pop
+                
+                migrations += 1
+                logger.info(
+                    f"[栖息地] {sp.common_name} 饥饿迁徙: {actual_migrate} 个体迁移到 "
+                    f"{len(target_tiles_with_scores)} 个有猎物的地块"
+                )
+        
+        if updated_habitats:
+            self.repo.write_habitats(updated_habitats)
+        
+        return migrations
+    
     def adjust_habitats_for_climate(
         self,
         species_list: Sequence[Species],

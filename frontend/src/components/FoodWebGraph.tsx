@@ -109,10 +109,14 @@ export function FoodWebGraph({ speciesList, onClose, onSelectSpecies }: Props) {
     };
   }, [speciesList]);
 
+  // 【性能优化】限制最大节点数，超过时显示警告
+  const MAX_NODES = 150;
+  const MAX_LINKS = 500;
+
   // 构建图数据
   const graphData = useMemo(() => {
     if (!foodWebData) {
-      return { nodes: [], links: [] };
+      return { nodes: [], links: [], truncated: false };
     }
 
     const keystoneSet = new Set(foodWebData.keystone_species);
@@ -134,6 +138,20 @@ export function FoodWebGraph({ speciesList, onClose, onSelectSpecies }: Props) {
       filteredNodes = filteredNodes.filter(
         (n) => n.name.toLowerCase().includes(query) || n.id.toLowerCase().includes(query)
       );
+    }
+
+    // 【性能优化】如果节点过多，优先保留关键物种和高连接度物种
+    let truncated = false;
+    if (filteredNodes.length > MAX_NODES) {
+      truncated = true;
+      // 按重要性排序：关键物种 > 连接数 > 生物量
+      filteredNodes = [...filteredNodes].sort((a, b) => {
+        const aKey = keystoneSet.has(a.id) ? 1000 : 0;
+        const bKey = keystoneSet.has(b.id) ? 1000 : 0;
+        const aScore = aKey + (a.prey_count + a.predator_count) * 10 + Math.log10(a.population + 1);
+        const bScore = bKey + (b.prey_count + b.predator_count) * 10 + Math.log10(b.population + 1);
+        return bScore - aScore;
+      }).slice(0, MAX_NODES);
     }
 
     const nodeIdSet = new Set(filteredNodes.map((n) => n.id));
@@ -160,7 +178,7 @@ export function FoodWebGraph({ speciesList, onClose, onSelectSpecies }: Props) {
       };
     });
 
-    const links: GraphLink[] = foodWebData.links
+    let links: GraphLink[] = foodWebData.links
       .filter((link) => nodeIdSet.has(link.source) && nodeIdSet.has(link.target))
       .map((link) => ({
         source: link.source,
@@ -170,7 +188,14 @@ export function FoodWebGraph({ speciesList, onClose, onSelectSpecies }: Props) {
         preyName: link.prey_name,
       }));
 
-    return { nodes, links };
+    // 【性能优化】限制边数量
+    if (links.length > MAX_LINKS) {
+      truncated = true;
+      // 按权重排序，保留最重要的关系
+      links = links.sort((a, b) => b.value - a.value).slice(0, MAX_LINKS);
+    }
+
+    return { nodes, links, truncated };
   }, [foodWebData, filterMode, searchQuery]);
 
   // 自动缩放适配
@@ -197,27 +222,40 @@ export function FoodWebGraph({ speciesList, onClose, onSelectSpecies }: Props) {
   // 渲染节点
   const nodeCanvasObject = useCallback(
     (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+      // 【修复】检查节点坐标是否有效，防止 createRadialGradient 抛出非有限值错误
+      if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) {
+        return; // 跳过无效坐标的节点
+      }
+      
       const isHovered = hoveredNode?.id === node.id;
       const isSelected = selectedNode?.id === node.id;
-      const nodeSize = node.val * (isHovered || isSelected ? 1.3 : 1);
+      const nodeSize = Math.max(1, node.val || 4) * (isHovered || isSelected ? 1.3 : 1);
 
       // 光晕效果
       if (node.isKeystone || isHovered || isSelected) {
         const glowSize = nodeSize + (isHovered || isSelected ? 8 : 5);
-        const gradient = ctx.createRadialGradient(
-          node.x,
-          node.y,
-          nodeSize * 0.5,
-          node.x,
-          node.y,
-          glowSize
-        );
-        gradient.addColorStop(0, node.isKeystone ? KEYSTONE_COLOR.glow : `${node.color}60`);
-        gradient.addColorStop(1, "transparent");
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, glowSize, 0, 2 * Math.PI);
-        ctx.fillStyle = gradient;
-        ctx.fill();
+        // 【修复】确保所有参数都是有限数值
+        const innerRadius = Math.max(0.1, nodeSize * 0.5);
+        const outerRadius = Math.max(innerRadius + 0.1, glowSize);
+        
+        try {
+          const gradient = ctx.createRadialGradient(
+            node.x,
+            node.y,
+            innerRadius,
+            node.x,
+            node.y,
+            outerRadius
+          );
+          gradient.addColorStop(0, node.isKeystone ? KEYSTONE_COLOR.glow : `${node.color}60`);
+          gradient.addColorStop(1, "transparent");
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, glowSize, 0, 2 * Math.PI);
+          ctx.fillStyle = gradient;
+          ctx.fill();
+        } catch (e) {
+          // 忽略渐变创建失败
+        }
       }
 
       // 主节点
@@ -455,8 +493,8 @@ export function FoodWebGraph({ speciesList, onClose, onSelectSpecies }: Props) {
             onNodeHover={(node: any) => setHoveredNode(node || null)}
             onLinkHover={(link: any) => setHoveredLink(link || null)}
             backgroundColor="transparent"
-            width={dimensions.width - 620}
-            height={dimensions.height - 80}
+            width={Math.max(200, dimensions.width - 620)}
+            height={Math.max(200, dimensions.height - 80)}
             nodeCanvasObject={nodeCanvasObject}
             linkCurvature={0.15}
             cooldownTicks={100}
@@ -493,10 +531,15 @@ export function FoodWebGraph({ speciesList, onClose, onSelectSpecies }: Props) {
           </div>
 
           {/* 当前筛选状态 */}
-          {(filterMode !== "all" || searchQuery) && (
+          {(filterMode !== "all" || searchQuery || graphData.truncated) && (
             <div className="foodweb-filter-badge">
               <span>
                 显示 {graphData.nodes.length} / {foodWebData?.total_species || 0} 物种
+                {graphData.truncated && (
+                  <span style={{ color: "#fbbf24", marginLeft: 8 }}>
+                    ⚠️ 已优化显示（物种过多）
+                  </span>
+                )}
               </span>
               <button
                 onClick={() => {

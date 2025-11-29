@@ -325,47 +325,135 @@ class MapColoringService:
 
     @staticmethod
     def _biodiversity_color(tile: MapTile, sea_level: float, score: float) -> str:
-        """生物多样性热力图模式 - 更鲜明的色阶"""
-        base_color = MapColoringService._terrain_color(tile, sea_level)
+        """生物多样性热力图模式 - 基于物种数量的直观色阶
+        
+        色阶设计（物种数量）:
+        0种:   深灰 #2D3436 - 无生命
+        1种:   冷紫 #6C5CE7 - 极低多样性
+        2种:   蓝色 #0984E3 - 低多样性
+        3-4种: 青绿 #00B894 - 中等
+        5-7种: 黄绿 #BADC58 - 较高
+        8-10种: 金橙 #FDCB6E - 高
+        11+种: 红橙 #E17055 - 极高
+        
+        score参数现在代表物种数量的归一化值
+        """
+        relative_elev = tile.elevation - sea_level
         score = max(0.0, min(1.0, score))
         
-        # 冷色(低) -> 暖色(高) 的鲜明渐变
-        if score < 0.1:   overlay = "#1a237e"   # 深靛蓝 - 几乎无生命
-        elif score < 0.2: overlay = "#283593"   # 靛蓝
-        elif score < 0.3: overlay = "#1565c0"   # 蓝色
-        elif score < 0.4: overlay = "#0288d1"   # 浅蓝
-        elif score < 0.5: overlay = "#00acc1"   # 青色
-        elif score < 0.6: overlay = "#26a69a"   # 青绿
-        elif score < 0.7: overlay = "#66bb6a"   # 绿色
-        elif score < 0.8: overlay = "#9ccc65"   # 黄绿
-        elif score < 0.9: overlay = "#ffb300"   # 橙黄 - 高生物多样性
-        else: overlay = "#e53935"               # 红色 - 极高生物多样性
+        # 海洋区域特殊处理
+        if relative_elev < 0:
+            # 海洋生物多样性使用蓝色系
+            if score < 0.05:
+                return "#1a1a2e"  # 深海无生命
+            elif score < 0.2:
+                return "#2D3461"  # 极少生物
+            elif score < 0.4:
+                return "#364F8B"  # 少量生物
+            elif score < 0.6:
+                return "#4169A6"  # 中等
+            elif score < 0.8:
+                return "#5B8DBE"  # 较多
+            else:
+                return "#74B9D6"  # 丰富海洋生物
         
-        return MapColoringService._blend_colors(overlay, base_color, 0.65)
+        # 陆地使用暖色调热力图
+        if score < 0.05:
+            # 无生命 - 深灰褐色
+            return "#2D3436"
+        elif score < 0.15:
+            # 1种 - 冷紫色
+            return MapColoringService._interpolate_color("#2D3436", "#6C5CE7", (score - 0.05) / 0.1)
+        elif score < 0.25:
+            # 2种 - 蓝色
+            return MapColoringService._interpolate_color("#6C5CE7", "#0984E3", (score - 0.15) / 0.1)
+        elif score < 0.4:
+            # 3-4种 - 青绿
+            return MapColoringService._interpolate_color("#0984E3", "#00B894", (score - 0.25) / 0.15)
+        elif score < 0.6:
+            # 5-7种 - 黄绿
+            return MapColoringService._interpolate_color("#00B894", "#BADC58", (score - 0.4) / 0.2)
+        elif score < 0.8:
+            # 8-10种 - 金橙
+            return MapColoringService._interpolate_color("#BADC58", "#FDCB6E", (score - 0.6) / 0.2)
+        else:
+            # 11+种 - 红橙
+            return MapColoringService._interpolate_color("#FDCB6E", "#E17055", (score - 0.8) / 0.2)
 
     @staticmethod
     def _climate_color(tile: MapTile, sea_level: float) -> str:
-        """气候图模式 - 更鲜明的气候带颜色"""
-        terrain_color = MapColoringService._terrain_color(tile, sea_level)
-        climate = getattr(tile, "climate_zone", "温带")
+        """气候图模式 - 基于实际温度的连续渐变色阶
+        
+        温度色阶设计:
+        -40°C: 纯白冰雪 #FFFFFF
+        -20°C: 冰蓝 #B3E5FC
+        -10°C: 冷蓝 #64B5F6
+          0°C: 青蓝 #4DD0E1
+         10°C: 翠绿 #66BB6A
+         20°C: 黄绿 #C6D545
+         25°C: 金橙 #FFCA28
+         30°C: 热橙 #FF7043
+         40°C: 深红 #D32F2F
+        """
         temperature = tile.temperature
+        relative_elev = tile.elevation - sea_level
         
-        # 更鲜明的气候带颜色
-        base_colors = {
-            "极地": "#b3e5fc", "Polar": "#b3e5fc",       # 冰蓝
-            "寒带": "#81d4fa", "Cold": "#81d4fa",        # 冷蓝
-            "温带": "#4caf50", "Temperate": "#4caf50",   # 翠绿
-            "亚热带": "#ffc107", "Subtropical": "#ffc107", # 金黄
-            "热带": "#ff5722", "Tropical": "#ff5722",    # 热橙
-        }
+        # 温度映射到颜色（-40到+45度范围）
+        t = max(-40, min(45, temperature))
         
-        climate_overlay = base_colors.get(climate, "#4caf50")
+        # 多段线性插值
+        if t < -20:
+            # -40 ~ -20: 纯白 -> 冰蓝
+            ratio = (t + 40) / 20
+            color = MapColoringService._interpolate_color("#FFFFFF", "#B3E5FC", ratio)
+        elif t < -10:
+            # -20 ~ -10: 冰蓝 -> 冷蓝
+            ratio = (t + 20) / 10
+            color = MapColoringService._interpolate_color("#B3E5FC", "#64B5F6", ratio)
+        elif t < 0:
+            # -10 ~ 0: 冷蓝 -> 青蓝
+            ratio = (t + 10) / 10
+            color = MapColoringService._interpolate_color("#64B5F6", "#4DD0E1", ratio)
+        elif t < 10:
+            # 0 ~ 10: 青蓝 -> 翠绿
+            ratio = t / 10
+            color = MapColoringService._interpolate_color("#4DD0E1", "#66BB6A", ratio)
+        elif t < 20:
+            # 10 ~ 20: 翠绿 -> 黄绿
+            ratio = (t - 10) / 10
+            color = MapColoringService._interpolate_color("#66BB6A", "#C6D545", ratio)
+        elif t < 25:
+            # 20 ~ 25: 黄绿 -> 金橙
+            ratio = (t - 20) / 5
+            color = MapColoringService._interpolate_color("#C6D545", "#FFCA28", ratio)
+        elif t < 30:
+            # 25 ~ 30: 金橙 -> 热橙
+            ratio = (t - 25) / 5
+            color = MapColoringService._interpolate_color("#FFCA28", "#FF7043", ratio)
+        else:
+            # 30 ~ 45: 热橙 -> 深红
+            ratio = (t - 30) / 15
+            color = MapColoringService._interpolate_color("#FF7043", "#D32F2F", ratio)
         
-        # 极端温度修正
-        if temperature < -20: climate_overlay = "#e1f5fe"     # 极寒白蓝
-        elif temperature > 35: climate_overlay = "#d84315"    # 酷热深橙
+        # 海洋区域颜色较深（透明度混合效果）
+        if relative_elev < 0:
+            color = MapColoringService._blend_colors(color, "#1a1a2e", 0.7)
         
-        return MapColoringService._blend_colors(climate_overlay, terrain_color, 0.55)
+        return color
+    
+    @staticmethod
+    def _interpolate_color(color1: str, color2: str, ratio: float) -> str:
+        """在两种颜色之间插值"""
+        ratio = max(0, min(1, ratio))
+        
+        r1, g1, b1 = int(color1[1:3], 16), int(color1[3:5], 16), int(color1[5:7], 16)
+        r2, g2, b2 = int(color2[1:3], 16), int(color2[3:5], 16), int(color2[5:7], 16)
+        
+        r = int(r1 + (r2 - r1) * ratio)
+        g = int(g1 + (g2 - g1) * ratio)
+        b = int(b1 + (b2 - b1) * ratio)
+        
+        return f"#{r:02x}{g:02x}{b:02x}"
 
     @staticmethod
     def classify_terrain_type(relative_elevation: float, is_lake: bool = False) -> str:

@@ -225,23 +225,64 @@ class AIPressureResponseService:
         modifier = 1.0
         key_factors = []
         
+        # 【新增】灾难类压力的强制惩罚
+        volcano_pressure = environment_pressure.get("volcano", 0) + environment_pressure.get("volcanic", 0)
+        sulfide_pressure = environment_pressure.get("sulfide", 0)
+        mortality_spike = environment_pressure.get("mortality_spike", 0)
+        wildfire_pressure = environment_pressure.get("wildfire", 0)
+        
+        # 火山喷发高强度时的惩罚
+        if volcano_pressure >= 7:
+            heat_resist = traits.get("耐热性", 5) / 15.0
+            if heat_resist < 0.4:  # 无耐热性
+                modifier *= 1.6
+                key_factors.append("对火山喷发高度脆弱")
+            elif heat_resist < 0.7:
+                modifier *= 1.3
+                key_factors.append("难以承受火山压力")
+        elif volcano_pressure >= 4:
+            modifier *= 1.15
+            key_factors.append("受火山活动影响")
+        
+        # 硫化事件惩罚
+        if sulfide_pressure >= 5:
+            modifier *= 1.5
+            key_factors.append("硫化毒气威胁严重")
+        
+        # 野火惩罚（主要影响陆生物种）
+        if wildfire_pressure >= 6:
+            habitat = getattr(species, 'habitat_type', 'terrestrial')
+            if habitat in ('terrestrial', 'aerial'):
+                mobility = traits.get("运动能力", 5) / 15.0
+                if mobility < 0.4:
+                    modifier *= 1.5
+                    key_factors.append("无法逃离野火")
+                else:
+                    modifier *= 1.2
+                    key_factors.append("野火威胁")
+        
+        # 直接死亡率压力
+        if mortality_spike > 0:
+            modifier *= (1.0 + mortality_spike * 0.1)
+            key_factors.append("环境灾害直接影响")
+        
         # 温度适应性
         temp_pressure = environment_pressure.get("temperature", 0)
         if temp_pressure < -2:  # 寒冷
             cold_resist = traits.get("耐寒性", 5) / 15.0
             if cold_resist > 0.6:
-                modifier *= 0.85
+                modifier *= 0.75  # 从0.85增强到0.75
                 key_factors.append(f"耐寒能力强({traits.get('耐寒性', 5):.0f})")
             elif cold_resist < 0.3:
-                modifier *= 1.15
+                modifier *= 1.25  # 从1.15增强到1.25
                 key_factors.append("对寒冷敏感")
         elif temp_pressure > 2:  # 炎热
             heat_resist = traits.get("耐热性", 5) / 15.0
             if heat_resist > 0.6:
-                modifier *= 0.85
+                modifier *= 0.75
                 key_factors.append(f"耐热能力强({traits.get('耐热性', 5):.0f})")
             elif heat_resist < 0.3:
-                modifier *= 1.15
+                modifier *= 1.25
                 key_factors.append("对高温敏感")
         
         # 干旱/湿度适应性
@@ -249,16 +290,16 @@ class AIPressureResponseService:
         if drought_pressure > 2:
             drought_resist = traits.get("耐旱性", 5) / 15.0
             if drought_resist > 0.6:
-                modifier *= 0.90
+                modifier *= 0.85
                 key_factors.append("抗旱能力强")
             elif drought_resist < 0.3:
-                modifier *= 1.20
+                modifier *= 1.30  # 从1.20增强到1.30
                 key_factors.append("对干旱敏感")
         
         # 运动能力影响逃避能力
         mobility = traits.get("运动能力", 5) / 15.0
         if mobility > 0.7 and base_death_rate > 0.3:
-            modifier *= 0.95
+            modifier *= 0.90  # 从0.95增强到0.90
             key_factors.append("高机动性有助于逃避")
         
         # 繁殖速度提供恢复潜力
@@ -267,8 +308,8 @@ class AIPressureResponseService:
             modifier *= 0.95
             key_factors.append("快速繁殖有助于恢复")
         
-        # 限制修正系数范围
-        modifier = max(0.5, min(1.5, modifier))
+        # 【扩大范围】限制修正系数范围到0.3-2.0
+        modifier = max(0.3, min(2.0, modifier))
         
         # ========== 2. 判断紧急状态 ==========
         if base_death_rate > 0.70 or consecutive >= 4:
@@ -791,6 +832,33 @@ class AIPressureResponseService:
         total_pressure = sum(abs(v) for v in environment_pressure.values())
         population = species.morphology_stats.get("population", 10000) if species.morphology_stats else 10000
         
+        # 获取食性类型
+        diet_type = getattr(species, 'diet_type', 'omnivore')
+        diet_type_cn = {
+            "autotroph": "自养生物（化能/光合）",
+            "herbivore": "草食动物",
+            "carnivore": "肉食动物",
+            "omnivore": "杂食动物",
+            "detritivore": "腐食/分解者",
+        }.get(diet_type, diet_type)
+        
+        # 提取关键适应性特质（用于快速判断）
+        key_traits = []
+        traits = species.abstract_traits or {}
+        if traits.get("耐热性", 0) >= 8:
+            key_traits.append("🔥高耐热")
+        if traits.get("耐寒性", 0) >= 8:
+            key_traits.append("❄️高耐寒")
+        if traits.get("耐盐性", 0) >= 8:
+            key_traits.append("🧂高耐盐")
+        if traits.get("耐旱性", 0) >= 8:
+            key_traits.append("🏜️高耐旱")
+        if traits.get("光照需求", 0) <= 2:
+            key_traits.append("🌑无需光照")
+        if traits.get("氧气需求", 0) <= 2:
+            key_traits.append("💨低氧适应")
+        key_traits_str = ", ".join(key_traits) if key_traits else "无特殊适应性"
+        
         return {
             "latin_name": species.latin_name,
             "common_name": species.common_name,
@@ -798,6 +866,8 @@ class AIPressureResponseService:
             "trophic_level": species.trophic_level,
             "trophic_category": trophic_category,
             "habitat_type": species.habitat_type or "terrestrial",
+            "diet_type": diet_type_cn,
+            "key_adaptations": key_traits_str,
             "population": int(population),
             "description": (species.description or "")[:200],
             "traits_summary": traits_summary,
@@ -821,9 +891,10 @@ class AIPressureResponseService:
             if not data:
                 return None
             
-            # 验证和限制修正系数
+            # 【扩大范围】验证和限制修正系数：0.3-2.0
+            # 允许AI对高压力情况给出更极端的惩罚
             modifier = float(data.get("survival_modifier", 1.0))
-            modifier = max(0.5, min(1.5, modifier))
+            modifier = max(0.3, min(2.0, modifier))
             
             # 解析紧急措施
             emergency_action = data.get("emergency_action", {})
@@ -873,8 +944,9 @@ class AIPressureResponseService:
                 if not code:
                     continue
                 
+                # 【扩大范围】修正系数：0.3-2.0
                 modifier = float(item.get("survival_modifier", 1.0))
-                modifier = max(0.5, min(1.5, modifier))
+                modifier = max(0.3, min(2.0, modifier))
                 
                 # 【修复】基于死亡率自动推断紧急状态
                 death_rate = mortality_data.get(code, 0.0)
@@ -912,7 +984,11 @@ class AIPressureResponseService:
     # ==================== 【新】物种叙事生成 ====================
     
     # 叙事生成批次大小阈值
-    NARRATIVE_BATCH_SIZE = 8
+    NARRATIVE_BATCH_SIZE = 5
+    
+    # 【优化】叙事物种数量上限（节省tokens）
+    MAX_CRITICAL_NARRATIVES = 3   # Critical物种最多3个
+    MAX_FOCUS_NARRATIVES = 2      # Focus物种最多4个
     
     async def generate_species_narratives(
         self,
@@ -921,19 +997,15 @@ class AIPressureResponseService:
         global_environment: str,
         major_events: str,
     ) -> list[SpeciesNarrativeResult]:
-        """【优化】批量生成物种叙事（支持分批并行）
+        """【优化v2】批量生成物种叙事（节省tokens版）
         
-        当物种数量超过 NARRATIVE_BATCH_SIZE 时，分批并行处理：
-        - 每批最多 NARRATIVE_BATCH_SIZE 个物种
-        - 多个批次使用 staggered_gather 并行发送
+        优化策略：
+        1. 限制叙事物种数量：Critical最多3个，Focus最多4个
+        2. 优先选择死亡率高或有重要事件的物种
+        3. 大幅压缩叙事字数要求
         
         Args:
-            species_data: 物种数据列表，每项包含：
-                - species: Species对象
-                - tier: "critical" 或 "focus"
-                - death_rate: 死亡率
-                - status_eval: SpeciesStatusEval (可选)
-                - events: 本回合发生的事件列表 (可选)
+            species_data: 物种数据列表
             turn_index: 当前回合
             global_environment: 全球环境描述
             major_events: 重大事件描述
@@ -944,19 +1016,44 @@ class AIPressureResponseService:
         if not self.router or not species_data:
             return []
         
+        # 【优化】按tier分类并限制数量
+        critical_species = [d for d in species_data if d.get("tier") == "critical"]
+        focus_species = [d for d in species_data if d.get("tier") == "focus"]
+        
+        # 按死亡率排序（优先叙述高危物种）
+        critical_species.sort(key=lambda x: x.get("death_rate", 0), reverse=True)
+        focus_species.sort(key=lambda x: x.get("death_rate", 0), reverse=True)
+        
+        # 限制数量
+        selected_critical = critical_species[:self.MAX_CRITICAL_NARRATIVES]
+        selected_focus = focus_species[:self.MAX_FOCUS_NARRATIVES]
+        
+        filtered_data = selected_critical + selected_focus
+        
+        if not filtered_data:
+            return []
+        
+        original_count = len(species_data)
+        if len(filtered_data) < original_count:
+            logger.info(
+                f"[物种叙事] 从 {original_count} 个物种中筛选 {len(filtered_data)} 个"
+                f" (Critical: {len(selected_critical)}/{len(critical_species)}, "
+                f"Focus: {len(selected_focus)}/{len(focus_species)})"
+            )
+        
         # 如果物种数量不多，直接单次请求
-        if len(species_data) <= self.NARRATIVE_BATCH_SIZE:
+        if len(filtered_data) <= self.NARRATIVE_BATCH_SIZE:
             return await self._generate_narrative_batch(
-                species_data, turn_index, global_environment, major_events
+                filtered_data, turn_index, global_environment, major_events
             )
         
         # 【优化】物种数量较多时，分批并行处理
-        logger.info(f"[物种叙事] 物种数量 {len(species_data)} > {self.NARRATIVE_BATCH_SIZE}，启用分批并行")
+        logger.info(f"[物种叙事] 物种数量 {len(filtered_data)} > {self.NARRATIVE_BATCH_SIZE}，启用分批并行")
         
         # 分批
         batches = []
-        for i in range(0, len(species_data), self.NARRATIVE_BATCH_SIZE):
-            batches.append(species_data[i:i + self.NARRATIVE_BATCH_SIZE])
+        for i in range(0, len(filtered_data), self.NARRATIVE_BATCH_SIZE):
+            batches.append(filtered_data[i:i + self.NARRATIVE_BATCH_SIZE])
         
         # 为每个批次创建协程
         async def process_batch(batch: list[dict]) -> list[SpeciesNarrativeResult]:
@@ -1051,36 +1148,21 @@ class AIPressureResponseService:
         global_environment: str,
         major_events: str,
     ) -> list[SpeciesNarrativeResult]:
-        """生成单批次叙事（内部方法）- 支持流式传输"""
+        """生成单批次叙事（精简版）- 支持流式传输"""
         try:
-            # 构建物种列表字符串
+            # 【优化】构建精简的物种列表字符串
             species_info_list = []
             species_names = []
             for item in species_data:
                 sp = item["species"]
                 tier = item.get("tier", "focus")
                 dr = item.get("death_rate", 0.0)
-                status_eval = item.get("status_eval")
-                events = item.get("events", [])
                 
                 species_names.append(sp.common_name)
                 
-                info_lines = [
-                    f"【{sp.lineage_code}】{sp.common_name} (tier: {tier})",
-                    f"  营养级: T{sp.trophic_level:.1f}, 栖息地: {sp.habitat_type}",
-                    f"  本回合死亡率: {dr:.1%}",
-                ]
-                
-                if status_eval:
-                    info_lines.append(
-                        f"  AI评估: 策略={status_eval.response_strategy}, "
-                        f"状态={status_eval.emergency_level}"
-                    )
-                
-                if events:
-                    info_lines.append(f"  本回合事件: {', '.join(events)}")
-                
-                species_info_list.append("\n".join(info_lines))
+                # 精简格式：一行包含所有关键信息
+                info = f"[{sp.lineage_code}] {sp.common_name}, {tier}, 死亡率{dr:.0%}, T{sp.trophic_level:.1f}"
+                species_info_list.append(info)
             
             prompt = PRESSURE_RESPONSE_PROMPTS["species_narrative"].format(
                 turn_index=turn_index,
@@ -1115,7 +1197,7 @@ class AIPressureResponseService:
             return []
     
     def _parse_narrative_results(self, content: str) -> list[SpeciesNarrativeResult]:
-        """解析物种叙事结果"""
+        """解析物种叙事结果（精简版）"""
         results = []
         try:
             data = self.router._parse_content(content)
@@ -1134,15 +1216,8 @@ class AIPressureResponseService:
                     headline=item.get("headline", ""),
                     narrative=item.get("narrative", ""),
                     mood=item.get("mood", "adapting"),
-                    highlight_event=item.get("highlight_event", ""),
+                    highlight_event="",  # 精简版不再生成此字段
                 ))
-            
-            # 【修复】提取并记录物种间互动故事
-            cross_story = data.get("cross_species_story", "")
-            if cross_story:
-                logger.info(f"[物种叙事] 物种间互动: {cross_story[:100]}...")
-                # 存储到实例变量，供后续使用
-                self._last_cross_species_story = cross_story
             
             logger.info(f"[物种叙事] 生成了 {len(results)} 个叙事")
         except Exception as e:
@@ -1401,9 +1476,9 @@ class AIPressureResponseService:
             if not data:
                 return None
             
-            # 验证和限制修正系数
+            # 【扩大范围】验证和限制修正系数：0.3-2.0
             modifier = float(data.get("survival_modifier", 1.0))
-            modifier = max(0.5, min(1.5, modifier))
+            modifier = max(0.3, min(2.0, modifier))
             
             return PressureAssessmentResult(
                 lineage_code=lineage_code,
@@ -1432,8 +1507,9 @@ class AIPressureResponseService:
                 if not code:
                     continue
                 
+                # 【扩大范围】修正系数：0.3-2.0
                 modifier = float(item.get("survival_modifier", 1.0))
-                modifier = max(0.5, min(1.5, modifier))
+                modifier = max(0.3, min(2.0, modifier))
                 
                 results[code] = PressureAssessmentResult(
                     lineage_code=code,

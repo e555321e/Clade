@@ -204,8 +204,15 @@ class DivineEnergyService:
         Returns:
             总能量消耗
         """
+        # 零消耗的压力类型（自然演化）
+        FREE_PRESSURE_KINDS = {"natural_evolution"}
+        
         total = 0
         for p in pressures:
+            kind = p.get("kind", "")
+            # 自然演化不消耗能量
+            if kind in FREE_PRESSURE_KINDS:
+                continue
             intensity = p.get("intensity", 5)
             total += self.get_cost("pressure", intensity=intensity)
         return total
@@ -311,6 +318,37 @@ class DivineEnergyService:
         if regen is not None:
             self._state.regen_per_turn = max(0, regen)
         # 【移除】不再自动保存到全局文件
+    
+    def spend_fixed(self, amount: int, turn: int, details: str = "") -> tuple[bool, str]:
+        """直接消耗指定数量的能量
+        
+        Args:
+            amount: 消耗数量
+            turn: 当前回合
+            details: 操作详情
+        
+        Returns:
+            (是否成功, 消息)
+        """
+        if not self._enabled:
+            return True, "能量系统已禁用"
+        
+        if self._state.current < amount:
+            return False, f"能量不足！需要 {amount}，当前 {self._state.current}"
+        
+        self._state.current -= amount
+        self._state.total_spent += amount
+        
+        self._history.append(EnergyTransaction(
+            action="divine_action",
+            cost=amount,
+            turn=turn,
+            details=details,
+            success=True,
+        ))
+        
+        logger.info(f"[能量] 消耗 {amount} ({details}), 剩余: {self._state.current}")
+        return True, f"消耗 {amount} 能量"
     
     def add_energy(self, amount: int, reason: str = "") -> None:
         """添加能量（奖励等）"""

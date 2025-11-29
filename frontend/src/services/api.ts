@@ -100,6 +100,90 @@ export async function runTurn(pressures: PressureDraft[] = []): Promise<TurnRepo
   return data || [];
 }
 
+/**
+ * 批量执行多回合（用于自动执行队列）
+ * @param rounds 要执行的回合数
+ * @param pressuresPerRound 每回合的压力配置（可选）
+ * @param randomEnergy 每回合随机消耗的能量（0表示不使用随机压力）
+ * @param onProgress 进度回调
+ */
+export async function runBatchTurns(
+  rounds: number,
+  pressuresPerRound?: PressureDraft[],
+  randomEnergy: number = 0,
+  onProgress?: (current: number, total: number, report: TurnReport) => void
+): Promise<TurnReport[]> {
+  const allReports: TurnReport[] = [];
+  
+  for (let i = 0; i < rounds; i++) {
+    console.log(`🔄 [批量执行] 回合 ${i + 1}/${rounds}`);
+    
+    let pressures = pressuresPerRound || [];
+    
+    // 如果指定了随机能量，则生成随机压力
+    if (randomEnergy > 0) {
+      pressures = await generateRandomPressures(randomEnergy);
+    }
+    
+    const reports = await runTurn(pressures);
+    allReports.push(...reports);
+    
+    if (reports.length > 0 && onProgress) {
+      onProgress(i + 1, rounds, reports[reports.length - 1]);
+    }
+  }
+  
+  return allReports;
+}
+
+/**
+ * 生成随机压力（消耗指定能量）
+ */
+export async function generateRandomPressures(targetEnergy: number): Promise<PressureDraft[]> {
+  // 获取压力模板
+  const templates = await fetchPressureTemplates();
+  const validTemplates = templates.filter(t => t.kind !== "natural_evolution");
+  
+  if (validTemplates.length === 0) {
+    return [{ kind: "natural_evolution", intensity: 5, label: "自然演化", narrative_note: "" }];
+  }
+  
+  const pressures: PressureDraft[] = [];
+  let remainingEnergy = targetEnergy;
+  const BASE_COST = 3; // 每强度消耗3能量
+  
+  // 随机选择1-2个压力
+  const numPressures = Math.min(2, Math.floor(Math.random() * 2) + 1);
+  
+  for (let i = 0; i < numPressures && remainingEnergy >= BASE_COST; i++) {
+    const template = validTemplates[Math.floor(Math.random() * validTemplates.length)];
+    
+    // 计算可用强度（基于剩余能量）
+    const maxIntensity = Math.min(10, Math.floor(remainingEnergy / BASE_COST));
+    if (maxIntensity < 1) break;
+    
+    // 随机强度（1到maxIntensity之间）
+    const intensity = Math.max(1, Math.floor(Math.random() * maxIntensity) + 1);
+    const cost = intensity * BASE_COST;
+    
+    pressures.push({
+      kind: template.kind,
+      intensity,
+      label: template.label,
+      narrative_note: template.description,
+    });
+    
+    remainingEnergy -= cost;
+  }
+  
+  // 如果没有生成任何压力，使用自然演化
+  if (pressures.length === 0) {
+    pressures.push({ kind: "natural_evolution", intensity: 5, label: "自然演化", narrative_note: "" });
+  }
+  
+  return pressures;
+}
+
 export async function fetchMapOverview(viewMode: string = "terrain", speciesCode?: string): Promise<MapOverview> {
   // 始终请求完整的 126x40 六边形网格 (约5040个)，支持视图模式切换
   let url = `/api/map?limit_tiles=6000&limit_habitats=500&view_mode=${viewMode}`;
@@ -241,6 +325,7 @@ export async function testApiConnection(params: {
   api_key: string;
   model: string;
   provider?: string;
+  provider_type?: "openai" | "anthropic" | "google";  // API 类型
 }): Promise<{ success: boolean; message: string; details?: string }> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
@@ -264,6 +349,45 @@ export async function testApiConnection(params: {
       return { success: false, message: "❌ 连接超时", details: "请求超过30秒未响应" };
     }
     throw e;
+  }
+}
+
+// 模型信息接口
+export interface ModelInfo {
+  id: string;
+  name: string;
+  description?: string;
+  context_window?: number | null;
+}
+
+// 获取服务商的模型列表
+export async function fetchProviderModels(params: {
+  base_url: string;
+  api_key: string;
+  provider_type: "openai" | "anthropic" | "google";
+}): Promise<{ success: boolean; message: string; models: ModelInfo[] }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000); // 20秒超时
+  
+  try {
+    const res = await fetch("/api/config/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    
+    if (!res.ok) {
+      return { success: false, message: `请求失败 (HTTP ${res.status})`, models: [] };
+    }
+    return res.json();
+  } catch (e) {
+    clearTimeout(timeoutId);
+    if (e instanceof Error && e.name === 'AbortError') {
+      return { success: false, message: "连接超时", models: [] };
+    }
+    return { success: false, message: String(e), models: [] };
   }
 }
 
@@ -336,6 +460,31 @@ export async function generateSpecies(prompt: string, lineage_code: string = "A1
   return res.json();
 }
 
+// 增强版物种生成API - 支持完整的物种创建参数
+export interface GenerateSpeciesAdvancedParams {
+  prompt: string;
+  lineage_code?: string;
+  habitat_type?: string;
+  diet_type?: string;
+  prey_species?: string[];
+  parent_code?: string;
+  is_plant?: boolean;
+  plant_stage?: number;
+}
+
+export async function generateSpeciesAdvanced(params: GenerateSpeciesAdvancedParams): Promise<any> {
+  const res = await fetch("/api/species/generate/advanced", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || "generate species failed");
+  }
+  return res.json();
+}
+
 export async function fetchSpeciesList(): Promise<SpeciesListItem[]> {
   const res = await fetch("/api/species/list");
   if (!res.ok) throw new Error("species list failed");
@@ -372,6 +521,19 @@ export async function resetWorld(keepSaves: boolean, keepMap: boolean): Promise<
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
     throw new Error(errorData.detail || "reset world failed");
+  }
+  return res.json();
+}
+
+export async function dropDatabase(): Promise<any> {
+  const res = await fetch("/api/admin/drop-database", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm: true }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || "drop database failed");
   }
   return res.json();
 }

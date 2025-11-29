@@ -3,13 +3,37 @@
 import asyncio
 import json
 import logging
+import random
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# 服务商类型定义
+PROVIDER_TYPE_OPENAI = "openai"      # OpenAI 兼容格式
+PROVIDER_TYPE_ANTHROPIC = "anthropic"  # Claude 原生 API
+PROVIDER_TYPE_GOOGLE = "google"       # Gemini 原生 API
+
+# 负载均衡策略
+LB_ROUND_ROBIN = "round_robin"       # 轮询
+LB_RANDOM = "random"                 # 随机
+LB_LEAST_LATENCY = "least_latency"   # 最低延迟
+
+
+@dataclass
+class ProviderPoolConfig:
+    """服务商池配置（用于负载均衡）"""
+    provider_id: str
+    base_url: str
+    api_key: str
+    provider_type: str = PROVIDER_TYPE_OPENAI
+    model: str | None = None  # 该服务商使用的模型（可覆盖默认）
+    weight: int = 1  # 权重（用于加权轮询）
+
 
 @dataclass
 class ModelConfig:
@@ -17,6 +41,7 @@ class ModelConfig:
     model: str
     endpoint: str | None = None
     extra_body: dict[str, Any] | None = None
+    provider_type: str = PROVIDER_TYPE_OPENAI  # 新增：服务商类型
 
 
 class ModelRouter:
@@ -54,6 +79,13 @@ class ModelRouter:
         self._request_stats: dict[str, dict] = {}  # 每个 capability 的统计
         self._last_summary_time = 0  # 上次输出摘要的时间
         self._summary_interval = 10  # 摘要输出间隔（秒）
+        
+        # 【负载均衡】服务商池配置
+        self._provider_pools: dict[str, list[ProviderPoolConfig]] = {}  # capability -> 服务商池
+        self._lb_counters: dict[str, int] = {}  # 轮询计数器
+        self._lb_strategy: str = LB_ROUND_ROBIN  # 默认策略
+        self._lb_enabled: bool = False  # 是否启用负载均衡
+        self._provider_latencies: dict[str, float] = {}  # 服务商延迟记录（用于最低延迟策略）
 
     def set_concurrency_limit(self, limit: int) -> None:
         """Update concurrency limit (requires recreating semaphore)"""
@@ -62,6 +94,87 @@ class ModelRouter:
         # Note: This is safe enough for this app's usage pattern.
         self._semaphore = asyncio.Semaphore(limit)
         logger.info(f"[ModelRouter] Concurrency limit set to {limit}")
+    
+    # ========== 负载均衡相关方法 ==========
+    
+    def configure_load_balance(self, enabled: bool, strategy: str = LB_ROUND_ROBIN) -> None:
+        """配置负载均衡
+        
+        Args:
+            enabled: 是否启用负载均衡
+            strategy: 负载均衡策略 (round_robin, random, least_latency)
+        """
+        self._lb_enabled = enabled
+        self._lb_strategy = strategy
+        logger.info(f"[ModelRouter] 负载均衡: {'启用' if enabled else '禁用'}, 策略: {strategy}")
+    
+    def set_provider_pool(self, capability: str, providers: list[ProviderPoolConfig]) -> None:
+        """为指定capability设置服务商池
+        
+        Args:
+            capability: 能力名称
+            providers: 服务商配置列表
+        """
+        if providers:
+            self._provider_pools[capability] = providers
+            self._lb_counters[capability] = 0
+            logger.info(f"[ModelRouter] 设置 {capability} 服务商池: {len(providers)} 个服务商")
+        elif capability in self._provider_pools:
+            del self._provider_pools[capability]
+            if capability in self._lb_counters:
+                del self._lb_counters[capability]
+    
+    def get_provider_pools_info(self) -> dict[str, list[str]]:
+        """获取所有capability的服务商池信息"""
+        return {
+            cap: [p.provider_id for p in pool] 
+            for cap, pool in self._provider_pools.items()
+        }
+    
+    def _select_provider_from_pool(self, capability: str) -> ProviderPoolConfig | None:
+        """从服务商池中选择一个服务商（根据负载均衡策略）
+        
+        Args:
+            capability: 能力名称
+            
+        Returns:
+            选中的服务商配置，如果没有配置池则返回None
+        """
+        pool = self._provider_pools.get(capability)
+        if not pool:
+            return None
+        
+        if len(pool) == 1:
+            return pool[0]
+        
+        if self._lb_strategy == LB_RANDOM:
+            return random.choice(pool)
+        
+        elif self._lb_strategy == LB_LEAST_LATENCY:
+            # 选择延迟最低的服务商
+            min_latency = float('inf')
+            best_provider = pool[0]
+            for p in pool:
+                latency = self._provider_latencies.get(p.provider_id, 0)
+                if latency < min_latency:
+                    min_latency = latency
+                    best_provider = p
+            return best_provider
+        
+        else:  # LB_ROUND_ROBIN (默认)
+            idx = self._lb_counters.get(capability, 0)
+            selected = pool[idx % len(pool)]
+            self._lb_counters[capability] = idx + 1
+            return selected
+    
+    def _record_provider_latency(self, provider_id: str, latency: float) -> None:
+        """记录服务商的响应延迟（用于最低延迟策略）
+        
+        使用指数移动平均来平滑延迟数据
+        """
+        alpha = 0.3  # 平滑系数
+        old_latency = self._provider_latencies.get(provider_id, latency)
+        self._provider_latencies[provider_id] = alpha * latency + (1 - alpha) * old_latency
     
     async def set_keepalive_mode(self, enabled: bool) -> None:
         """切换连接复用模式（需要重置客户端）
@@ -222,11 +335,26 @@ class ModelRouter:
         prompt_template = self.prompts.get(capability)
         override = self.overrides.get(capability, {})
         
-        # 优先使用 override 中的配置（来自 UI 设置的默认服务商）
-        base_url = (override.get("base_url") or self.api_base_url)
-        api_key = override.get("api_key") or self.api_key
+        # 【负载均衡】如果启用且有服务商池，从池中选择服务商
+        lb_provider: ProviderPoolConfig | None = None
+        if self._lb_enabled and capability in self._provider_pools:
+            lb_provider = self._select_provider_from_pool(capability)
+            if lb_provider:
+                logger.debug(f"[ModelRouter] 负载均衡: {capability} -> {lb_provider.provider_id}")
+        
+        # 优先级: 负载均衡选择 > override配置 > 全局配置
+        if lb_provider:
+            base_url = lb_provider.base_url
+            api_key = lb_provider.api_key
+            provider_type = lb_provider.provider_type
+            model_name = lb_provider.model or override.get("model") or config.model
+        else:
+            base_url = (override.get("base_url") or self.api_base_url)
+            api_key = override.get("api_key") or self.api_key
+            provider_type = override.get("provider_type") or getattr(config, "provider_type", PROVIDER_TYPE_OPENAI)
+            model_name = override.get("model") or config.model
+        
         timeout = override.get("timeout") or self.timeout
-        model_name = override.get("model") or config.model
         extra_body = override.get("extra_body") or config.extra_body
         
         # 判断是否有有效的 API 凭据（来自 override 或全局配置）
@@ -256,34 +384,79 @@ class ModelRouter:
                 }
             }
         
-        endpoint = config.endpoint or "/chat/completions"
-        # 【修复】智能处理 endpoint 路径
-        # 大多数本地 LLM 服务（LMStudio、Ollama 等）需要 /v1/chat/completions
-        # 而云端服务的 base_url 通常已经包含 /v1（如 https://api.deepseek.com/v1）
-        base_url_stripped = base_url.rstrip('/')
-        if not base_url_stripped.endswith('/v1') and endpoint == "/chat/completions":
-            # base_url 不以 /v1 结尾，自动添加 /v1 前缀
-            endpoint = "/v1/chat/completions"
-        url = f"{base_url_stripped}{endpoint}"
-        
         user_content = json.dumps(payload, ensure_ascii=False, indent=2)
-        body = {
-            "model": model_name,
-            "messages": [
-                {"role": "system", "content": formatted_prompt or "You are an AI assistant."},
-                {"role": "user", "content": user_content},
-            ],
-        }
+        base_url_stripped = base_url.rstrip('/')
         
-        if extra_body:
-            body.update(extra_body)
+        # 根据服务商类型构建请求
+        if provider_type == PROVIDER_TYPE_ANTHROPIC:
+            # Claude 原生 API
+            url = f"{base_url_stripped}/messages"
+            body = {
+                "model": model_name,
+                "max_tokens": extra_body.get("max_tokens", 4096) if extra_body else 4096,
+                "messages": [
+                    {"role": "user", "content": user_content},
+                ],
+            }
+            if formatted_prompt:
+                body["system"] = formatted_prompt
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            }
+        elif provider_type == PROVIDER_TYPE_GOOGLE:
+            # Gemini 原生 API
+            url = f"{base_url_stripped}/models/{model_name}:generateContent?key={api_key}"
+            contents = [{"role": "user", "parts": [{"text": user_content}]}]
+            body: dict[str, Any] = {"contents": contents}
+            
+            # 使用 systemInstruction 设置系统提示（Gemini 原生支持）
+            if formatted_prompt:
+                body["systemInstruction"] = {"parts": [{"text": formatted_prompt}]}
+            
+            # 处理 generationConfig
+            generation_config: dict[str, Any] = {}
+            if extra_body:
+                if "generationConfig" in extra_body:
+                    generation_config.update(extra_body["generationConfig"])
+                # 转换 OpenAI 的 response_format 为 Gemini 的 responseMimeType
+                if "response_format" in extra_body:
+                    response_format = extra_body["response_format"]
+                    if isinstance(response_format, dict) and response_format.get("type") == "json_object":
+                        generation_config["responseMimeType"] = "application/json"
+            
+            if generation_config:
+                body["generationConfig"] = generation_config
+            
+            headers = {"Content-Type": "application/json"}
+        else:
+            # OpenAI 兼容格式（默认）
+            endpoint = config.endpoint or "/chat/completions"
+            # 智能处理 endpoint 路径 - 检查是否已有 API 版本
+            if not self._has_api_version_suffix(base_url_stripped) and endpoint == "/chat/completions":
+                endpoint = "/v1/chat/completions"
+            url = f"{base_url_stripped}{endpoint}"
+            
+            body = {
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": formatted_prompt or "You are an AI assistant."},
+                    {"role": "user", "content": user_content},
+                ],
+            }
+            if extra_body:
+                body.update(extra_body)
+            headers = {"Authorization": f"Bearer {api_key}"}
             
         return {
             "is_local": False,
             "url": url,
             "body": body,
-            "headers": {"Authorization": f"Bearer {api_key}"},
+            "headers": headers,
             "timeout": timeout,
+            "provider_type": provider_type,
+            "lb_provider_id": lb_provider.provider_id if lb_provider else None,  # 负载均衡选中的服务商ID
             "meta": {
                 "provider": config.provider,
                 "model": model_name,
@@ -309,11 +482,7 @@ class ModelRouter:
             )
             response.raise_for_status()
             data = response.json()
-            content = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-            )
+            content = self._extract_content(data, req.get("provider_type", PROVIDER_TYPE_OPENAI))
             parsed_content = self._parse_content(content)
             
             return {
@@ -360,6 +529,11 @@ class ModelRouter:
                 try:
                     timeout = req.get("timeout") or self.timeout
                     headers = {**req["headers"], "Connection": "close"}
+                    provider_type = req.get("provider_type", PROVIDER_TYPE_OPENAI)
+                    
+                    # 【调试】打印请求 URL（隐藏 API key）
+                    debug_url = req["url"].split("?")[0] if "?" in req["url"] else req["url"]
+                    logger.debug(f"[ModelRouter] 请求: {debug_url} (type={provider_type})")
                     
                     # 【核心修复】每次请求使用独立的临时客户端
                     # 避免共享连接池导致的各种卡住问题
@@ -372,11 +546,11 @@ class ModelRouter:
                         response.raise_for_status()
                         data = response.json()
                     
-                    content = (
-                        data.get("choices", [{}])[0]
-                        .get("message", {})
-                        .get("content", "")
-                    )
+                    # 【调试】打印响应状态
+                    logger.debug(f"[ModelRouter] 响应状态: {response.status_code}, 数据keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                    
+                    # 根据服务商类型解析响应
+                    content = self._extract_content(data, provider_type)
                     parsed_content = self._parse_content(content)
                     
                     # 【诊断】请求成功
@@ -386,6 +560,11 @@ class ModelRouter:
                     # 更新平均时间
                     stats = self._request_stats[capability]
                     stats["avg_time"] = (stats["avg_time"] * (stats["success"] - 1) + process_time) / stats["success"]
+                    
+                    # 【负载均衡】记录服务商延迟
+                    lb_provider_id = req.get("lb_provider_id")
+                    if lb_provider_id:
+                        self._record_provider_latency(lb_provider_id, process_time)
                     
                     self._log_diagnostics("✅ 成功", capability, f"请求#{request_id} 处理耗时:{process_time:.2f}s")
                     
@@ -525,6 +704,20 @@ class ModelRouter:
                 logger.error(f"[ModelRouter] Async stream error {capability}: {e}")
                 yield self._stream_error_event(capability, str(e))
 
+    def _has_api_version_suffix(self, url: str) -> bool:
+        """检查 URL 是否已包含 API 版本路径（如 /v1, /v1beta, /v2, /api/v1 等）
+        
+        Args:
+            url: 已经 strip 掉尾部斜杠的 URL
+            
+        Returns:
+            True 如果 URL 已经包含版本路径
+        """
+        # 匹配常见的 API 版本路径模式
+        # 例如: /v1, /v1beta, /v2, /api/v1, /api/v3 等
+        version_pattern = r'/v\d+[a-z]*$|/api/v\d+[a-z]*$'
+        return bool(re.search(version_pattern, url))
+
     def call_capability(
         self,
         capability: str,
@@ -541,32 +734,96 @@ class ModelRouter:
         timeout = override.get("timeout") or self.timeout
         model_name = override.get("model") or config.model
         extra_body = override.get("extra_body") or config.extra_body
+        provider_type = override.get("provider_type") or getattr(config, "provider_type", PROVIDER_TYPE_OPENAI)
         
         if config.provider == "local" or not base_url or not api_key:
             raise RuntimeError(f"Cannot call AI for capability {capability}: missing configuration")
         
-        endpoint = config.endpoint or "/chat/completions"
-        # 【修复】智能处理 endpoint 路径
         base_url_stripped = base_url.rstrip('/')
-        if not base_url_stripped.endswith('/v1') and endpoint == "/chat/completions":
-            endpoint = "/v1/chat/completions"
-        url = f"{base_url_stripped}{endpoint}"
-        body: dict[str, Any] = {
-            "model": model_name,
-            "messages": messages,
-        }
-        if response_format:
-            body["response_format"] = response_format
-        if extra_body:
-            body.update(extra_body)
         
-        # 【修复】添加 Connection: close 头
-        headers = {"Authorization": f"Bearer {api_key}", "Connection": "close"}
+        # 根据 provider_type 处理不同的 API 格式
+        if provider_type == PROVIDER_TYPE_GOOGLE:
+            # Google Gemini 原生 API
+            url = f"{base_url_stripped}/models/{model_name}:generateContent?key={api_key}"
+            
+            # 分离 system 和 user 消息
+            system_parts = []
+            user_contents = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_parts.append({"text": msg["content"]})
+                else:
+                    role = "user" if msg["role"] == "user" else "model"
+                    user_contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+            
+            body: dict[str, Any] = {"contents": user_contents if user_contents else [{"role": "user", "parts": [{"text": ""}]}]}
+            
+            # 使用 systemInstruction 设置系统提示
+            if system_parts:
+                body["systemInstruction"] = {"parts": system_parts}
+            
+            # 处理 generationConfig
+            generation_config: dict[str, Any] = {}
+            if extra_body:
+                if "generationConfig" in extra_body:
+                    generation_config.update(extra_body["generationConfig"])
+                if "response_format" in extra_body:
+                    response_format = extra_body["response_format"]
+                    if isinstance(response_format, dict) and response_format.get("type") == "json_object":
+                        generation_config["responseMimeType"] = "application/json"
+            if response_format:
+                if isinstance(response_format, dict) and response_format.get("type") == "json_object":
+                    generation_config["responseMimeType"] = "application/json"
+            if generation_config:
+                body["generationConfig"] = generation_config
+            
+            headers = {"Content-Type": "application/json", "Connection": "close"}
+        elif provider_type == PROVIDER_TYPE_ANTHROPIC:
+            # Claude 原生 API
+            url = f"{base_url_stripped}/messages"
+            system_content = None
+            filtered_messages = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_content = msg["content"]
+                else:
+                    filtered_messages.append(msg)
+            body = {
+                "model": model_name,
+                "max_tokens": extra_body.get("max_tokens", 4096) if extra_body else 4096,
+                "messages": filtered_messages,
+            }
+            if system_content:
+                body["system"] = system_content
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+                "Connection": "close",
+            }
+        else:
+            # OpenAI 兼容格式（默认）
+            endpoint = config.endpoint or "/chat/completions"
+            # 【修复】智能处理 endpoint 路径 - 检查是否已有 API 版本
+            if not self._has_api_version_suffix(base_url_stripped) and endpoint == "/chat/completions":
+                endpoint = "/v1/chat/completions"
+            url = f"{base_url_stripped}{endpoint}"
+            body = {
+                "model": model_name,
+                "messages": messages,
+            }
+            if response_format:
+                body["response_format"] = response_format
+            if extra_body:
+                body.update(extra_body)
+            headers = {"Authorization": f"Bearer {api_key}", "Connection": "close"}
         
         response = httpx.post(url, json=body, headers=headers, timeout=timeout)
         response.raise_for_status()
         data = response.json()
-        return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        
+        # 根据 provider_type 解析响应
+        return self._extract_content(data, provider_type)
 
     async def acall_capability(
         self,
@@ -582,47 +839,122 @@ class ModelRouter:
         timeout_value = override.get("timeout") or self.timeout or 60  # 确保有默认值
         model_name = override.get("model") or config.model
         extra_body = override.get("extra_body") or config.extra_body
+        provider_type = override.get("provider_type") or getattr(config, "provider_type", PROVIDER_TYPE_OPENAI)
         
         if config.provider == "local" or not base_url or not api_key:
             raise RuntimeError(f"Cannot call AI for capability {capability}: missing configuration")
         
-        endpoint = config.endpoint or "/chat/completions"
-        # 【修复】智能处理 endpoint 路径
         base_url_stripped = base_url.rstrip('/')
-        if not base_url_stripped.endswith('/v1') and endpoint == "/chat/completions":
-            endpoint = "/v1/chat/completions"
-        url = f"{base_url_stripped}{endpoint}"
-        body: dict[str, Any] = {
-            "model": model_name,
-            "messages": messages,
-        }
-        if response_format:
-            body["response_format"] = response_format
-        if extra_body:
-            body.update(extra_body)
-            
-        # 安全模式下添加 Connection: close 头
-        headers = {"Authorization": f"Bearer {api_key}"}
-        if not self.use_keepalive:
-            headers["Connection"] = "close"
         
-        logger.debug(f"[acall_capability] {capability} -> {url} (timeout={timeout_value}s)")
+        # 根据 provider_type 处理不同的 API 格式
+        if provider_type == PROVIDER_TYPE_GOOGLE:
+            # Google Gemini 原生 API
+            url = f"{base_url_stripped}/models/{model_name}:generateContent?key={api_key}"
+            
+            # 分离 system 和 user 消息
+            system_parts = []
+            user_contents = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_parts.append({"text": msg["content"]})
+                else:
+                    role = "user" if msg["role"] == "user" else "model"
+                    user_contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+            
+            body: dict[str, Any] = {"contents": user_contents if user_contents else [{"role": "user", "parts": [{"text": ""}]}]}
+            
+            # 使用 systemInstruction 设置系统提示
+            if system_parts:
+                body["systemInstruction"] = {"parts": system_parts}
+            
+            # 处理 generationConfig
+            generation_config: dict[str, Any] = {}
+            if extra_body:
+                if "generationConfig" in extra_body:
+                    generation_config.update(extra_body["generationConfig"])
+                if "response_format" in extra_body:
+                    rf = extra_body["response_format"]
+                    if isinstance(rf, dict) and rf.get("type") == "json_object":
+                        generation_config["responseMimeType"] = "application/json"
+            if response_format:
+                if isinstance(response_format, dict) and response_format.get("type") == "json_object":
+                    generation_config["responseMimeType"] = "application/json"
+            if generation_config:
+                body["generationConfig"] = generation_config
+            
+            headers = {"Content-Type": "application/json", "Connection": "close"}
+        elif provider_type == PROVIDER_TYPE_ANTHROPIC:
+            # Claude 原生 API
+            url = f"{base_url_stripped}/messages"
+            system_content = None
+            filtered_messages = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_content = msg["content"]
+                else:
+                    filtered_messages.append(msg)
+            body = {
+                "model": model_name,
+                "max_tokens": extra_body.get("max_tokens", 4096) if extra_body else 4096,
+                "messages": filtered_messages,
+            }
+            if system_content:
+                body["system"] = system_content
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+                "Connection": "close",
+            }
+        else:
+            # OpenAI 兼容格式（默认）
+            endpoint = config.endpoint or "/chat/completions"
+            # 【修复】智能处理 endpoint 路径 - 检查是否已有 API 版本
+            if not self._has_api_version_suffix(base_url_stripped) and endpoint == "/chat/completions":
+                endpoint = "/v1/chat/completions"
+            url = f"{base_url_stripped}{endpoint}"
+            body = {
+                "model": model_name,
+                "messages": messages,
+            }
+            if response_format:
+                body["response_format"] = response_format
+            if extra_body:
+                body.update(extra_body)
+            headers = {"Authorization": f"Bearer {api_key}", "Connection": "close"}
+        
+        # 隐藏 API key 的调试 URL
+        debug_url = url.split("?")[0] if "?" in url else url
+        logger.info(f"[acall_capability] {capability} -> {debug_url} (type={provider_type}, timeout={timeout_value}s)")
         
         async with self._semaphore:
-            # 【核心修复】每次请求使用独立的临时客户端
-            headers["Connection"] = "close"
             try:
                 async with httpx.AsyncClient(timeout=timeout_value, http2=False) as client:
                     response = await client.post(url, json=body, headers=headers)
                     response.raise_for_status()
                     data = response.json()
+                    
+                    # 调试日志：打印响应结构
+                    logger.debug(f"[acall_capability] {capability} 响应 keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                    
             except httpx.TimeoutException:
-                logger.error(f"[acall_capability] {capability} timeout after {timeout_value}s")
+                logger.error(f"[acall_capability] {capability} 超时 ({timeout_value}s)")
                 raise RuntimeError(
                     f"Async capability {capability} timed out after {timeout_value}s"
                 ) from None
+            except httpx.HTTPStatusError as e:
+                logger.error(f"[acall_capability] {capability} HTTP错误: {e.response.status_code} - {e.response.text[:500]}")
+                raise RuntimeError(
+                    f"Async capability {capability} HTTP error: {e.response.status_code}"
+                ) from None
+            except Exception as e:
+                logger.error(f"[acall_capability] {capability} 异常: {type(e).__name__}: {e}")
+                raise
             
-            return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            content = self._extract_content(data, provider_type)
+            if not content:
+                logger.warning(f"[acall_capability] {capability} 返回内容为空，原始数据: {str(data)[:300]}")
+            return content
 
     async def chat(
         self,
@@ -654,6 +986,7 @@ class ModelRouter:
         timeout_value = override.get("timeout") or self.timeout or 60
         model_name = override.get("model") or config.model
         extra_body = override.get("extra_body") or config.extra_body
+        provider_type = override.get("provider_type") or getattr(config, "provider_type", PROVIDER_TYPE_OPENAI)
         
         # 检查是否为本地模式（无 API 配置）
         if config.provider == "local" or not base_url or not api_key:
@@ -666,23 +999,68 @@ class ModelRouter:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
         
-        # 构建请求
-        endpoint = config.endpoint or "/chat/completions"
         base_url_stripped = base_url.rstrip('/')
-        if not base_url_stripped.endswith('/v1') and endpoint == "/chat/completions":
-            endpoint = "/v1/chat/completions"
-        url = f"{base_url_stripped}{endpoint}"
         
-        body: dict[str, Any] = {
-            "model": model_name,
-            "messages": messages,
-        }
-        if max_tokens:
-            body["max_tokens"] = max_tokens
-        if extra_body:
-            body.update(extra_body)
-        
-        headers = {"Authorization": f"Bearer {api_key}", "Connection": "close"}
+        # 根据 provider_type 处理不同的 API 格式
+        if provider_type == PROVIDER_TYPE_GOOGLE:
+            # Google Gemini 原生 API
+            url = f"{base_url_stripped}/models/{model_name}:generateContent?key={api_key}"
+            contents = [{"role": "user", "parts": [{"text": prompt}]}]
+            body: dict[str, Any] = {"contents": contents}
+            
+            # 使用 systemInstruction 设置系统提示
+            if system_prompt:
+                body["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+            
+            # 处理 generationConfig
+            generation_config: dict[str, Any] = {}
+            if max_tokens:
+                generation_config["maxOutputTokens"] = max_tokens
+            if extra_body:
+                if "generationConfig" in extra_body:
+                    generation_config.update(extra_body["generationConfig"])
+                if "response_format" in extra_body:
+                    rf = extra_body["response_format"]
+                    if isinstance(rf, dict) and rf.get("type") == "json_object":
+                        generation_config["responseMimeType"] = "application/json"
+            if generation_config:
+                body["generationConfig"] = generation_config
+            
+            headers = {"Content-Type": "application/json", "Connection": "close"}
+        elif provider_type == PROVIDER_TYPE_ANTHROPIC:
+            # Claude 原生 API
+            url = f"{base_url_stripped}/messages"
+            system_content = system_prompt
+            filtered_messages = [{"role": "user", "content": prompt}]
+            body = {
+                "model": model_name,
+                "max_tokens": max_tokens or (extra_body.get("max_tokens", 4096) if extra_body else 4096),
+                "messages": filtered_messages,
+            }
+            if system_content:
+                body["system"] = system_content
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+                "Connection": "close",
+            }
+        else:
+            # OpenAI 兼容格式（默认）
+            endpoint = config.endpoint or "/chat/completions"
+            if not self._has_api_version_suffix(base_url_stripped) and endpoint == "/chat/completions":
+                endpoint = "/v1/chat/completions"
+            url = f"{base_url_stripped}{endpoint}"
+            
+            body = {
+                "model": model_name,
+                "messages": messages,
+            }
+            if max_tokens:
+                body["max_tokens"] = max_tokens
+            if extra_body:
+                body.update(extra_body)
+            headers = {"Authorization": f"Bearer {api_key}", "Connection": "close"}
         
         logger.debug(f"[chat] {capability} -> {url} (timeout={timeout_value}s)")
         
@@ -699,8 +1077,7 @@ class ModelRouter:
                 logger.error(f"[chat] {capability} HTTP error: {e}")
                 raise RuntimeError(f"Chat request failed: {e}") from None
             
-            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            return content
+            return self._extract_content(data, provider_type)
 
     async def astream_capability(
         self,
@@ -716,18 +1093,202 @@ class ModelRouter:
         timeout = override.get("timeout") or self.timeout
         model_name = override.get("model") or config.model
         extra_body = override.get("extra_body") or config.extra_body
+        provider_type = override.get("provider_type") or getattr(config, "provider_type", PROVIDER_TYPE_OPENAI)
         
         if config.provider == "local" or not base_url or not api_key:
             yield self._stream_error_event(capability, "Missing configuration for streaming")
             return
         
-        endpoint = config.endpoint or "/chat/completions"
-        # 【修复】智能处理 endpoint 路径
         base_url_stripped = base_url.rstrip('/')
-        if not base_url_stripped.endswith('/v1') and endpoint == "/chat/completions":
+        
+        # Google 和 Anthropic 的流式 API 需要特殊处理
+        if provider_type == PROVIDER_TYPE_GOOGLE:
+            # Gemini 流式 API - 使用 streamGenerateContent
+            url = f"{base_url_stripped}/models/{model_name}:streamGenerateContent?key={api_key}"
+            
+            # 分离 system 和 user 消息
+            system_parts = []
+            user_contents = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_parts.append({"text": msg["content"]})
+                else:
+                    role = "user" if msg["role"] == "user" else "model"
+                    user_contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+            
+            body: dict[str, Any] = {"contents": user_contents if user_contents else [{"role": "user", "parts": [{"text": ""}]}]}
+            
+            # 使用 systemInstruction 设置系统提示
+            if system_parts:
+                body["systemInstruction"] = {"parts": system_parts}
+            
+            # 处理 generationConfig
+            generation_config: dict[str, Any] = {}
+            if extra_body:
+                if "generationConfig" in extra_body:
+                    generation_config.update(extra_body["generationConfig"])
+                if "response_format" in extra_body:
+                    rf = extra_body["response_format"]
+                    if isinstance(rf, dict) and rf.get("type") == "json_object":
+                        generation_config["responseMimeType"] = "application/json"
+            # 处理函数参数中的 response_format
+            if response_format:
+                if isinstance(response_format, dict) and response_format.get("type") == "json_object":
+                    generation_config["responseMimeType"] = "application/json"
+            if generation_config:
+                body["generationConfig"] = generation_config
+            
+            headers = {"Content-Type": "application/json", "Connection": "close"}
+            
+            # 调试日志
+            debug_url = url.split("?")[0]
+            logger.info(f"[astream_capability] Gemini 流式请求: {debug_url} (type={provider_type})")
+            
+            async with self._semaphore:
+                try:
+                    async with httpx.AsyncClient(timeout=timeout + 30, http2=False) as client:
+                        async with client.stream("POST", url, json=body, headers=headers) as response:
+                            response.raise_for_status()
+                            yield self._stream_status_event(capability, "connected")
+                            first_chunk = True
+                            text_chunk_count = 0
+                            total_text_len = 0
+                            
+                            # Gemini 流式响应是格式化的 JSON 数组，需要收集完整内容后解析
+                            # 使用 aiter_bytes 收集所有内容
+                            full_content = b""
+                            async for chunk in response.aiter_bytes():
+                                full_content += chunk
+                            
+                            # 解析完整的 JSON 数组
+                            try:
+                                response_text = full_content.decode('utf-8')
+                                data = json.loads(response_text)
+                                
+                                # Gemini 返回的是一个数组，每个元素包含 candidates
+                                if isinstance(data, list):
+                                    for item in data:
+                                        if "candidates" in item:
+                                            candidates = item["candidates"]
+                                            if candidates:
+                                                content = candidates[0].get("content", {})
+                                                parts = content.get("parts", [])
+                                                for part in parts:
+                                                    text = part.get("text", "")
+                                                    if text:
+                                                        text_chunk_count += 1
+                                                        total_text_len += len(text)
+                                                        if first_chunk:
+                                                            yield self._stream_status_event(capability, "receiving")
+                                                            first_chunk = False
+                                                        yield text
+                                        elif "error" in item:
+                                            logger.error(f"[astream_capability] Gemini 错误: {item['error']}")
+                                            yield self._stream_error_event(capability, str(item["error"]))
+                                elif isinstance(data, dict):
+                                    # 单个响应对象
+                                    if "candidates" in data:
+                                        candidates = data["candidates"]
+                                        if candidates:
+                                            content = candidates[0].get("content", {})
+                                            parts = content.get("parts", [])
+                                            for part in parts:
+                                                text = part.get("text", "")
+                                                if text:
+                                                    text_chunk_count += 1
+                                                    total_text_len += len(text)
+                                                    if first_chunk:
+                                                        yield self._stream_status_event(capability, "receiving")
+                                                        first_chunk = False
+                                                    yield text
+                                    elif "error" in data:
+                                        logger.error(f"[astream_capability] Gemini 错误: {data['error']}")
+                                        yield self._stream_error_event(capability, str(data["error"]))
+                                
+                            except json.JSONDecodeError as e:
+                                logger.error(f"[astream_capability] Gemini JSON解析失败: {e}")
+                                logger.error(f"[astream_capability] 原始响应前500字符: {response_text[:500]}")
+                                yield self._stream_error_event(capability, f"JSON解析失败: {e}")
+                            
+                            # 完成日志
+                            logger.info(f"[astream_capability] Gemini 完成: {text_chunk_count} 文本chunks, {total_text_len} 字符")
+                            
+                            if text_chunk_count == 0:
+                                logger.warning(f"[astream_capability] ⚠️ 未提取到任何文本！响应长度: {len(full_content)} 字节")
+                            
+                            yield self._stream_status_event(capability, "completed")
+                except httpx.HTTPStatusError as e:
+                    logger.error(f"[astream_capability] Gemini HTTP错误: {e.response.status_code} - {e.response.text[:500]}")
+                    yield self._stream_error_event(capability, f"HTTP {e.response.status_code}")
+                except Exception as e:
+                    logger.error(f"[astream_capability] Gemini 异常: {type(e).__name__}: {e}")
+                    yield self._stream_error_event(capability, str(e))
+            return
+        
+        elif provider_type == PROVIDER_TYPE_ANTHROPIC:
+            # Anthropic 流式 API
+            url = f"{base_url_stripped}/messages"
+            system_content = None
+            filtered_messages = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_content = msg["content"]
+                else:
+                    filtered_messages.append(msg)
+            body = {
+                "model": model_name,
+                "max_tokens": extra_body.get("max_tokens", 4096) if extra_body else 4096,
+                "messages": filtered_messages,
+                "stream": True,
+            }
+            if system_content:
+                body["system"] = system_content
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+                "Connection": "close",
+            }
+            
+            async with self._semaphore:
+                try:
+                    async with httpx.AsyncClient(timeout=timeout + 30, http2=False) as client:
+                        async with client.stream("POST", url, json=body, headers=headers) as response:
+                            response.raise_for_status()
+                            yield self._stream_status_event(capability, "connected")
+                            first_chunk = True
+                            
+                            async for line in response.aiter_lines():
+                                if not line.startswith("data: "):
+                                    continue
+                                data = line[6:]
+                                if data.strip() == "[DONE]":
+                                    break
+                                try:
+                                    event = json.loads(data)
+                                    if event.get("type") == "content_block_delta":
+                                        delta = event.get("delta", {})
+                                        text = delta.get("text", "")
+                                        if text:
+                                            if first_chunk:
+                                                yield self._stream_status_event(capability, "receiving")
+                                                first_chunk = False
+                                            yield text
+                                except json.JSONDecodeError:
+                                    continue
+                            yield self._stream_status_event(capability, "completed")
+                except Exception as e:
+                    logger.error(f"[ModelRouter] Anthropic stream error {capability}: {e}")
+                    yield self._stream_error_event(capability, str(e))
+            return
+        
+        # OpenAI 兼容格式（默认）
+        endpoint = config.endpoint or "/chat/completions"
+        # 【修复】智能处理 endpoint 路径 - 检查是否已有 API 版本
+        if not self._has_api_version_suffix(base_url_stripped) and endpoint == "/chat/completions":
             endpoint = "/v1/chat/completions"
         url = f"{base_url_stripped}{endpoint}"
-        body: dict[str, Any] = {
+        body = {
             "model": model_name,
             "messages": messages,
             "stream": True
@@ -784,8 +1345,56 @@ class ModelRouter:
                 logger.error(f"[ModelRouter] Async capability stream error {capability}: {e}")
                 yield self._stream_error_event(capability, str(e))
 
+    def _extract_content(self, data: dict, provider_type: str) -> str:
+        """从不同API类型的响应中提取内容"""
+        try:
+            if provider_type == PROVIDER_TYPE_ANTHROPIC:
+                # Claude API 响应格式
+                content_blocks = data.get("content", [])
+                if content_blocks:
+                    texts = []
+                    for block in content_blocks:
+                        if block.get("type") == "text":
+                            texts.append(block.get("text", ""))
+                    return "\n".join(texts)
+                logger.warning(f"[ModelRouter] Anthropic 响应无内容: {str(data)[:500]}")
+                return ""
+            elif provider_type == PROVIDER_TYPE_GOOGLE:
+                # Gemini API 响应格式
+                candidates = data.get("candidates", [])
+                if candidates:
+                    content = candidates[0].get("content", {})
+                    parts = content.get("parts", [])
+                    if parts:
+                        # 合并所有 parts 的文本
+                        texts = [p.get("text", "") for p in parts if p.get("text")]
+                        if texts:
+                            return "\n".join(texts)
+                # 如果没有 candidates，检查是否有错误
+                error = data.get("error", {})
+                if error:
+                    logger.error(f"[ModelRouter] Gemini API 错误: {error}")
+                else:
+                    logger.warning(f"[ModelRouter] Gemini 响应无内容: {str(data)[:500]}")
+                return ""
+            else:
+                # OpenAI 兼容格式（默认）
+                return (
+                    data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
+        except Exception as e:
+            logger.warning(f"[ModelRouter] 响应解析失败 ({provider_type}): {e}, 原始数据: {str(data)[:300]}")
+            return str(data)
+
     def _parse_content(self, content: str) -> Any:
         """解析AI返回的内容，尝试提取JSON或返回原始文本"""
+        # 如果内容为空，直接返回空字符串
+        if not content or not content.strip():
+            logger.debug("[ModelRouter] AI返回内容为空")
+            return ""
+            
         try:
             # 尝试清理常见的JSON格式问题
             cleaned = content.strip()
@@ -799,10 +1408,13 @@ class ModelRouter:
                 cleaned = cleaned[:-3]
             cleaned = cleaned.strip()
             
+            # 如果清理后为空，返回原始内容
+            if not cleaned:
+                return content
+            
             # 如果是markdown格式的文本（以#或##开头），这可能是纯文本响应
             if cleaned.startswith("#"):
                 # 查找JSON代码块
-                import re
                 json_match = re.search(r'```json\s*(\{.*?\})\s*```', content, re.DOTALL)
                 if json_match:
                     cleaned = json_match.group(1)

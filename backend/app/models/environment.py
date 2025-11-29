@@ -56,6 +56,12 @@ class MapTile(SQLModel, table=True):
     relative_elevation: float = Field(default=0.0)  # 新增：相对海平面高度
     crust_thickness: float = Field(default=30.0)  # 新增：地壳厚度(km)
     
+    # 板块构造扩展字段
+    volcanic_potential: float = Field(default=0.0)  # 火山活动潜力（0-1）
+    earthquake_risk: float = Field(default=0.0)  # 地震风险（0-1）
+    boundary_type: str = Field(default="internal")  # 边界类型
+    distance_to_boundary: int = Field(default=99)  # 到边界距离
+    
     pressures: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
 
 

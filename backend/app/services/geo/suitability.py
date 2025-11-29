@@ -8,6 +8,12 @@
 - HabitatManager 地块筛选
 - ReproductionService 承载力计算
 - SpeciationService 栖息地初始化
+- TileBasedMortalityEngine 死亡率计算
+
+【优化v2】
+- 统一所有模块的适宜度计算逻辑
+- 新增栖息地类型筛选器
+- 新增猎物追踪集成
 """
 from __future__ import annotations
 
@@ -19,6 +25,81 @@ import numpy as np
 if TYPE_CHECKING:
     from ...models.species import Species
     from ...models.environment import MapTile
+
+
+# ============ 栖息地类型筛选器 (统一版本) ============
+
+def get_habitat_type_mask(
+    tiles: Sequence['MapTile'],
+    habitat_type: str
+) -> np.ndarray:
+    """获取适合某种栖息地类型的地块掩码（向量化）
+    
+    统一各模块的栖息地类型筛选逻辑，避免重复代码。
+    
+    Args:
+        tiles: 地块列表
+        habitat_type: 栖息地类型 (marine, deep_sea, terrestrial, coastal, freshwater, aerial, amphibious)
+        
+    Returns:
+        np.ndarray: bool数组，True表示地块适合该栖息地类型
+    """
+    n_tiles = len(tiles)
+    mask = np.zeros(n_tiles, dtype=bool)
+    
+    habitat_type = habitat_type.lower() if habitat_type else 'terrestrial'
+    
+    for idx, tile in enumerate(tiles):
+        biome = tile.biome.lower() if tile.biome else ""
+        is_lake = getattr(tile, 'is_lake', False)
+        
+        if habitat_type == "marine":
+            if "浅海" in biome or "中层" in biome or ("海" in biome and "深海" not in biome):
+                mask[idx] = True
+        elif habitat_type == "deep_sea":
+            if "深海" in biome:
+                mask[idx] = True
+        elif habitat_type == "coastal":
+            if "海岸" in biome or "浅海" in biome:
+                mask[idx] = True
+        elif habitat_type == "freshwater":
+            if is_lake:
+                mask[idx] = True
+        elif habitat_type == "amphibious":
+            if "海岸" in biome or "浅海" in biome or ("平原" in biome and tile.humidity > 0.4):
+                mask[idx] = True
+        elif habitat_type == "aerial":
+            # 空中物种可以在任何非海洋、非高山地块活动
+            if "海" not in biome and "高山" not in biome:
+                mask[idx] = True
+        elif habitat_type in ("terrestrial", ""):
+            # 陆生物种：非海洋地块
+            if "海" not in biome:
+                mask[idx] = True
+        else:
+            # 未知类型：默认陆地
+            if "海" not in biome:
+                mask[idx] = True
+    
+    return mask
+
+
+def filter_tiles_by_habitat_type(
+    tiles: Sequence['MapTile'],
+    habitat_type: str
+) -> list['MapTile']:
+    """根据栖息地类型筛选地块（列表版本）
+    
+    Args:
+        tiles: 候选地块列表
+        habitat_type: 栖息地类型
+        
+    Returns:
+        适合该栖息地类型的地块列表
+    """
+    tiles = list(tiles)
+    mask = get_habitat_type_mask(tiles, habitat_type)
+    return [t for i, t in enumerate(tiles) if mask[i]]
 
 
 def compute_suitability_matrix(
@@ -229,4 +310,140 @@ def compute_batch_suitability_dict(
             result[(sp.id, tile.id)] = float(matrix[i, j])
     
     return result
+
+
+# ============ 消费者感知的适宜度计算 ============
+
+def compute_consumer_aware_suitability(
+    species: 'Species',
+    tiles: Sequence['MapTile'],
+    prey_tile_ids: set[int] | None = None,
+    weights: dict[str, float] | None = None
+) -> np.ndarray:
+    """计算消费者的适宜度（考虑猎物分布）
+    
+    对于消费者（T≥2），在有猎物的地块适宜度更高。
+    统一了 map_manager._suitability_score 的逻辑。
+    
+    Args:
+        species: 目标物种
+        tiles: 地块列表
+        prey_tile_ids: 猎物所在的地块ID集合（仅对消费者有效）
+        weights: 权重配置，默认 {"temp": 0.20, "humidity": 0.15, "food": 0.30, "biome": 0.25, "special": 0.10}
+        
+    Returns:
+        np.ndarray: shape (M,) 的适宜度数组
+    """
+    if not tiles:
+        return np.array([])
+    
+    tiles = list(tiles)
+    n_tiles = len(tiles)
+    
+    if weights is None:
+        weights = {"temp": 0.20, "humidity": 0.15, "food": 0.30, "biome": 0.25, "special": 0.10}
+    
+    # 物种属性
+    traits = getattr(species, 'abstract_traits', {}) or {}
+    trophic_level = getattr(species, 'trophic_level', 1.0) or 1.0
+    habitat_type = (getattr(species, 'habitat_type', 'terrestrial') or 'terrestrial').lower()
+    is_consumer = trophic_level >= 2.0
+    
+    heat_tolerance = traits.get("耐热性", 5)
+    cold_tolerance = traits.get("耐寒性", 5)
+    drought_tolerance = traits.get("耐旱性", 5)
+    
+    # 提取地块属性
+    temperatures = np.array([t.temperature for t in tiles])
+    humidities = np.array([t.humidity for t in tiles])
+    resources = np.array([t.resources for t in tiles])
+    tile_ids = [t.id for t in tiles]
+    
+    # ===== 温度适应性 =====
+    ideal_temp_min = -10 + (15 - cold_tolerance) * 2
+    ideal_temp_max = 10 + heat_tolerance * 2
+    
+    temp_score = np.ones(n_tiles)
+    too_cold = temperatures < ideal_temp_min
+    too_hot = temperatures > ideal_temp_max
+    
+    temp_score[too_cold] = np.maximum(0.2, 1.0 - (ideal_temp_min - temperatures[too_cold]) / 30)
+    temp_score[too_hot] = np.maximum(0.2, 1.0 - (temperatures[too_hot] - ideal_temp_max) / 30)
+    
+    # ===== 湿度适应性 =====
+    ideal_humidity = 0.7 - drought_tolerance * 0.04
+    humidity_diff = np.abs(humidities - ideal_humidity)
+    humidity_score = np.maximum(0.3, 1.0 - humidity_diff * 1.5)
+    
+    # ===== 食物/资源适应性 =====
+    if is_consumer and prey_tile_ids is not None:
+        # 消费者：检查是否有猎物
+        food_score = np.full(n_tiles, 0.2)  # 默认无猎物
+        for i, tid in enumerate(tile_ids):
+            if tid in prey_tile_ids:
+                food_score[i] = 1.0  # 有猎物
+    else:
+        # 生产者：使用地块资源
+        food_score = np.where(
+            resources > 0,
+            np.minimum(1.0, 0.3 + 0.7 * np.log(resources + 1) / np.log(1001)),
+            0.3
+        )
+    
+    # ===== 生物群系匹配 =====
+    biome_score = np.full(n_tiles, 0.6)  # 基础分
+    habitat_mask = get_habitat_type_mask(tiles, habitat_type)
+    biome_score[habitat_mask] = 1.0
+    
+    # ===== 特殊栖息地加成 =====
+    special_bonus = np.zeros(n_tiles)
+    if habitat_type == "hydrothermal":
+        for i, tile in enumerate(tiles):
+            volcanic = getattr(tile, 'volcanic_potential', 0.0)
+            if volcanic > 0.3:
+                special_bonus[i] = 0.3
+    elif habitat_type == "deep_sea":
+        for i, tile in enumerate(tiles):
+            if tile.elevation < -2000:
+                special_bonus[i] = 0.2
+    
+    # ===== 综合评分 =====
+    suitability = (
+        temp_score * weights["temp"] +
+        humidity_score * weights["humidity"] +
+        food_score * weights["food"] +
+        biome_score * weights["biome"] +
+        special_bonus * weights["special"]
+    )
+    
+    # 保证最低适宜度
+    return np.maximum(0.15, np.minimum(1.0, suitability))
+
+
+def separate_producers_consumers(
+    species_list: Sequence['Species']
+) -> tuple[list['Species'], list['Species']]:
+    """将物种列表分为生产者和消费者
+    
+    用于分两阶段处理栖息地分布：先生产者，再消费者。
+    
+    Args:
+        species_list: 物种列表
+        
+    Returns:
+        (producers, consumers) 两个列表
+    """
+    producers = []
+    consumers = []
+    
+    for sp in species_list:
+        if getattr(sp, 'status', 'alive') != 'alive':
+            continue
+        trophic = getattr(sp, 'trophic_level', 1.0) or 1.0
+        if trophic < 2.0:
+            producers.append(sp)
+        else:
+            consumers.append(sp)
+    
+    return producers, consumers
 

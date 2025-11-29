@@ -21,6 +21,7 @@ from ...repositories.genus_repository import genus_repository
 if TYPE_CHECKING:
     from .embedding import EmbeddingService
     from .divine_energy import DivineEnergyService
+    from .divine_progression import DivineProgressionService
 
 
 class SaveManager:
@@ -36,12 +37,14 @@ class SaveManager:
         self, 
         saves_dir: str | Path,
         embedding_service: 'EmbeddingService | None' = None,
-        energy_service: 'DivineEnergyService | None' = None
+        energy_service: 'DivineEnergyService | None' = None,
+        progression_service: 'DivineProgressionService | None' = None
     ) -> None:
         self.saves_dir = Path(saves_dir)
         self.saves_dir.mkdir(parents=True, exist_ok=True)
         self._embedding_service = embedding_service
         self._energy_service = energy_service
+        self._progression_service = progression_service
 
     def set_embedding_service(self, service: 'EmbeddingService') -> None:
         """设置 embedding 服务（延迟注入）"""
@@ -50,6 +53,10 @@ class SaveManager:
     def set_energy_service(self, service: 'DivineEnergyService') -> None:
         """设置能量服务（延迟注入）"""
         self._energy_service = service
+
+    def set_progression_service(self, service: 'DivineProgressionService') -> None:
+        """设置神力进阶服务（延迟注入）"""
+        self._progression_service = service
 
     def list_saves(self) -> list[dict[str, Any]]:
         """列出所有存档"""
@@ -242,6 +249,20 @@ class SaveManager:
             except Exception as e:
                 logger.info(f"[存档管理器] 保存能量状态失败: {e}")
         
+        # ========== 保存神力进阶状态 ==========
+        if self._progression_service:
+            try:
+                progression_data = self._progression_service.export_state()
+                (save_dir / "divine_progression.json").write_text(
+                    json.dumps(progression_data, ensure_ascii=False, indent=2),
+                    encoding="utf-8"
+                )
+                path_info = self._progression_service.get_path_info()
+                path_name = path_info["name"] if path_info else "未选择"
+                logger.info(f"[存档管理器] 已保存神力进阶状态: 神格={path_name}")
+            except Exception as e:
+                logger.info(f"[存档管理器] 保存神力进阶状态失败: {e}")
+        
         # 更新元数据
         metadata = json.loads((save_dir / "metadata.json").read_text(encoding="utf-8"))
         metadata["last_saved"] = datetime.now().isoformat()
@@ -423,6 +444,26 @@ class SaveManager:
             logger.info(f"[存档管理器] 存档中无能量数据，已重置为默认状态")
         
         save_data["energy_loaded"] = energy_loaded
+        
+        # ========== 恢复神力进阶状态 ==========
+        progression_loaded = False
+        progression_path = save_dir / "divine_progression.json"
+        if progression_path.exists() and self._progression_service:
+            try:
+                progression_data = json.loads(progression_path.read_text(encoding="utf-8"))
+                self._progression_service.load_state(progression_data)
+                progression_loaded = True
+                path_info = self._progression_service.get_path_info()
+                path_name = path_info["name"] if path_info else "未选择"
+                logger.info(f"[存档管理器] 已恢复神力进阶状态: 神格={path_name}")
+            except Exception as e:
+                logger.info(f"[存档管理器] 恢复神力进阶状态失败: {e}")
+        elif self._progression_service:
+            # 存档中没有神力进阶数据，重置为默认状态
+            self._progression_service.reset()
+            logger.info(f"[存档管理器] 存档中无神力进阶数据，已重置为默认状态")
+        
+        save_data["progression_loaded"] = progression_loaded
         
         logger.info(f"[存档管理器] 游戏加载成功: {save_name}")
         return save_data

@@ -153,7 +153,7 @@ A_SCENARIO = [
         "latin_name": "Thiobacter obstinata",
         "common_name": "硫细菌",
         "genus_code": "C",
-        "habitat_type": "deep_sea",  # 深海生物
+        "habitat_type": "hydrothermal",  # 热泉生物（深海火山/热液喷口）
         "trophic_level": 1.0,  # T1: 生产者（化能自养，深海食物链基础）
         "diet_type": "autotroph",  # 自养
         # 【新增】植物演化系统字段（原核生物，尚未真核化）

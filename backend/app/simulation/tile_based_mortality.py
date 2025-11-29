@@ -28,6 +28,7 @@ from ..models.environment import HabitatPopulation, MapTile
 from ..models.species import Species
 from ..services.species.niche import NicheMetrics
 from ..services.species.predation import PredationService
+from ..services.geo.suitability import get_habitat_type_mask as unified_habitat_mask
 from ..core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,34 @@ class AggregatedMortalityResult:
     light_competition: float = 0.0           # 光照竞争程度
     nutrient_competition: float = 0.0        # 养分竞争程度
     herbivory_pressure: float = 0.0          # 食草压力
+    
+    # 【新增v2】地块分布统计
+    total_tiles: int = 0              # 分布的总地块数
+    healthy_tiles: int = 0            # 健康地块数（死亡率<25%）
+    warning_tiles: int = 0            # 警告地块数（死亡率25%-50%）
+    critical_tiles: int = 0           # 危机地块数（死亡率>50%）
+    best_tile_rate: float = 0.0       # 最低死亡率（最佳地块）
+    worst_tile_rate: float = 1.0      # 最高死亡率（最差地块）
+    has_refuge: bool = True           # 是否有避难所（至少1个地块死亡率<20%）
+    
+    def get_distribution_status(self) -> str:
+        """返回分布状态描述"""
+        if self.total_tiles == 0:
+            return "无分布"
+        if self.critical_tiles == self.total_tiles:
+            return "全域危机"
+        elif self.critical_tiles > self.total_tiles * 0.5:
+            return "部分危机"
+        elif self.healthy_tiles >= self.total_tiles * 0.5:
+            return "稳定"
+        else:
+            return "警告"
+    
+    def get_distribution_summary(self) -> str:
+        """返回分布摘要字符串"""
+        if self.total_tiles == 0:
+            return "无分布数据"
+        return f"分布{self.total_tiles}块(🟢{self.healthy_tiles}/🟡{self.warning_tiles}/🔴{self.critical_tiles})"
 
 
 class TileBasedMortalityEngine:
@@ -122,6 +151,11 @@ class TileBasedMortalityEngine:
         # 【新增】地块死亡率缓存（供其他服务使用）
         self._last_mortality_matrix: np.ndarray | None = None
         self._last_species_lineage_to_idx: dict[str, int] = {}
+        
+        # 【修复】累积存活数据（跨多个evaluate批次）
+        self._accumulated_tile_survivors: dict[str, dict[int, int]] = {}
+        self._accumulated_tile_mortality: dict[str, dict[int, float]] = {}
+        self._accumulated_tile_population: dict[str, dict[int, float]] = {}
         
         # 【新增】地块邻接关系
         self._tile_adjacency: dict[int, set[int]] = {}
@@ -194,6 +228,9 @@ class TileBasedMortalityEngine:
         """根据适宜度将物种总种群分配到各地块
         
         分配公式：tile_pop = total_pop × (tile_suitability / sum_suitability)
+        
+        【修复】如果物种没有栖息地记录（sum_suit==0），按栖息地类型均匀分配到合适的地块，
+        避免种群被错误地计算为0导致假灭绝。
         """
         if self._suitability_matrix is None or self._population_matrix is None:
             return
@@ -210,6 +247,23 @@ class TileBasedMortalityEngine:
             if sum_suit > 0:
                 # 按适宜度比例分配种群
                 self._population_matrix[:, sp_idx] = total_pop * (suitability_col / sum_suit)
+            else:
+                # 【修复】物种没有栖息地记录，按栖息地类型均匀分配
+                # 这种情况通常发生在新创建的物种尚未初始化栖息地时
+                habitat_type = getattr(species, 'habitat_type', 'terrestrial')
+                type_mask = self._get_habitat_type_mask(habitat_type)
+                suitable_count = type_mask.sum()
+                
+                if suitable_count > 0:
+                    # 均匀分配到所有合适类型的地块
+                    pop_per_tile = total_pop / suitable_count
+                    self._population_matrix[type_mask, sp_idx] = pop_per_tile
+                    # 同时设置一个基础适宜度，避免后续计算问题
+                    self._suitability_matrix[type_mask, sp_idx] = 0.5
+                    logger.warning(
+                        f"[地块死亡率] {species.common_name} 无栖息地记录，"
+                        f"均匀分配 {total_pop} 种群到 {suitable_count} 个 {habitat_type} 地块"
+                    )
     
     def set_embedding_service(self, embedding_service) -> None:
         """设置Embedding服务（用于计算物种语义相似度）
@@ -288,31 +342,11 @@ class TileBasedMortalityEngine:
         logger.debug(f"[地块竞争] 物种相似度矩阵构建完成 ({n}×{n})")
     
     def _get_habitat_type_mask(self, habitat_type: str) -> np.ndarray:
-        """获取适合某种栖息地类型的地块掩码"""
-        n_tiles = len(self._tiles)
-        mask = np.zeros(n_tiles, dtype=bool)
+        """获取适合某种栖息地类型的地块掩码
         
-        for idx, tile in enumerate(self._tiles):
-            biome = tile.biome.lower()
-            
-            if habitat_type == "marine":
-                if "浅海" in biome or "中层" in biome or "海" in biome:
-                    mask[idx] = True
-            elif habitat_type == "deep_sea":
-                if "深海" in biome:
-                    mask[idx] = True
-            elif habitat_type == "coastal":
-                if "海岸" in biome or "浅海" in biome:
-                    mask[idx] = True
-            elif habitat_type in ("terrestrial", "amphibious", "aerial"):
-                if "海" not in biome:
-                    mask[idx] = True
-            else:
-                # 默认陆地
-                if "海" not in biome:
-                    mask[idx] = True
-        
-        return mask
+        【优化】使用统一的栖息地类型筛选器
+        """
+        return unified_habitat_mask(self._tiles, habitat_type)
     
     def _build_tile_adjacency(self, tiles: list[MapTile]) -> None:
         """构建地块邻接关系
@@ -359,6 +393,45 @@ class TileBasedMortalityEngine:
         
         logger.debug(f"[地块邻接] 构建了 {len(self._tile_adjacency)} 个地块的邻接关系")
     
+    def clear_accumulated_data(self) -> None:
+        """清空累积的存活数据（每回合开始时调用）"""
+        self._accumulated_tile_survivors.clear()
+        self._accumulated_tile_mortality.clear()
+        self._accumulated_tile_population.clear()
+    
+    def _accumulate_batch_results(
+        self, 
+        species_list: list[Species],
+        population_matrix: np.ndarray,
+        mortality_matrix: np.ndarray
+    ) -> None:
+        """累积当前批次的存活数据
+        
+        每次调用 evaluate 后，将结果累积到全局字典中，
+        而不是覆盖之前的数据。
+        """
+        for sp_idx, species in enumerate(species_list):
+            lineage_code = species.lineage_code
+            
+            # 初始化该物种的字典
+            if lineage_code not in self._accumulated_tile_survivors:
+                self._accumulated_tile_survivors[lineage_code] = {}
+            if lineage_code not in self._accumulated_tile_mortality:
+                self._accumulated_tile_mortality[lineage_code] = {}
+            if lineage_code not in self._accumulated_tile_population:
+                self._accumulated_tile_population[lineage_code] = {}
+            
+            for tile_id, tile_idx in self._tile_id_to_idx.items():
+                pop = population_matrix[tile_idx, sp_idx]
+                if pop > 0:
+                    mortality_rate = mortality_matrix[tile_idx, sp_idx]
+                    survivors = int(pop * (1.0 - mortality_rate))
+                    
+                    self._accumulated_tile_population[lineage_code][tile_id] = float(pop)
+                    self._accumulated_tile_mortality[lineage_code][tile_id] = float(mortality_rate)
+                    if survivors > 0:
+                        self._accumulated_tile_survivors[lineage_code][tile_id] = survivors
+    
     def get_tile_adjacency(self) -> dict[int, set[int]]:
         """获取地块邻接关系（供其他服务使用）"""
         return self._tile_adjacency
@@ -390,9 +463,16 @@ class TileBasedMortalityEngine:
     def get_all_species_tile_mortality(self) -> dict[str, dict[int, float]]:
         """获取所有物种在各地块的死亡率
         
+        【修复】使用累积数据，包含所有批次的物种
+        
         Returns:
             {lineage_code: {tile_id: death_rate}} 嵌套字典
         """
+        # 使用累积的数据
+        if self._accumulated_tile_mortality:
+            return self._accumulated_tile_mortality.copy()
+        
+        # 回退：使用旧逻辑
         if self._last_mortality_matrix is None:
             return {}
         
@@ -435,9 +515,16 @@ class TileBasedMortalityEngine:
     def get_all_species_tile_population(self) -> dict[str, dict[int, float]]:
         """获取所有物种在各地块的种群分布
         
+        【修复】使用累积数据，包含所有批次的物种
+        
         Returns:
             {lineage_code: {tile_id: population}} 嵌套字典
         """
+        # 使用累积的数据
+        if self._accumulated_tile_population:
+            return self._accumulated_tile_population.copy()
+        
+        # 回退：使用旧逻辑
         if self._population_matrix is None:
             return {}
         
@@ -450,6 +537,44 @@ class TileBasedMortalityEngine:
                     tile_pops[tile_id] = float(pop)
             if tile_pops:
                 result[lineage_code] = tile_pops
+        
+        return result
+    
+    def get_all_species_tile_survivors(self) -> dict[str, dict[int, int]]:
+        """【修复】获取所有物种在各地块的存活数（死亡率计算后）
+        
+        这是关键方法：返回每个地块的实际存活数量，用于更新栖息地种群。
+        
+        【重要修复】使用累积的数据而不是仅最后一批的数据，
+        确保所有批次（critical, focus, background）的物种都被正确处理。
+        
+        Returns:
+            {lineage_code: {tile_id: survivors}} 嵌套字典
+        """
+        # 使用累积的数据（包含所有批次的物种）
+        if self._accumulated_tile_survivors:
+            return self._accumulated_tile_survivors.copy()
+        
+        # 回退：如果没有累积数据，使用旧逻辑（仅最后一批）
+        if self._population_matrix is None or self._last_mortality_matrix is None:
+            return {}
+        
+        result: dict[str, dict[int, int]] = {}
+        
+        for lineage_code, species_idx in self._last_species_lineage_to_idx.items():
+            tile_survivors: dict[int, int] = {}
+            
+            for tile_id, tile_idx in self._tile_id_to_idx.items():
+                pop = self._population_matrix[tile_idx, species_idx]
+                if pop > 0:
+                    mortality_rate = self._last_mortality_matrix[tile_idx, species_idx]
+                    # 计算存活数（取整）
+                    survivors = int(pop * (1.0 - mortality_rate))
+                    if survivors > 0:
+                        tile_survivors[tile_id] = survivors
+            
+            if tile_survivors:
+                result[lineage_code] = tile_survivors
         
         return result
     
@@ -657,10 +782,13 @@ class TileBasedMortalityEngine:
             sp.lineage_code: i for i, sp in enumerate(species_list)
         }
         
+        # 【修复】累积本批次的存活数据（而不是只保留最后一批）
+        self._accumulate_batch_results(species_list, batch_population_matrix, mortality_matrix)
+        
         # ========== 阶段3: 汇总各地块结果 ==========
         results = self._aggregate_tile_results(
             species_list, species_arrays, mortality_matrix, 
-            niche_metrics, tier, extinct_codes
+            niche_metrics, tier, extinct_codes, batch_population_matrix
         )
         
         return results
@@ -781,93 +909,93 @@ class TileBasedMortalityEngine:
         # 【新增】计算并缓存食草压力（供结果汇总使用）
         self._compute_and_cache_herbivory_pressure(species_list)
         
-        # ========== 【平衡修复v2】提高压力敏感度，减少过度减免 ==========
-        # 问题诊断：原方案压力上限太低 + 抗性减免太多，导致高压力下死亡率仍然很低
+        # ========== 【平衡修复v3】重新平衡死亡率计算 ==========
+        # 问题诊断：之前的修复让死亡率太高，即使在适宜条件下也有44%+
         # 
         # 修复方向：
-        # 1. 提高各压力因素的上限
-        # 2. 减少抗性减免的幅度
-        # 3. 让高压力环境真正产生高死亡率
+        # 1. 降低各压力因素的上限和权重
+        # 2. 恢复部分抗性减免
+        # 3. 让适宜环境真正安全（死亡率 < 15%）
+        # 4. 极端环境仍然危险（死亡率 > 50%）
         
-        # 【修复1】提高压力上限，让极端环境真正危险
-        env_capped = np.minimum(0.65, env_pressure)          # 从0.50提高到0.65
-        competition_capped = np.minimum(0.50, competition_pressure)  # 从0.40提高到0.50
-        trophic_capped = np.minimum(0.60, trophic_pressure)  # 从0.50提高到0.60
-        resource_capped = np.minimum(0.55, resource_pressure)  # 从0.45提高到0.55
-        predation_capped = np.minimum(0.60, predation_network_pressure)  # 从0.50提高到0.60
-        plant_competition_capped = np.minimum(0.40, plant_competition_pressure)  # 从0.35提高到0.40
+        # 【修复1】降低压力上限，让适宜环境更安全
+        env_capped = np.minimum(0.50, env_pressure)          # 从0.65降到0.50
+        competition_capped = np.minimum(0.40, competition_pressure)  # 从0.50降到0.40
+        trophic_capped = np.minimum(0.45, trophic_pressure)  # 从0.60降到0.45
+        resource_capped = np.minimum(0.40, resource_pressure)  # 从0.55降到0.40
+        predation_capped = np.minimum(0.50, predation_network_pressure)  # 从0.60降到0.50
+        plant_competition_capped = np.minimum(0.30, plant_competition_pressure)  # 从0.40降到0.30
         
-        # 【修复2】大幅降低体型/繁殖抗性
-        # 原方案抗性太高（微生物0.4+0.35），导致死亡率被减少60%以上
+        # 【修复2】恢复部分抗性
         body_size = species_arrays['body_size']
         generation_time = species_arrays['generation_time']
         
-        # 体型抗性：降低所有档位
-        # body_size < 0.01cm (微生物) -> 0.20 抗性（原0.40）
-        # body_size 0.01-0.1cm -> 0.15 抗性（原0.30）
-        # body_size 0.1-1cm -> 0.10 抗性（原0.20）
-        # body_size > 1cm -> 0.05 抗性（原0.10）
+        # 体型抗性：恢复到中等水平
+        # body_size < 0.01cm (微生物) -> 0.30 抗性
+        # body_size 0.01-0.1cm -> 0.22 抗性
+        # body_size 0.1-1cm -> 0.15 抗性
+        # body_size > 1cm -> 0.08 抗性
         size_resistance = np.where(
-            body_size < 0.01, 0.20,
-            np.where(body_size < 0.1, 0.15,
-                np.where(body_size < 1.0, 0.10, 0.05))
+            body_size < 0.01, 0.30,
+            np.where(body_size < 0.1, 0.22,
+                np.where(body_size < 1.0, 0.15, 0.08))
         )
         
-        # 繁殖速度抗性：同样降低
-        # generation_time < 7天 -> 0.18 抗性（原0.35）
-        # generation_time 7-30天 -> 0.12 抗性（原0.25）
-        # generation_time 30-365天 -> 0.08 抗性（原0.15）
-        # generation_time > 365天 -> 0.03 抗性（原0.05）
+        # 繁殖速度抗性：恢复到中等水平
+        # generation_time < 7天 -> 0.25 抗性
+        # generation_time 7-30天 -> 0.18 抗性
+        # generation_time 30-365天 -> 0.12 抗性
+        # generation_time > 365天 -> 0.05 抗性
         repro_resistance = np.where(
-            generation_time < 7, 0.18,
-            np.where(generation_time < 30, 0.12,
-                np.where(generation_time < 365, 0.08, 0.03))
+            generation_time < 7, 0.25,
+            np.where(generation_time < 30, 0.18,
+                np.where(generation_time < 365, 0.12, 0.05))
         )
         
-        # 【修复3】降低综合抗性上限
-        # 最大抗性从约38%降到约20%
+        # 【修复3】综合抗性上限恢复
+        # 微生物最大抗性约28%
         total_resistance = size_resistance * 0.5 + repro_resistance * 0.5
         # 广播到矩阵形状 (n_tiles, n_species)
         resistance_matrix = total_resistance[np.newaxis, :]
         
-        # 【修复4】提高加权和系数，让压力更容易导致高死亡率
-        # 各因素权重提高，使得中等压力就能产生30-50%死亡率
+        # 【修复4】降低加权和系数，让低压力环境更安全
+        # 目标：所有压力都是0.1时，加权和约0.15
         weighted_sum = (
-            env_capped * 0.60 +           # 从0.50提高到0.60
-            competition_capped * 0.45 +   # 从0.35提高到0.45
-            trophic_capped * 0.55 +       # 从0.45提高到0.55
-            resource_capped * 0.50 +      # 从0.40提高到0.50
-            predation_capped * 0.50 +     # 从0.40提高到0.50
-            plant_competition_capped * 0.35  # 从0.30提高到0.35
-        )  # 总权重 = 2.95（原2.4）
+            env_capped * 0.40 +           # 从0.60降到0.40
+            competition_capped * 0.30 +   # 从0.45降到0.30
+            trophic_capped * 0.40 +       # 从0.55降到0.40
+            resource_capped * 0.35 +      # 从0.50降到0.35
+            predation_capped * 0.35 +     # 从0.50降到0.35
+            plant_competition_capped * 0.25  # 从0.35降到0.25
+        )  # 总权重 = 2.05（从2.95降低）
         
-        # 【修复5】提高乘法模型的压力系数
+        # 【修复5】降低乘法模型的压力系数
         survival_product = (
-            (1.0 - env_capped * 0.70) *        # 从0.6提高到0.70
-            (1.0 - competition_capped * 0.60) * # 从0.5提高到0.60
-            (1.0 - trophic_capped * 0.70) *    # 从0.6提高到0.70
-            (1.0 - resource_capped * 0.60) *   # 从0.5提高到0.60
-            (1.0 - predation_capped * 0.70) *  # 从0.6提高到0.70
-            (1.0 - plant_competition_capped * 0.50)  # 从0.4提高到0.50
+            (1.0 - env_capped * 0.50) *        # 从0.70降到0.50
+            (1.0 - competition_capped * 0.45) * # 从0.60降到0.45
+            (1.0 - trophic_capped * 0.55) *    # 从0.70降到0.55
+            (1.0 - resource_capped * 0.45) *   # 从0.60降到0.45
+            (1.0 - predation_capped * 0.55) *  # 从0.70降到0.55
+            (1.0 - plant_competition_capped * 0.35)  # 从0.50降到0.35
         )
         multiplicative_mortality = 1.0 - survival_product
         
-        # 【修复6】调整混合比例，增加乘法模型权重让高压力更致命
-        # 加权和占60%，乘法占40%（原70%/30%）
-        raw_mortality = weighted_sum * 0.60 + multiplicative_mortality * 0.40
+        # 【修复6】增加加权和比例（更稳定）
+        # 加权和占70%，乘法占30%
+        raw_mortality = weighted_sum * 0.70 + multiplicative_mortality * 0.30
         
-        # 【修复7】降低抗性减免幅度
-        # 抗性最多减少25%死亡率（原40%）
-        mortality = raw_mortality * (1.0 - resistance_matrix * 0.6)
+        # 【修复7】增加抗性减免幅度
+        # 抗性最多减少35%死亡率
+        mortality = raw_mortality * (1.0 - resistance_matrix * 0.70)
         
         # ========== 7. 应用世代累积死亡率 ==========
         if _settings.enable_generational_mortality:
             mortality = self._apply_generational_mortality(species_arrays, mortality)
         
         # ========== 8. 边界约束 ==========
-        # 【修复】最低死亡率从3%降到2%，给快繁殖物种更多生存空间
+        # 【平衡v3】最低死亡率降到1%，给适宜条件下的物种更多生存空间
         # 最高死亡率保持98%
-        mortality = np.clip(mortality, 0.02, 0.98)
+        mortality = np.clip(mortality, 0.01, 0.98)
         
         return mortality
     
@@ -1210,37 +1338,42 @@ class TileBasedMortalityEngine:
         safe_t3 = np.maximum(t3, MIN_BIOMASS)
         safe_t4 = np.maximum(t4, MIN_BIOMASS)
         
+        # 【平衡修复v3】降低无食物时的稀缺压力
+        # 原来2.0太高，导致新物种在第一回合就有44%+的死亡率
+        # 修改为1.0，让稀缺压力更温和
+        SCARCITY_MAX = 1.0  # 从2.0降到1.0
+        
         # === T1 受 T2 采食 ===
         req_t1 = np.where(t2 > 0, t2 / EFFICIENCY, 0)
         grazing_ratio = np.divide(req_t1, safe_t1, out=np.zeros_like(req_t1), where=t1 > MIN_BIOMASS)
         grazing = np.minimum(grazing_ratio * 0.5, 0.8)
         scarcity_t2 = np.where(t1 > MIN_BIOMASS, 
-                               np.clip(grazing_ratio - 1.0, 0, 2.0),
-                               np.where(t2 > 0, 2.0, 0.0))
+                               np.clip(grazing_ratio - 1.0, 0, SCARCITY_MAX),
+                               np.where(t2 > 0, SCARCITY_MAX, 0.0))
         
         # === T2 受 T3 捕食 ===
         req_t2 = np.where(t3 > 0, t3 / EFFICIENCY, 0)
         ratio_t2 = np.divide(req_t2, safe_t2, out=np.zeros_like(req_t2), where=t2 > MIN_BIOMASS)
         pred_t3 = np.minimum(ratio_t2 * 0.5, 0.8)
         scarcity_t3 = np.where(t2 > MIN_BIOMASS,
-                               np.clip(ratio_t2 - 1.0, 0, 2.0),
-                               np.where(t3 > 0, 2.0, 0.0))
+                               np.clip(ratio_t2 - 1.0, 0, SCARCITY_MAX),
+                               np.where(t3 > 0, SCARCITY_MAX, 0.0))
         
         # === T3 受 T4 捕食 ===
         req_t3 = np.where(t4 > 0, t4 / EFFICIENCY, 0)
         ratio_t3 = np.divide(req_t3, safe_t3, out=np.zeros_like(req_t3), where=t3 > MIN_BIOMASS)
         pred_t4 = np.minimum(ratio_t3 * 0.5, 0.8)
         scarcity_t4 = np.where(t3 > MIN_BIOMASS,
-                               np.clip(ratio_t3 - 1.0, 0, 2.0),
-                               np.where(t4 > 0, 2.0, 0.0))
+                               np.clip(ratio_t3 - 1.0, 0, SCARCITY_MAX),
+                               np.where(t4 > 0, SCARCITY_MAX, 0.0))
         
         # === T4 受 T5 捕食 ===
         req_t4 = np.where(t5 > 0, t5 / EFFICIENCY, 0)
         ratio_t4 = np.divide(req_t4, safe_t4, out=np.zeros_like(req_t4), where=t4 > MIN_BIOMASS)
         pred_t5 = np.minimum(ratio_t4 * 0.5, 0.8)
         scarcity_t5 = np.where(t4 > MIN_BIOMASS,
-                               np.clip(ratio_t4 - 1.0, 0, 2.0),
-                               np.where(t5 > 0, 2.0, 0.0))
+                               np.clip(ratio_t4 - 1.0, 0, SCARCITY_MAX),
+                               np.where(t5 > 0, SCARCITY_MAX, 0.0))
         
         # 将压力分配到各物种
         for sp_idx in range(n_species):
@@ -1643,11 +1776,17 @@ class TileBasedMortalityEngine:
         niche_metrics: dict[str, NicheMetrics],
         tier: str,
         extinct_codes: set[str],
+        batch_population_matrix: np.ndarray | None = None,
     ) -> list[AggregatedMortalityResult]:
         """汇总各地块结果，计算物种总体死亡率
         
-        汇总方式：按种群加权平均
-        total_death_rate = Σ(tile_pop × tile_death_rate) / total_pop
+        【v2更新】按地块独立存活制计算：
+        - 每个地块独立计算存活数
+        - 避难所地块（死亡率<20%）可保证物种存续
+        - 汇总各地块存活数得到总存活数
+        
+        汇总方式：按地块独立计算后求和
+        total_survivors = Σ(tile_pop × (1 - tile_death_rate))
         """
         n_species = len(species_list)
         results: list[AggregatedMortalityResult] = []
@@ -1668,49 +1807,122 @@ class TileBasedMortalityEngine:
                     resource_pressure=species_arrays['saturation'][sp_idx],
                     is_background=species.is_background,
                     tier=tier,
+                    total_tiles=0,
                 ))
                 continue
             
             # 获取该物种在各地块的种群分布
-            if self._population_matrix is not None:
+            # 【修复】使用batch_population_matrix而不是self._population_matrix
+            # 因为sp_idx是当前批次的索引，不是全局索引
+            if batch_population_matrix is not None:
+                tile_pops = batch_population_matrix[:, sp_idx]
+            elif self._population_matrix is not None:
+                # 回退：如果没有batch矩阵，尝试使用全局矩阵（可能索引不对）
                 tile_pops = self._population_matrix[:, sp_idx]
             else:
                 tile_pops = np.array([total_pop])
             
             # 获取各地块死亡率
-            tile_deaths = mortality_matrix[:, sp_idx]
+            tile_rates = mortality_matrix[:, sp_idx]
             
-            # 加权平均死亡率
-            if tile_pops.sum() > 0:
-                weighted_death_rate = (tile_pops * tile_deaths).sum() / tile_pops.sum()
+            # 【v2核心】计算地块健康统计
+            # 只统计有种群的地块
+            occupied_mask = tile_pops > 0
+            occupied_rates = tile_rates[occupied_mask]
+            occupied_pops = tile_pops[occupied_mask]
+            
+            total_tiles = int(occupied_mask.sum())
+            
+            if total_tiles > 0:
+                healthy_tiles = int((occupied_rates < 0.25).sum())
+                warning_tiles = int(((occupied_rates >= 0.25) & (occupied_rates < 0.50)).sum())
+                critical_tiles = int((occupied_rates >= 0.50).sum())
+                best_tile_rate = float(occupied_rates.min())
+                worst_tile_rate = float(occupied_rates.max())
+                has_refuge = bool((occupied_rates < 0.20).any())
             else:
-                weighted_death_rate = tile_deaths.mean()
+                # 【修复】如果没有地块种群分布但物种总种群>0，这是数据异常
+                # 给予保守估计：假设有1个健康避难所，避免错误触发灭绝
+                if total_pop > 0:
+                    logger.warning(
+                        f"[地块死亡率异常] {species.common_name} 总种群={total_pop} 但无地块分布数据，"
+                        f"假设存在避难所以避免错误灭绝"
+                    )
+                    healthy_tiles = 1
+                    warning_tiles = critical_tiles = 0
+                    best_tile_rate = 0.1  # 假设最佳地块有10%基础死亡率
+                    worst_tile_rate = 0.1
+                    has_refuge = True  # 关键：给予避难所保护
+                else:
+                    healthy_tiles = warning_tiles = critical_tiles = 0
+                    best_tile_rate = 0.0
+                    worst_tile_rate = 1.0
+                    has_refuge = False
             
-            # 应用干预修正
+            # 【v2核心】按地块独立计算存活数
+            # 每个地块独立应用死亡率，然后汇总
+            tile_survivors = tile_pops * (1.0 - tile_rates)
+            tile_deaths_count = tile_pops * tile_rates
+            
+            total_survivors = int(tile_survivors.sum())
+            total_deaths = int(tile_deaths_count.sum())
+            
+            # 【修复】如果地块分布数据缺失但有总种群，使用全局平均死亡率
+            if total_survivors == 0 and total_deaths == 0 and total_pop > 0:
+                # 计算平均死亡率（使用该物种栖息地类型的地块）
+                habitat_type = getattr(species, 'habitat_type', 'terrestrial')
+                type_mask = self._get_habitat_type_mask(habitat_type)
+                if type_mask.any():
+                    avg_rate = tile_rates[type_mask].mean()
+                else:
+                    avg_rate = 0.1  # 默认10%死亡率
+                
+                # 使用平均死亡率计算存活
+                total_deaths = int(total_pop * avg_rate)
+                total_survivors = total_pop - total_deaths
+                logger.warning(
+                    f"[地块死亡率] {species.common_name} 无地块分布，使用平均死亡率 {avg_rate:.1%} "
+                    f"计算存活: {total_pop} -> {total_survivors}"
+                )
+            
+            # 应用干预修正（按比例调整）
             if species_arrays['is_protected'][sp_idx] and species_arrays['protection_turns'][sp_idx] > 0:
-                weighted_death_rate *= 0.5
+                # 保护效果：减少一半死亡
+                protection_saved = total_deaths // 2
+                total_survivors += protection_saved
+                total_deaths -= protection_saved
+            
             if species_arrays['is_suppressed'][sp_idx] and species_arrays['suppression_turns'][sp_idx] > 0:
-                weighted_death_rate = min(0.95, weighted_death_rate + 0.30)
+                # 压制效果：额外30%死亡
+                suppress_deaths = int(total_survivors * 0.30)
+                total_survivors -= suppress_deaths
+                total_deaths += suppress_deaths
             
             # 边界约束
-            weighted_death_rate = min(0.98, max(0.03, weighted_death_rate))
+            total_survivors = max(0, min(total_pop, total_survivors))
+            total_deaths = max(0, total_pop - total_survivors)
             
-            # 计算死亡和存活数
-            deaths = int(total_pop * weighted_death_rate)
-            survivors = max(0, total_pop - deaths)
+            # 计算总体死亡率（用于报告和记录）
+            if total_pop > 0:
+                overall_death_rate = total_deaths / total_pop
+            else:
+                overall_death_rate = 1.0
             
-            # 生成分析文本
-            notes = [self._generate_mortality_notes(
-                species, weighted_death_rate, species_arrays, sp_idx
+            overall_death_rate = min(0.98, max(0.03, overall_death_rate))
+            
+            # 生成分析文本（包含地块信息）
+            notes = [self._generate_tile_mortality_notes(
+                species, overall_death_rate, total_tiles, healthy_tiles, 
+                critical_tiles, has_refuge, best_tile_rate, worst_tile_rate
             )]
             
             # 【Embedding兼容】生成死因描述
             death_causes = self._generate_death_causes(
-                species, weighted_death_rate, species_arrays, sp_idx
+                species, overall_death_rate, species_arrays, sp_idx
             )
             
-            if weighted_death_rate > 0.5:
-                logger.info(f"[高死亡率警告] {species.common_name}: {weighted_death_rate:.1%}")
+            if overall_death_rate > 0.5:
+                logger.info(f"[高死亡率警告] {species.common_name}: {overall_death_rate:.1%} (分布{total_tiles}块，危机{critical_tiles}块)")
             
             # 【新增】计算植物专用压力字段
             plant_comp_pressure = 0.0
@@ -1738,22 +1950,66 @@ class TileBasedMortalityEngine:
             results.append(AggregatedMortalityResult(
                 species=species,
                 initial_population=total_pop,
-                deaths=deaths,
-                survivors=survivors,
-                death_rate=weighted_death_rate,
+                deaths=total_deaths,
+                survivors=total_survivors,
+                death_rate=overall_death_rate,
                 notes=notes,
                 niche_overlap=species_arrays['overlap'][sp_idx],
                 resource_pressure=species_arrays['saturation'][sp_idx],
                 is_background=species.is_background,
                 tier=tier,
-                death_causes=death_causes,  # 【新增】死因描述
-                plant_competition_pressure=plant_comp_pressure,  # 【新增】植物竞争压力
-                light_competition=light_comp,                     # 【新增】光照竞争
-                nutrient_competition=nutrient_comp,               # 【新增】养分竞争
-                herbivory_pressure=herb_pressure,                 # 【新增】食草压力
+                death_causes=death_causes,
+                plant_competition_pressure=plant_comp_pressure,
+                light_competition=light_comp,
+                nutrient_competition=nutrient_comp,
+                herbivory_pressure=herb_pressure,
+                # 【v2新增】地块分布统计
+                total_tiles=total_tiles,
+                healthy_tiles=healthy_tiles,
+                warning_tiles=warning_tiles,
+                critical_tiles=critical_tiles,
+                best_tile_rate=best_tile_rate,
+                worst_tile_rate=worst_tile_rate,
+                has_refuge=has_refuge,
             ))
         
         return results
+    
+    def _generate_tile_mortality_notes(
+        self,
+        species: Species,
+        death_rate: float,
+        total_tiles: int,
+        healthy_tiles: int,
+        critical_tiles: int,
+        has_refuge: bool,
+        best_rate: float,
+        worst_rate: float,
+    ) -> str:
+        """生成包含地块信息的死亡率分析文本"""
+        if total_tiles == 0:
+            return f"{species.common_name}无分布数据。"
+        
+        # 状态描述
+        if critical_tiles == total_tiles:
+            status = "⚠️全域危机"
+        elif critical_tiles > total_tiles * 0.5:
+            status = "🔴部分危机"
+        elif healthy_tiles >= total_tiles * 0.5:
+            status = "🟢稳定"
+        else:
+            status = "🟡警告"
+        
+        # 避难所信息
+        refuge_info = "有避难所" if has_refuge else "无避难所！"
+        
+        # 地块分布
+        dist_info = f"分布{total_tiles}块(健康{healthy_tiles}/危机{critical_tiles})"
+        
+        # 死亡率范围
+        rate_range = f"最低{best_rate:.0%}~最高{worst_rate:.0%}"
+        
+        return f"{species.common_name}【{status}】{dist_info}，{refuge_info}，死亡率{rate_range}，总体{death_rate:.1%}"
     
     def _generate_mortality_notes(
         self,

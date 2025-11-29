@@ -60,13 +60,25 @@ class ExportService:
                 desc_preview = snap.ecological_role[:80] + "..." if len(snap.ecological_role) > 80 else snap.ecological_role
                 desc_lines.append(f"  - 描述: {desc_preview}\n")
             
+            # 地块分布信息
+            dist_info = ""
+            if snap.total_tiles > 0:
+                dist_status = snap.distribution_status or "未知"
+                refuge_mark = "✓" if snap.has_refuge else "✗"
+                dist_info = (
+                    f"  - 地块分布: {snap.total_tiles}块 "
+                    f"(🟢{snap.healthy_tiles}/🟡{snap.warning_tiles}/🔴{snap.critical_tiles}) "
+                    f"【{dist_status}】避难所:{refuge_mark}\n"
+                )
+            
             lines.append(
                 (
                     f"- **{snap.latin_name} / {snap.common_name} ({snap.lineage_code})**\n"
                     f"  - 数量: {snap.population} (占比 {(snap.population_share * 100):.1f}%)\n"
                     f"  - 死亡: {snap.deaths} (死亡率 {(snap.death_rate * 100):.1f}%)\n"
                     f"  - 状态: {snap.status}，类别: {snap.tier or '未知'}\n"
-                    + "".join(desc_lines) +
+                    + "".join(desc_lines)
+                    + dist_info +
                     f"  - 生态位重叠: {(snap.niche_overlap or 0):.2f}, 资源饱和: {(snap.resource_pressure or 0):.2f}\n"
                     f"  - 备注: {'; '.join(snap.notes) if snap.notes else '无'}"
                 )

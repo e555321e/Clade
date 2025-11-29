@@ -36,30 +36,30 @@ function ToolTooltip({ title, description, color }: { title: string; description
   );
 }
 
-// 视图模式分组
+// 视图模式分组 - 更详细的描述
 const VIEW_GROUPS = {
   terrain: {
     label: "地形",
     icon: "🗺️",
     modes: [
-      { id: "terrain" as ViewMode, label: "实景地图", icon: "🌍", description: "综合地形、覆盖物与气候的真实世界风格" },
-      { id: "terrain_type" as ViewMode, label: "地形分类", icon: "🏔️", description: "纯地形分类（深海/浅海/平原/丘陵/山地）" },
-      { id: "elevation" as ViewMode, label: "海拔高度", icon: "📐", description: "海拔高度渐变色阶（-11000m 至 8848m）" },
+      { id: "terrain" as ViewMode, label: "实景地图", icon: "🌍", description: "综合地形、覆盖物与气候的真实世界风格", tooltip: "查看真实世界风格地图" },
+      { id: "terrain_type" as ViewMode, label: "地形分类", icon: "🏔️", description: "纯地形分类（深海/浅海/平原/丘陵/山地）", tooltip: "按地形类型分类显示" },
+      { id: "elevation" as ViewMode, label: "海拔高度", icon: "📐", description: "海拔高度渐变色阶（-11000m 至 8848m）", tooltip: "查看海拔高度分布" },
     ]
   },
   climate: {
     label: "气候",
     icon: "🌡️",
     modes: [
-      { id: "climate" as ViewMode, label: "气候带", icon: "🌡️", description: "气候带与温度分布" },
+      { id: "climate" as ViewMode, label: "温度分布", icon: "🌡️", description: "连续温度渐变，冷色低温暖色高温", tooltip: "查看全球温度分布" },
     ]
   },
   ecology: {
     label: "生态",
     icon: "🌿",
     modes: [
-      { id: "biodiversity" as ViewMode, label: "生物热力", icon: "🧬", description: "物种分布与多样性热力图" },
-      { id: "suitability" as ViewMode, label: "适宜度", icon: "🎯", description: "当前选中物种的生存适宜度分布" },
+      { id: "biodiversity" as ViewMode, label: "物种分布", icon: "🧬", description: "显示各地块的物种数量，暖色表示更多物种", tooltip: "查看生物多样性热力图" },
+      { id: "suitability" as ViewMode, label: "适宜度", icon: "🎯", description: "选中物种后显示其生存适宜度", tooltip: "需先选中物种查看适宜度" },
     ]
   }
 };

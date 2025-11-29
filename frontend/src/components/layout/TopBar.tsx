@@ -1,4 +1,4 @@
-import { Zap, Save, FolderOpen, Settings } from "lucide-react";
+import { Zap, Save, FolderOpen, Settings, Sparkles } from "lucide-react";
 import { ActionQueueStatus } from "../../services/api.types";
 import { EnergyBar } from "../EnergyBar";
 
@@ -14,6 +14,7 @@ interface Props {
   onOpenLedger: () => void;
   onOpenPressure: () => void;
   onOpenEnergyHistory?: () => void;
+  onOpenDivinePowers?: () => void;
 }
 
 export function TopBar({ 
@@ -27,7 +28,8 @@ export function TopBar({
   onLoadGame,
   onOpenLedger,
   onOpenPressure,
-  onOpenEnergyHistory
+  onOpenEnergyHistory,
+  onOpenDivinePowers
 }: Props) {
   const normalizedTurn = Math.max(turnIndex, 0);
   const displayTurn = normalizedTurn + 1;
@@ -50,6 +52,16 @@ export function TopBar({
           <span className="resource-value">{queueStatus?.queued_rounds ?? 0}</span>
         </div>
         <EnergyBar onOpenHistory={onOpenEnergyHistory} />
+        {onOpenDivinePowers && (
+          <button 
+            onClick={onOpenDivinePowers} 
+            className="btn-divine-powers"
+            title="神力进阶"
+          >
+            <Sparkles size={16} />
+            <span>神力</span>
+          </button>
+        )}
       </div>
 
       {/* Center: Time Display & Next Turn Button */}

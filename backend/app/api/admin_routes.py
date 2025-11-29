@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
+from sqlmodel import SQLModel, delete, select, Session
 
 from ..core.database import session_scope, init_db, engine
 from ..core.seed import A_SCENARIO, seed_defaults
@@ -15,7 +16,6 @@ from ..models.environment import MapState
 from ..models.history import TurnLog
 from ..repositories.species_repository import species_repository
 from ..repositories.environment_repository import environment_repository
-from sqlmodel import delete, select, Session
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 settings = get_settings()
@@ -146,3 +146,52 @@ def _clear_directory(dir_path: Path):
                 shutil.rmtree(item)
             except Exception:
                 pass
+
+
+class DropDatabaseRequest(BaseModel):
+    confirm: bool = False  # 必须确认
+
+
+@router.post("/drop-database")
+def drop_and_recreate_database(request: DropDatabaseRequest) -> dict:
+    """完全清空数据库并重新创建所有表
+    
+    ⚠️ 危险操作：这将删除所有数据！
+    """
+    if not request.confirm:
+        raise HTTPException(status_code=400, detail="必须设置 confirm=true 才能执行此操作")
+    
+    try:
+        logger.warning("⚠️ 开始清空数据库...")
+        
+        # 1. 删除所有表
+        SQLModel.metadata.drop_all(engine)
+        logger.info("✓ 已删除所有表")
+        
+        # 2. 重新创建所有表
+        init_db()
+        logger.info("✓ 已重新创建所有表")
+        
+        # 3. 重新填充初始数据
+        seed_defaults()
+        logger.info("✓ 已重新填充初始数据")
+        
+        # 4. 清理所有数据目录
+        current_settings = get_settings()
+        _clear_directory(Path(current_settings.saves_dir))
+        _clear_directory(Path(current_settings.exports_dir))
+        _clear_directory(Path(current_settings.reports_dir))
+        
+        # 清理embedding缓存
+        cache_dir = Path(current_settings.embedding_cache_dir) if hasattr(current_settings, 'embedding_cache_dir') else Path("data/cache/embeddings")
+        _clear_directory(cache_dir)
+        logger.info("✓ 已清理数据目录")
+        
+        return {
+            "success": True, 
+            "message": "数据库已完全重置。所有表已删除并重新创建，初始数据已重新填充。"
+        }
+        
+    except Exception as e:
+        logger.error(f"清空数据库失败: {e}")
+        raise HTTPException(status_code=500, detail=f"清空数据库失败: {str(e)}")

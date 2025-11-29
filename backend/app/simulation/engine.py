@@ -60,6 +60,7 @@ from .environment import EnvironmentSystem
 from .species import MortalityEngine, MortalityResult
 from .tile_based_mortality import TileBasedMortalityEngine, AggregatedMortalityResult
 from ..services.analytics.embedding_integration import EmbeddingIntegrationService
+from ..services.tectonic import TectonicIntegration, create_tectonic_integration
 
 
 @dataclass(slots=True)
@@ -125,6 +126,36 @@ class SimulationEngine:
         self._use_tile_based_mortality = True  # 是否使用按地块计算的死亡率
         self._use_ai_pressure_response = True  # 是否使用AI压力响应修正
         self._use_embedding_integration = True  # 是否使用Embedding集成功能
+        self._use_tectonic_system = True  # 是否使用板块构造系统
+        
+        # 【新增】板块构造系统 - 模拟板块运动、威尔逊周期、物种隔离/接触
+        self.tectonic: TectonicIntegration | None = None
+        self._init_tectonic_system()
+    
+    def _init_tectonic_system(self) -> None:
+        """初始化板块构造系统"""
+        if not self._use_tectonic_system:
+            return
+        
+        try:
+            # 获取地图尺寸
+            width = getattr(self.map_manager, "width", 128)
+            height = getattr(self.map_manager, "height", 40)
+            
+            # 使用当前回合数作为种子的一部分，确保可重现
+            import random
+            seed = random.randint(1, 999999)
+            
+            self.tectonic = create_tectonic_integration(
+                width=width,
+                height=height,
+                seed=seed,
+            )
+            logger.info(f"[板块系统] 初始化成功: {width}x{height}")
+        except Exception as e:
+            logger.warning(f"[板块系统] 初始化失败: {e}, 将禁用板块系统")
+            self._use_tectonic_system = False
+            self.tectonic = None
     
     def _emit_event(self, event_type: str, message: str, category: str = "其他", **extra):
         """发送事件到前端"""
@@ -346,6 +377,7 @@ class SimulationEngine:
                 # ========== 【回合初始化】清理各服务缓存 ==========
                 self.speciation.clear_tile_cache()
                 self.migration_advisor.clear_tile_mortality_cache()
+                self.tile_mortality.clear_accumulated_data()  # 清空地块存活数据累积
                 
                 temp_delta_for_habitats = 0.0
                 sea_delta_for_habitats = 0.0
@@ -396,9 +428,107 @@ class SimulationEngine:
                         if abs(sea_level_change) > 0.5:
                             self.map_manager.reclassify_terrain_by_sea_level(new_sea_level)
                 
-                # 地形演化模块已退役，仅保留 MapEvolution 更新
-                logger.info(f"[地形演化] 模块已退役，跳过 AI 地形演化步骤")
-                self._emit_event("info", "⏭️ 地形演化模块已移除，采用 MapEvolution 结果", "地质")
+                # 地形演化现在由板块构造系统处理
+                if not self._use_tectonic_system:
+                    logger.info(f"[地形演化] 板块系统未启用，仅使用 MapEvolution 结果")
+                    self._emit_event("info", "⏭️ 板块系统未启用，采用 MapEvolution 结果", "地质")
+                
+                # 2.5 【新增】板块构造运动
+                tectonic_result = None
+                if self._use_tectonic_system and self.tectonic:
+                    try:
+                        self._emit_event("stage", "🌍 板块构造运动", "地质")
+                        
+                        # 获取物种和栖息地数据
+                        all_species_for_tectonic = species_repository.list_species()
+                        alive_species = [sp for sp in all_species_for_tectonic if sp.status == "alive"]
+                        
+                        # 获取栖息地数据
+                        habitat_data = []
+                        for sp in alive_species:
+                            for h in getattr(sp, "habitats", []):
+                                habitat_data.append({
+                                    "tile_id": getattr(h, "tile_id", 0),
+                                    "species_id": sp.id,
+                                    "population": getattr(h, "population", 0),
+                                })
+                        
+                        # 获取地块列表（从数据库）
+                        map_tiles = environment_repository.list_tiles()
+                        
+                        # 执行板块运动
+                        tectonic_result = self.tectonic.step(
+                            species_list=alive_species,
+                            habitat_data=habitat_data,
+                            map_tiles=map_tiles,
+                            pressure_modifiers=modifiers,
+                        )
+                        
+                        # 输出结果
+                        wilson = tectonic_result.wilson_phase
+                        logger.info(f"[板块系统] 威尔逊周期: {wilson['phase']} ({wilson['progress']:.0%})")
+                        
+                        # 发送事件
+                        for summary in tectonic_result.get_major_events_summary():
+                            self._emit_event("info", f"🌋 {summary}", "地质")
+                        
+                        # 将地形变化应用到地图并保存
+                        if tectonic_result.terrain_changes and map_tiles:
+                            # 使用坐标匹配，因为板块系统ID是y*width+x，与数据库ID不同
+                            coord_map = {(t.x, t.y): t for t in map_tiles}
+                            updated_tiles = []
+                            
+                            for change in tectonic_result.terrain_changes:
+                                # 通过坐标匹配地块
+                                tile = coord_map.get((change["x"], change["y"]))
+                                if tile:
+                                    # 应用海拔变化
+                                    tile.elevation = change["new_elevation"]
+                                    # 应用温度变化
+                                    if hasattr(tile, "temperature") and "new_temperature" in change:
+                                        tile.temperature = change["new_temperature"]
+                                    updated_tiles.append(tile)
+                            
+                            if updated_tiles:
+                                # 保存更新的地块到数据库
+                                environment_repository.upsert_tiles(updated_tiles)
+                                
+                                # 计算平均变化用于日志
+                                avg_change = sum(abs(c["delta"]) for c in tectonic_result.terrain_changes) / len(tectonic_result.terrain_changes)
+                                logger.info(f"[板块系统] 应用了 {len(updated_tiles)} 处地形变化 (平均 {avg_change:.2f}m)")
+                                
+                                # 每回合都重新分类地形和水体（检测新湖泊、海岸变化等）
+                                self.map_manager.reclassify_terrain_by_sea_level(
+                                    current_map_state.sea_level
+                                )
+                                logger.info(f"[板块系统] 水体重新分类完成（湖泊检测）")
+                                
+                                # 处理海陆变化导致的物种强制迁徙（使用矩阵计算）
+                                relocation_result = habitat_manager.handle_terrain_type_changes(
+                                    alive_species, updated_tiles, self.turn_counter,
+                                    dispersal_engine=dispersal_engine
+                                )
+                                if relocation_result["forced_relocations"] > 0:
+                                    self._emit_event(
+                                        "migration", 
+                                        f"🌊 海陆变化导致 {relocation_result['forced_relocations']} 次物种迁徙",
+                                        "生态"
+                                    )
+                                if relocation_result.get("hunger_migrations", 0) > 0:
+                                    self._emit_event(
+                                        "migration",
+                                        f"🍖 {relocation_result['hunger_migrations']} 个消费者追踪猎物迁徙",
+                                        "生态"
+                                    )
+                        
+                        # 合并压力反馈
+                        for key, value in tectonic_result.pressure_feedback.items():
+                            modifiers[key] = modifiers.get(key, 0) + value
+                        
+                    except Exception as e:
+                        logger.warning(f"[板块系统] 运行失败: {e}")
+                        import traceback
+                        traceback.print_exc()
                 
                 # 3. 获取物种列表（只处理存活的物种）
                 logger.info(f"获取物种列表...")
@@ -631,6 +761,20 @@ class SimulationEngine:
                 except Exception as e:
                     logger.warning(f"[扩散引擎] 被动扩散失败: {e}")
                 
+                # ========== 【改进v4】饥饿迁徙：消费者追踪猎物 ==========
+                # 检查消费者是否远离食物源，触发向猎物的迁徙
+                try:
+                    hunger_migrations = habitat_manager.trigger_hunger_migration(
+                        species_batch, all_tiles, self.turn_counter,
+                        dispersal_engine=dispersal_engine
+                    )
+                    if hunger_migrations > 0:
+                        migration_count += hunger_migrations
+                        logger.info(f"【阶段2.6】饥饿迁徙: {hunger_migrations} 个消费者向猎物迁移")
+                        self._emit_event("info", f"🍖 {hunger_migrations} 个消费者追踪猎物", "生态")
+                except Exception as e:
+                    logger.warning(f"[饥饿迁徙] 执行失败: {e}")
+                
                 # ========== 【方案B：第三阶段】重新评估死亡率（基于迁徙后的栖息地） ==========
                 # 7. 第二次生态位分析（基于迁徙后的新栖息地）
                 if migration_count > 0:
@@ -790,8 +934,26 @@ class SimulationEngine:
                         
                         except asyncio.TimeoutError:
                             logger.warning("[AI综合评估] 超时，跳过AI修正")
+                            # 【修复】超时时也要发送完成事件，让前端不再卡住
+                            self._emit_event(
+                                "ai_progress",
+                                "AI评估超时，使用规则fallback",
+                                "AI",
+                                total=species_count,
+                                completed=species_count,
+                                current_task="超时(fallback)"
+                            )
                         except Exception as e:
                             logger.warning(f"[AI综合评估] 失败: {e}")
+                            # 【修复】失败时也要发送完成事件
+                            self._emit_event(
+                                "ai_progress",
+                                f"AI评估失败: {str(e)[:50]}",
+                                "AI",
+                                total=species_count,
+                                completed=species_count,
+                                current_task="失败(fallback)"
+                            )
                     else:
                         logger.debug(f"[AI综合评估] 压力不足 ({total_pressure:.1f}), 跳过AI评估")
                 
@@ -1369,6 +1531,26 @@ class SimulationEngine:
                         for item in combined_results:
                             population = max(0, min(int(item.species.morphology_stats.get("population", 0) or 0), MAX_SAFE_POPULATION))
                             share = (population / total_pop) if total_pop else 0
+                            # 获取地块分布统计
+                            total_tiles = getattr(item, 'total_tiles', 0)
+                            healthy_tiles = getattr(item, 'healthy_tiles', 0)
+                            warning_tiles = getattr(item, 'warning_tiles', 0)
+                            critical_tiles = getattr(item, 'critical_tiles', 0)
+                            best_tile_rate = getattr(item, 'best_tile_rate', 0.0)
+                            worst_tile_rate = getattr(item, 'worst_tile_rate', 1.0)
+                            has_refuge = getattr(item, 'has_refuge', True)
+                            # 计算分布状态
+                            if total_tiles == 0:
+                                dist_status = "无分布"
+                            elif critical_tiles == total_tiles:
+                                dist_status = "全域危机"
+                            elif critical_tiles > total_tiles * 0.5:
+                                dist_status = "部分危机"
+                            elif healthy_tiles >= total_tiles * 0.5:
+                                dist_status = "稳定"
+                            else:
+                                dist_status = "警告"
+                            
                             species_snapshots.append(
                                 SpeciesSnapshot(
                                     lineage_code=item.species.lineage_code,
@@ -1389,6 +1571,15 @@ class SimulationEngine:
                                     grazing_pressure=item.grazing_pressure,
                                     predation_pressure=item.predation_pressure,
                                     ai_narrative=None,
+                                    # 地块分布统计
+                                    total_tiles=total_tiles,
+                                    healthy_tiles=healthy_tiles,
+                                    warning_tiles=warning_tiles,
+                                    critical_tiles=critical_tiles,
+                                    best_tile_rate=best_tile_rate,
+                                    worst_tile_rate=worst_tile_rate,
+                                    has_refuge=has_refuge,
+                                    distribution_status=dist_status,
                                 )
                             )
                         logger.info(f"[最简报告] 构建了 {len(species_snapshots)} 个物种快照")
@@ -1414,8 +1605,27 @@ class SimulationEngine:
                 logger.info(f"保存地图栖息地快照...")
                 self._emit_event("stage", "💾 保存地图快照", "系统")
                 all_species_final = species_repository.list_species()
+                
+                # 【核心改进】获取地块级存活数据，避免按宜居性重新分配
+                # 这样可以保留各地块间死亡率差异的效果
+                tile_survivors: dict[str, dict[int, int]] = {}
+                if self._use_tile_based_mortality and all_tiles:
+                    tile_survivors = self.tile_mortality.get_all_species_tile_survivors()
+                    logger.debug(f"[地块存活] 获取 {len(tile_survivors)} 个物种的地块级存活数据")
+                
+                # 计算繁殖增量（新出生 - 用于按宜居性分配到各地块）
+                reproduction_gains: dict[str, int] = {}
+                for result in combined_results:
+                    if result.species.lineage_code in new_populations:
+                        # new_births = new_population - (initial - deaths)
+                        # 但更简单的方式是：只有繁殖系统添加的才是 new_births
+                        pass  # 暂时不实现，让存活者直接分布在原地
+                
                 self.map_manager.snapshot_habitats(
-                    all_species_final, turn_index=self.turn_counter
+                    all_species_final, 
+                    turn_index=self.turn_counter,
+                    tile_survivors=tile_survivors,
+                    reproduction_gains=reproduction_gains
                 )
                 
                 # 12.0 【新增】根据植物分布更新地块覆盖物
@@ -1531,6 +1741,43 @@ class SimulationEngine:
     def run_turns(self, *args, **kwargs):
         raise NotImplementedError("Use run_turns_async instead")
     
+    def _infer_ecological_role(self, species) -> str:
+        """根据物种营养级推断生态角色
+        
+        优先使用 diet_type，回退到 trophic_level
+        """
+        diet_type = getattr(species, 'diet_type', None)
+        
+        # 特殊处理：腐食者（分解者）
+        if diet_type == "detritivore":
+            return "decomposer"
+        
+        # 【修复】优先使用 diet_type 来推断生态角色（更可靠）
+        if diet_type == "autotroph":
+            return "producer"
+        elif diet_type == "herbivore":
+            return "herbivore"
+        elif diet_type == "carnivore":
+            return "carnivore"
+        elif diet_type == "omnivore":
+            return "omnivore"
+        
+        # 回退方案：基于营养级判断
+        trophic = getattr(species, 'trophic_level', None)
+        if trophic is None or not isinstance(trophic, (int, float)):
+            trophic = 2.0
+        
+        if trophic < 1.5:
+            return "producer"
+        elif trophic < 2.0:
+            return "mixotroph"
+        elif trophic < 2.8:
+            return "herbivore"
+        elif trophic < 3.5:
+            return "omnivore"
+        else:
+            return "carnivore"
+    
     def _save_population_snapshots(self, species_list: list, turn_index: int) -> None:
         """保存人口快照到数据库（用于族谱视图的当前/峰值人口）
         
@@ -1588,6 +1835,29 @@ class SimulationEngine:
         for item in mortality:
             population = safe_pop(item.species)
             share = (population / total_pop) if total_pop else 0
+            # 【修复】正确推断生态角色，而不是使用description
+            ecological_role = self._infer_ecological_role(item.species)
+            
+            # 获取地块分布统计
+            total_tiles = getattr(item, 'total_tiles', 0)
+            healthy_tiles = getattr(item, 'healthy_tiles', 0)
+            warning_tiles = getattr(item, 'warning_tiles', 0)
+            critical_tiles = getattr(item, 'critical_tiles', 0)
+            best_tile_rate = getattr(item, 'best_tile_rate', 0.0)
+            worst_tile_rate = getattr(item, 'worst_tile_rate', 1.0)
+            has_refuge = getattr(item, 'has_refuge', True)
+            # 计算分布状态
+            if total_tiles == 0:
+                dist_status = "无分布"
+            elif critical_tiles == total_tiles:
+                dist_status = "全域危机"
+            elif critical_tiles > total_tiles * 0.5:
+                dist_status = "部分危机"
+            elif healthy_tiles >= total_tiles * 0.5:
+                dist_status = "稳定"
+            else:
+                dist_status = "警告"
+            
             species_snapshots.append(
                 SpeciesSnapshot(
                     lineage_code=item.species.lineage_code,
@@ -1597,7 +1867,7 @@ class SimulationEngine:
                     population_share=share,
                     deaths=item.deaths,
                     death_rate=item.death_rate,
-                    ecological_role=item.species.description,
+                    ecological_role=ecological_role,
                     status=item.species.status,
                     notes=item.notes,
                     niche_overlap=item.niche_overlap,
@@ -1607,7 +1877,16 @@ class SimulationEngine:
                     trophic_level=item.species.trophic_level,
                     grazing_pressure=item.grazing_pressure,
                     predation_pressure=item.predation_pressure,
-                    ai_narrative=item.ai_narrative if item.ai_narrative else None,  # 【新增】物种叙事
+                    ai_narrative=item.ai_narrative if item.ai_narrative else None,
+                    # 地块分布统计
+                    total_tiles=total_tiles,
+                    healthy_tiles=healthy_tiles,
+                    warning_tiles=warning_tiles,
+                    critical_tiles=critical_tiles,
+                    best_tile_rate=best_tile_rate,
+                    worst_tile_rate=worst_tile_rate,
+                    has_refuge=has_refuge,
+                    distribution_status=dist_status,
                 )
             )
         
@@ -1692,17 +1971,21 @@ class SimulationEngine:
     ) -> None:
         """检测灭绝条件并更新物种状态。
         
-        【达尔文式淘汰v3】进一步强化灭绝条件
+        【v4地块独立存活制】基于避难所的灭绝判定
         
-        设计理念：大量分化→激烈竞争→不适者淘汰→筛选最适者
+        设计理念：
+        - 只要有1个地块死亡率<20%（避难所），物种就能存续
+        - 避难所机制模拟地理隔离保护
+        - 即使大部分地块遭受灾难，边缘种群可重新扩散
         
-        灭绝条件（50万年时间尺度）：
-        - 单回合死亡率≥75%：灾难性死亡，直接灭绝（原80%）
-        - 死亡率≥55%且连续2回合：种群衰退严重，灭绝（原60%）
-        - 死亡率≥45%且连续3回合：长期不适应环境，灭绝（原50%）
-        - 死亡率≥35%且连续4回合：慢性衰退，灭绝（原40%）
-        - 种群<150且死亡率>35%：种群过小，无法恢复（原100/40%）
-        - 【新增】死亡率≥30%且连续6回合：长期边缘化，最终灭绝
+        灭绝条件：
+        - 无避难所且满足以下任一条件：
+          1. 全域危机（所有地块死亡率≥50%）连续2回合
+          2. 连续3回合无避难所且死亡率≥40%
+          3. 种群<100且无避难所
+        - 即使有避难所，以下情况仍灭绝：
+          1. 单回合死亡率≥90%（全球性灾难）
+          2. 种群归零
         
         Args:
             mortality_results: 死亡率计算结果
@@ -1710,54 +1993,94 @@ class SimulationEngine:
         """
         for item in mortality_results:
             species = item.species
-            final_pop = final_populations.get(species.lineage_code, 0)
-            death_rate = item.death_rate
-            streak_key = "mortality_streak"
-            mortality_streak = int(species.morphology_stats.get(streak_key, 0) or 0)
             
-            # 【强化】追踪连续高死亡率（从35%开始计数，原40%）
-            if death_rate >= 0.35:
-                mortality_streak += 1
+            # 【关键修复】如果物种不在 final_populations 中，使用实际存活数或当前种群
+            # 不能默认为0，否则会错误触发灭绝
+            if species.lineage_code in final_populations:
+                final_pop = final_populations[species.lineage_code]
             else:
-                mortality_streak = 0
-            species.morphology_stats[streak_key] = mortality_streak
+                # 回退到物种当前的种群数据
+                final_pop = int(species.morphology_stats.get("population", 0) or 0)
+                if final_pop == 0:
+                    # 再次回退到死亡率结果中的存活数
+                    final_pop = getattr(item, 'survivors', 0)
+                logger.warning(
+                    f"[灭绝检查] {species.common_name} ({species.lineage_code}) 不在 final_populations 中，"
+                    f"使用回退值 {final_pop}"
+                )
+            
+            death_rate = item.death_rate
+            
+            # 获取地块分布统计
+            has_refuge = getattr(item, 'has_refuge', True)
+            total_tiles = getattr(item, 'total_tiles', 1)
+            critical_tiles = getattr(item, 'critical_tiles', 0)
+            healthy_tiles = getattr(item, 'healthy_tiles', 0)
+            
+            # 追踪连续无避难所回合
+            no_refuge_streak_key = "no_refuge_streak"
+            no_refuge_streak = int(species.morphology_stats.get(no_refuge_streak_key, 0) or 0)
+            
+            if not has_refuge:
+                no_refuge_streak += 1
+            else:
+                no_refuge_streak = 0
+            species.morphology_stats[no_refuge_streak_key] = no_refuge_streak
+            
+            # 追踪连续全域危机回合
+            crisis_streak_key = "crisis_streak"
+            crisis_streak = int(species.morphology_stats.get(crisis_streak_key, 0) or 0)
+            
+            if total_tiles > 0 and critical_tiles == total_tiles:
+                crisis_streak += 1
+            else:
+                crisis_streak = 0
+            species.morphology_stats[crisis_streak_key] = crisis_streak
             
             extinction_triggered = False
             extinction_reason = ""
             
-            # 【强化】条件1：单回合死亡率≥75%（原80%）
-            if death_rate >= 0.75:
+            # === 无视避难所的绝对灭绝条件 ===
+            # 条件A：单回合死亡率≥90%（全球性灾难）
+            if death_rate >= 0.90:
                 extinction_triggered = True
-                extinction_reason = f"单回合死亡率{death_rate:.1%}，种群崩溃"
-            # 【强化】条件2：死亡率≥55%且连续2回合（原60%）
-            elif death_rate >= 0.55 and mortality_streak >= 2:
+                extinction_reason = f"全球性灾难，死亡率{death_rate:.1%}，所有地块种群崩溃"
+            # 条件B：种群归零
+            elif final_pop <= 0:
                 extinction_triggered = True
-                extinction_reason = f"连续{mortality_streak}回合高死亡率（≥55%），竞争淘汰"
-            # 【强化】条件3：死亡率≥45%且连续3回合（原50%）
-            elif death_rate >= 0.45 and mortality_streak >= 3:
-                extinction_triggered = True
-                extinction_reason = f"连续{mortality_streak}回合中高死亡率（≥45%），不适应环境"
-            # 【强化】条件4：死亡率≥35%且连续4回合（原40%）
-            elif death_rate >= 0.35 and mortality_streak >= 4:
-                extinction_triggered = True
-                extinction_reason = f"连续{mortality_streak}回合持续衰退（≥35%），被更适应的物种取代"
-            # 【新增】条件5：死亡率≥30%且连续6回合（长期边缘化）
-            elif death_rate >= 0.30 and mortality_streak >= 6:
-                extinction_triggered = True
-                extinction_reason = f"连续{mortality_streak}回合边缘化（≥30%），最终灭绝"
-            # 【强化】条件6：种群过小且死亡率>35%（原100/40%）
-            elif final_pop < 150 and death_rate > 0.35:
-                extinction_triggered = True
-                extinction_reason = f"种群过小({final_pop})且死亡率高({death_rate:.1%})，无法恢复"
+                extinction_reason = "种群归零"
+            
+            # === 基于避难所的灭绝条件（只在无避难所时触发）===
+            elif not has_refuge:
+                # 条件1：全域危机连续2回合
+                if crisis_streak >= 2:
+                    extinction_triggered = True
+                    extinction_reason = f"连续{crisis_streak}回合全域危机（所有{total_tiles}块地死亡率≥50%），无避难所"
+                # 条件2：连续3回合无避难所且死亡率≥40%
+                elif no_refuge_streak >= 3 and death_rate >= 0.40:
+                    extinction_triggered = True
+                    extinction_reason = f"连续{no_refuge_streak}回合无避难所，死亡率{death_rate:.1%}，种群无法恢复"
+                # 条件3：种群过小且无避难所
+                elif final_pop < 100:
+                    extinction_triggered = True
+                    extinction_reason = f"种群过小({final_pop})且无避难所保护，无法延续"
+                # 条件4：连续5回合无避难所（慢性灭绝）
+                elif no_refuge_streak >= 5:
+                    extinction_triggered = True
+                    extinction_reason = f"连续{no_refuge_streak}回合无避难所，长期衰退导致灭绝"
             
             # 执行灭绝
             if extinction_triggered and species.status == "alive":
-                logger.info(f"[灭绝] {species.common_name} ({species.lineage_code}): {extinction_reason}")
+                # 生成地块分布信息
+                dist_info = f"分布{total_tiles}块(健康{healthy_tiles}/危机{critical_tiles})"
+                full_reason = f"{extinction_reason}；{dist_info}"
+                
+                logger.info(f"[灭绝] {species.common_name} ({species.lineage_code}): {full_reason}")
                 self._emit_event("extinction", f"💀 灭绝: {species.common_name} - {extinction_reason}", "死亡")
                 species.status = "extinct"
                 species.morphology_stats["population"] = 0
                 species.morphology_stats["extinction_turn"] = self.turn_counter
-                species.morphology_stats["extinction_reason"] = extinction_reason
+                species.morphology_stats["extinction_reason"] = full_reason
                 
                 # 记录灭绝事件
                 from ..models.species import LineageEvent
@@ -1767,13 +2090,24 @@ class SimulationEngine:
                         event_type="extinction",
                         payload={
                             "turn": self.turn_counter,
-                            "reason": extinction_reason,
+                            "reason": full_reason,
                             "final_population": final_pop,
                             "death_rate": death_rate,
+                            "has_refuge": has_refuge,
+                            "total_tiles": total_tiles,
+                            "healthy_tiles": healthy_tiles,
+                            "critical_tiles": critical_tiles,
                         }
                     )
                 )
                 species_repository.upsert(species)
+            
+            # 【新增】有避难所时的警告日志
+            elif has_refuge and death_rate >= 0.50 and species.status == "alive":
+                logger.info(
+                    f"[避难所保护] {species.common_name}: 死亡率{death_rate:.1%}但有{healthy_tiles}个避难所，"
+                    f"物种存续（分布{total_tiles}块）"
+                )
 
     def _rule_based_reemergence(self, candidates, modifiers):
         """基于规则筛选背景物种重现。

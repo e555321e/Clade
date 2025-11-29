@@ -218,6 +218,7 @@ export interface LineageNode {
   extinction_turn?: number | null;
   ecological_role: string;
   tier?: string | null;
+  trophic_level: number;  // 营养级，用于确定族谱颜色
   speciation_type: string;
   current_population: number;
   peak_population: number;
@@ -233,18 +234,24 @@ export interface LineageTree {
   nodes: LineageNode[];
 }
 
+// --- AI 服务商类型常量 ---
+export type ProviderType = "openai" | "anthropic" | "google";
+
 // --- 新增配置接口 ---
 export interface ProviderConfig {
   id: string;
   name: string;
-  type: string;
+  type: string;  // 兼容旧字段
+  provider_type: ProviderType;  // API 类型：openai, anthropic, google
   base_url?: string | null;
   api_key?: string | null;
   models: string[];
+  selected_models?: string[];  // 用户选择保存的模型列表
 }
 
 export interface CapabilityRouteConfig {
   provider_id?: string | null;
+  provider_ids?: string[] | null;  // 多服务商池（负载均衡模式）
   model?: string | null;
   timeout: number;
   enable_thinking?: boolean;
@@ -277,6 +284,10 @@ export interface UIConfig {
   ai_narrative_timeout?: number;      // 物种叙事生成超时（秒）
   ai_speciation_timeout?: number;     // 物种分化评估超时（秒）
   ai_concurrency_limit?: number;      // AI并发请求数限制
+  
+  // 7. 负载均衡配置
+  load_balance_enabled?: boolean;     // 是否启用多服务商负载均衡
+  load_balance_strategy?: "round_robin" | "random" | "least_latency";  // 负载均衡策略
 
   // --- Legacy Fields (For backward compatibility types) ---
   ai_provider?: string | null;
