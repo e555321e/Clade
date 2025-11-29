@@ -242,6 +242,24 @@ class MigrationAdvisor:
                         result, prey_density
                     )
             
+            # 【新增v2】类型-0.3：避难所缺失迁徙（紧急逃离）
+            # 当物种无避难所（所有地块死亡率都高）时，触发紧急迁徙
+            if not migration_type:
+                has_refuge = getattr(result, 'has_refuge', True)
+                total_tiles = getattr(result, 'total_tiles', 0)
+                critical_tiles = getattr(result, 'critical_tiles', 0)
+                
+                # 无避难所且危机地块占比>50%时触发紧急迁徙
+                if not has_refuge and total_tiles > 0 and critical_tiles > total_tiles * 0.5:
+                    if result.survivors >= effective_min_pop:
+                        migration_type = "refuge_seeking"
+                        origin = f"危机区域({critical_tiles}/{total_tiles}块处于高死亡率)"
+                        destination = "寻找潜在避难所地块"
+                        rationale = (
+                            f"⚠️ 无避难所！{critical_tiles}/{total_tiles}个地块死亡率≥50%，"
+                            f"紧急寻找低死亡率栖息地以保存物种"
+                        )
+            
             # 【新增】类型-0.5：慢性衰退迁徙（生存本能）
             # 当物种连续多回合处于衰退状态时，触发生存迁徙
             if not migration_type:

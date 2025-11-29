@@ -1331,7 +1331,16 @@ async def create_save(request: CreateSaveRequest) -> dict:
                     tier="T1.0",
                     notes=[f"初始物种，投放到{request.scenario}"],
                     status=species.status,
-                    ecological_role=ecological_role
+                    ecological_role=ecological_role,
+                    # 初始状态的地块分布（默认值）
+                    total_tiles=0,
+                    healthy_tiles=0,
+                    warning_tiles=0,
+                    critical_tiles=0,
+                    best_tile_rate=0.0,
+                    worst_tile_rate=0.0,
+                    has_refuge=True,
+                    distribution_status="初始",
                 ))
             
             # 获取地图状态
