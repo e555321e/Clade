@@ -296,20 +296,38 @@ class MapStateManager:
             if total_suitability <= 0:
                 total_suitability = len(existing_habitats)  # 平均分配
             
-            # 更新每个栖息地的种群数量
+            # 【修复】使用精确分配算法，避免四舍五入损失
+            # 先计算每个地块的理想（浮点）种群，然后用largest remainder method分配
+            ideal_pops = []
             for habitat in existing_habitats:
                 if total_suitability > 0:
                     portion = habitat.suitability / total_suitability
                 else:
                     portion = 1.0 / len(existing_habitats)
-                
-                tile_population = int(total_pop * portion)
-                
+                ideal_pops.append((habitat, total_pop * portion))
+            
+            # 先分配整数部分
+            int_pops = [(h, int(p)) for h, p in ideal_pops]
+            allocated = sum(ip for _, ip in int_pops)
+            remainder = total_pop - allocated  # 需要额外分配的数量
+            
+            # 按小数部分降序排列，分配剩余数量
+            remainders = [(h, p - int(p), idx) for idx, (h, p) in enumerate(ideal_pops)]
+            remainders.sort(key=lambda x: x[1], reverse=True)
+            
+            # 给小数部分最大的地块各+1，直到分配完
+            final_pops = [ip for _, ip in int_pops]
+            for i in range(min(remainder, len(remainders))):
+                idx = remainders[i][2]
+                final_pops[idx] += 1
+            
+            # 更新每个栖息地的种群数量
+            for i, habitat in enumerate(existing_habitats):
                 updated_habitats.append(
                     HabitatPopulation(
                         tile_id=habitat.tile_id,
                         species_id=species.id,
-                        population=tile_population,
+                        population=final_pops[i],
                         suitability=habitat.suitability,
                         turn_index=turn_index,
                     )
@@ -356,12 +374,30 @@ class MapStateManager:
             top_tiles = suitability[:top_count]
             score_sum = sum(score for _, score in top_tiles) or 1.0
             
-            for tile, score in top_tiles:
-                if tile.id is None:
-                    continue
-                
-                portion = score / score_sum
-                tile_biomass = int(total * portion)
+            # 【修复】使用精确分配算法，避免四舍五入损失
+            valid_tiles = [(tile, score) for tile, score in top_tiles if tile.id is not None]
+            if not valid_tiles:
+                continue
+            
+            # 计算理想（浮点）种群
+            ideal_pops = [(tile, score, total * score / score_sum) for tile, score in valid_tiles]
+            
+            # 先分配整数部分
+            int_pops = [(tile, score, int(p)) for tile, score, p in ideal_pops]
+            allocated = sum(ip for _, _, ip in int_pops)
+            remainder = total - allocated
+            
+            # 按小数部分降序排列，分配剩余数量
+            remainders = [(tile, score, p - int(p), idx) for idx, (tile, score, p) in enumerate(ideal_pops)]
+            remainders.sort(key=lambda x: x[2], reverse=True)
+            
+            final_pops = [ip for _, _, ip in int_pops]
+            for i in range(min(remainder, len(remainders))):
+                idx = remainders[i][3]
+                final_pops[idx] += 1
+            
+            for i, (tile, score) in enumerate(valid_tiles):
+                tile_biomass = final_pops[i]
                 if tile_biomass > 0:
                     habitats.append(
                         HabitatPopulation(
