@@ -6,6 +6,9 @@ from pydantic import BaseModel, Field
 
 
 PressureType = Literal[
+    # ========== 自然演化（零消耗） ==========
+    "natural_evolution",        # 自然演化：无干预的自然发展，消耗0神力
+    
     # ========== 气候相关 ==========
     "glacial_period",           # 冰河时期：全球降温，冰川扩张
     "greenhouse_earth",         # 温室地球：全球升温，极端高温

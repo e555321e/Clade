@@ -26,6 +26,7 @@ const MUTUAL_EXCLUSIONS: Record<string, string[]> = {
 
 // 压力类型图标映射
 const PRESSURE_ICONS: Record<string, string> = {
+  natural_evolution: "🌱",  // 零消耗的自然演化
   glacial_period: "🧊",
   greenhouse_earth: "🔥",
   pluvial_period: "🌧️",
@@ -43,6 +44,9 @@ const PRESSURE_ICONS: Record<string, string> = {
   habitat_fragmentation: "🔀",
 };
 
+// 零消耗的压力类型
+const FREE_PRESSURE_KINDS = new Set(["natural_evolution"]);
+
 export function PressureModal({
   pressures,
   templates,
@@ -55,11 +59,14 @@ export function PressureModal({
   const [intensity, setIntensity] = useState(5);
   const [rounds, setRounds] = useState(1);
 
-  // 能量消耗计算：基础消耗(3) × 强度
+  // 能量消耗计算：基础消耗(3) × 强度，自然演化为0
   const PRESSURE_BASE_COST = 3;
-  const currentCost = PRESSURE_BASE_COST * intensity;
+  const getPressureCost = (kind: string, intensity: number) => {
+    return FREE_PRESSURE_KINDS.has(kind) ? 0 : PRESSURE_BASE_COST * intensity;
+  };
+  const currentCost = getPressureCost(selectedKind, intensity);
   const totalCost = useMemo(() => {
-    return pressures.reduce((sum, p) => sum + PRESSURE_BASE_COST * p.intensity, 0);
+    return pressures.reduce((sum, p) => sum + getPressureCost(p.kind, p.intensity), 0);
   }, [pressures]);
 
   const selectedTemplate = useMemo(
@@ -344,12 +351,16 @@ export function PressureModal({
                         <div style={{ 
                           fontSize: '1.2rem', 
                           fontWeight: 700, 
-                          color: '#f59e0b',
+                          color: currentCost === 0 ? '#22c55e' : '#f59e0b',
                           display: 'flex',
                           alignItems: 'center',
                           gap: '4px'
                         }}>
-                          <span>⚡</span> {currentCost}
+                          {currentCost === 0 ? (
+                            <><span>✨</span> 免费</>
+                          ) : (
+                            <><span>⚡</span> {currentCost}</>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -509,8 +520,8 @@ export function PressureModal({
                             }} />
                             Lv.{pressure.intensity}
                           </span>
-                          <span style={{ fontSize: '0.7rem', color: '#f59e0b' }}>
-                            ⚡{PRESSURE_BASE_COST * pressure.intensity}
+                          <span style={{ fontSize: '0.7rem', color: FREE_PRESSURE_KINDS.has(pressure.kind) ? '#22c55e' : '#f59e0b' }}>
+                            {FREE_PRESSURE_KINDS.has(pressure.kind) ? '✨免费' : `⚡${PRESSURE_BASE_COST * pressure.intensity}`}
                           </span>
                         </div>
                       </div>

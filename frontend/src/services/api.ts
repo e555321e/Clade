@@ -241,6 +241,7 @@ export async function testApiConnection(params: {
   api_key: string;
   model: string;
   provider?: string;
+  provider_type?: "openai" | "anthropic" | "google";  // API 类型
 }): Promise<{ success: boolean; message: string; details?: string }> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
@@ -264,6 +265,45 @@ export async function testApiConnection(params: {
       return { success: false, message: "❌ 连接超时", details: "请求超过30秒未响应" };
     }
     throw e;
+  }
+}
+
+// 模型信息接口
+export interface ModelInfo {
+  id: string;
+  name: string;
+  description?: string;
+  context_window?: number | null;
+}
+
+// 获取服务商的模型列表
+export async function fetchProviderModels(params: {
+  base_url: string;
+  api_key: string;
+  provider_type: "openai" | "anthropic" | "google";
+}): Promise<{ success: boolean; message: string; models: ModelInfo[] }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000); // 20秒超时
+  
+  try {
+    const res = await fetch("/api/config/fetch-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    
+    if (!res.ok) {
+      return { success: false, message: `请求失败 (HTTP ${res.status})`, models: [] };
+    }
+    return res.json();
+  } catch (e) {
+    clearTimeout(timeoutId);
+    if (e instanceof Error && e.name === 'AbortError') {
+      return { success: false, message: "连接超时", models: [] };
+    }
+    return { success: false, message: String(e), models: [] };
   }
 }
 
@@ -372,6 +412,19 @@ export async function resetWorld(keepSaves: boolean, keepMap: boolean): Promise<
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
     throw new Error(errorData.detail || "reset world failed");
+  }
+  return res.json();
+}
+
+export async function dropDatabase(): Promise<any> {
+  const res = await fetch("/api/admin/drop-database", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm: true }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || "drop database failed");
   }
   return res.json();
 }

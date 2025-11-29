@@ -31,6 +31,7 @@ import { TurnSummaryModal } from "./components/TurnSummaryModal";
 import { MapHistoryView } from "./components/MapHistoryView";
 import { LogPanel } from "./components/LogPanel";
 import { MapLegend } from "./components/MapLegend";
+import { MapModeToast } from "./components/MapModeToast";
 
 // AI 增强组件
 import { AIAssistantPanel } from "./components/AIAssistantPanel";
@@ -941,6 +942,10 @@ export default function App() {
             viewMode={viewMode} 
             seaLevel={latestReport?.sea_level ?? 0}
             temperature={latestReport?.global_temperature ?? 15}
+            hasSelectedSpecies={!!selectedSpeciesId}
+          />
+          <MapModeToast
+            viewMode={viewMode}
             hasSelectedSpecies={!!selectedSpeciesId}
           />
         </>

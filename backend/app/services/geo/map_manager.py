@@ -477,7 +477,10 @@ class MapStateManager:
         turn_idx = map_state.turn_index if map_state else 0
         
         # 计算生物多样性评分（仅biodiversity模式使用）
+        # 新设计：基于物种数量的直接映射，0-12+种对应0-1分数
         biodiversity_scores: dict[int, float] = {}
+        tile_species_counts: dict[int, int] = {}  # 用于统计信息
+        
         if view_mode == "biodiversity":
             tile_populations: dict[int, list[int]] = {}
             for habitat in habitats:
@@ -486,22 +489,13 @@ class MapStateManager:
                     tile_populations[tile_id] = []
                 tile_populations[tile_id].append(habitat.population)
             
-            # 归一化生物多样性评分
-            max_diversity = 1.0
+            # 基于物种数量的直接评分映射
+            # 0种=0, 1种=0.1, 2种=0.2, ..., 10+种=1.0
             for tile_id, populations in tile_populations.items():
                 species_count = len(populations)
-                total_pop = sum(populations)
-                # 综合物种数量和种群规模
-                diversity = (species_count * 0.7 + (total_pop / 1000000) * 0.3) if total_pop > 0 else 0
-                biodiversity_scores[tile_id] = min(1.0, diversity / 10)  # 归一化到0-1
-                max_diversity = max(max_diversity, biodiversity_scores[tile_id])
-            
-            # 二次归一化确保最高值接近1.0
-            if max_diversity > 0:
-                biodiversity_scores = {
-                    tid: score / max_diversity 
-                    for tid, score in biodiversity_scores.items()
-                }
+                tile_species_counts[tile_id] = species_count
+                # 线性映射：物种数量 / 10，最高为1.0
+                biodiversity_scores[tile_id] = min(1.0, species_count / 10.0)
         
         # 构建地块信息（包含颜色、相对海拔、地形类型、气候带）
         tile_infos = []

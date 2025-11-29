@@ -249,6 +249,8 @@ save_manager = SaveManager(settings.saves_dir, embedding_service=embedding_servi
 species_generator = SpeciesGenerator(model_router)
 ui_config_path = Path(settings.ui_config_path)
 pressure_templates: list[PressureTemplate] = [
+    # 【零消耗】自然演化 - 在能量不足时仍可推进回合
+    PressureTemplate(kind="natural_evolution", label="🌱 自然演化", description="让生态系统自然发展，不施加任何神力干预。物种按照自身特性与环境互动，遵循自然选择规律。消耗 0 神力能量。"),
     PressureTemplate(kind="glacial_period", label="冰河时期", description="气温下降，冰川扩张，环境转向寒冷。对耐寒性弱的物种形成压力，生物需要发展保温结构、提高代谢效率或通过迁移适应新环境。"),
     PressureTemplate(kind="greenhouse_earth", label="温室地球", description="气温上升，极地冰层减少，海平面变化影响沿海栖息地。物种需要改进散热能力、调整分布区域或适应更潮湿的环境形态。"),
     PressureTemplate(kind="pluvial_period", label="洪积期", description="降水增多，形成湿地、湖泊等水域环境。陆生栖息地减少，水生与两栖类获得更多生存空间。物种可能需要增强对水域的适应性。"),
@@ -367,13 +369,37 @@ def apply_ui_config(config: UIConfig) -> UIConfig:
         model_router.api_base_url = default_provider.base_url
         model_router.api_key = default_provider.api_key
     
-    # 2.2 应用 Capability Routes
+    # 2.2 配置负载均衡
+    from ..ai.model_router import ProviderPoolConfig
+    lb_enabled = getattr(config, 'load_balance_enabled', False)
+    lb_strategy = getattr(config, 'load_balance_strategy', 'round_robin')
+    model_router.configure_load_balance(lb_enabled, lb_strategy)
+    
+    # 2.3 应用 Capability Routes
     for capability, route_config in config.capability_routes.items():
         if capability not in model_router.routes:
             continue
             
         provider = config.providers.get(route_config.provider_id)
         active_provider = provider or default_provider
+        
+        # 【负载均衡】如果配置了多服务商池
+        provider_ids = getattr(route_config, 'provider_ids', None) or []
+        if lb_enabled and provider_ids and len(provider_ids) > 1:
+            pool_configs = []
+            for pid in provider_ids:
+                p = config.providers.get(pid)
+                if p and p.api_key and p.base_url:
+                    pool_configs.append(ProviderPoolConfig(
+                        provider_id=pid,
+                        base_url=p.base_url,
+                        api_key=p.api_key,
+                        provider_type=p.provider_type or "openai",
+                        model=route_config.model,
+                    ))
+            if pool_configs:
+                model_router.set_provider_pool(capability, pool_configs)
+                logger.info(f"[配置] {capability} 启用负载均衡: {len(pool_configs)} 个服务商")
         
         if active_provider:
             # 构建 extra_body
@@ -398,9 +424,10 @@ def apply_ui_config(config: UIConfig) -> UIConfig:
                 "api_key": active_provider.api_key,
                 "timeout": route_config.timeout,
                 "model": route_config.model,
-                "extra_body": extra_body
+                "extra_body": extra_body,
+                "provider_type": active_provider.provider_type or "openai",  # 关键：传递服务商API类型
             }
-            logger.debug(f"[配置] 已设置 {capability} -> Provider: {active_provider.name}, Model: {route_config.model}, Thinking: {route_config.enable_thinking}")
+            logger.debug(f"[配置] 已设置 {capability} -> Provider: {active_provider.name}, Model: {route_config.model}, Type: {active_provider.provider_type}, Thinking: {route_config.enable_thinking}")
 
     # 2.3 (New) 自动应用默认服务商到未配置的路由
     if default_provider:
@@ -421,9 +448,10 @@ def apply_ui_config(config: UIConfig) -> UIConfig:
                     "api_key": default_provider.api_key,
                     "timeout": 60,
                     "model": model_to_use,
-                    "extra_body": current_config.extra_body
+                    "extra_body": current_config.extra_body,
+                    "provider_type": default_provider.provider_type or "openai",  # 关键：传递服务商API类型
                 }
-                logger.debug(f"[配置] 自动应用默认服务商到 {cap_name}: {default_provider.name} (Model: {model_to_use})")
+                logger.debug(f"[配置] 自动应用默认服务商到 {cap_name}: {default_provider.name} (Model: {model_to_use}, Type: {default_provider.provider_type})")
 
     # --- 3. Embedding 配置 ---
     emb_provider = config.providers.get(config.embedding_provider_id)
@@ -1501,20 +1529,20 @@ def generate_species(request: GenerateSpeciesRequest) -> dict:
 
 @router.post("/config/test-api")
 def test_api_connection(request: dict) -> dict:
-    """测试 API 连接是否有效"""
+    """测试 API 连接是否有效，支持 OpenAI/Claude/Gemini 多种API格式"""
     
     api_type = request.get("type", "chat")  # chat 或 embedding
     base_url = request.get("base_url", "").rstrip("/")
     api_key = request.get("api_key", "")
     model = request.get("model", "")
-    # provider = request.get("provider", "") # 可选，用于更精细的逻辑
+    provider_type = request.get("provider_type", "openai")  # openai, anthropic, google
     
     if not base_url or not api_key:
         return {"success": False, "message": "请提供 API Base URL 和 API Key"}
     
     try:
         if api_type == "embedding":
-            # 测试 embedding API
+            # 测试 embedding API (仅支持 OpenAI 兼容格式)
             url = f"{base_url}/embeddings"
             body = {
                 "model": model or "Qwen/Qwen3-Embedding-4B",
@@ -1545,33 +1573,104 @@ def test_api_connection(request: dict) -> dict:
                     "message": "API 响应格式不正确",
                     "details": f"响应：{str(data)[:100]}"
                 }
+        
+        # ========== Chat API 测试 ==========
+        
+        if provider_type == "anthropic":
+            # Claude 原生 API
+            url = f"{base_url}/messages"
+            body = {
+                "model": model or "claude-3-5-sonnet-20241022",
+                "max_tokens": 10,
+                "messages": [{"role": "user", "content": "hi"}]
+            }
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json"
+            }
+            
+            logger.debug(f"[测试 Claude] URL: {url} | Model: {model}")
+            
+            response = httpx.post(url, json=body, headers=headers, timeout=20)
+            response.raise_for_status()
+            data = response.json()
+            
+            if "content" in data and len(data.get("content", [])) > 0:
+                return {
+                    "success": True,
+                    "message": f"✅ Claude API 连接成功！",
+                    "details": f"模型：{data.get('model', model)} | 响应时间：{response.elapsed.total_seconds():.2f}s"
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "API 响应格式不正确",
+                    "details": f"响应：{str(data)[:100]}"
+                }
+                
+        elif provider_type == "google":
+            # Gemini 原生 API
+            url = f"{base_url}/models/{model or 'gemini-2.0-flash'}:generateContent?key={api_key}"
+            body = {
+                "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
+            }
+            headers = {"Content-Type": "application/json"}
+            
+            logger.debug(f"[测试 Gemini] URL: {url}")
+            
+            response = httpx.post(url, json=body, headers=headers, timeout=20)
+            response.raise_for_status()
+            data = response.json()
+            
+            candidates = data.get("candidates", [])
+            if candidates and candidates[0].get("content", {}).get("parts"):
+                return {
+                    "success": True,
+                    "message": f"✅ Gemini API 连接成功！",
+                    "details": f"模型：{model or 'gemini-2.0-flash'} | 响应时间：{response.elapsed.total_seconds():.2f}s"
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "API 响应格式不正确",
+                    "details": f"响应：{str(data)[:100]}"
+                }
+        
         else:
-            # 测试 chat API
+            # OpenAI 兼容格式（默认）
             # URL 构建优化：自动适配不同的 API Base 风格
             if base_url.endswith("/v1"):
-                # 标准 OpenAI 兼容格式，直接加 /chat/completions
                 url = f"{base_url}/chat/completions"
             elif "/v1" in base_url:
-                # URL 中已包含 /v1/，直接加 chat/completions
                 if "chat/completions" not in base_url:
                     url = f"{base_url}/chat/completions" if base_url.endswith("/") else f"{base_url}/chat/completions"
                 else:
                     url = base_url
             elif "openai.azure.com" in base_url:
-                 # Azure 特殊处理
                  url = f"{base_url}/chat/completions"
             elif "chat/completions" in base_url:
-                # URL 已包含完整路径
                 url = base_url
             else:
-                # 用户可能漏掉了 /v1，自动补全
-                # 例如：https://api.deepseek.com -> https://api.deepseek.com/v1/chat/completions
                 url = f"{base_url}/v1/chat/completions"
 
+            # 根据 URL 自动选择默认测试模型
+            if not model:
+                if "openai.com" in base_url:
+                    model = "gpt-4o-mini"
+                elif "deepseek.com" in base_url:
+                    model = "deepseek-chat"
+                elif "siliconflow" in base_url:
+                    model = "deepseek-ai/DeepSeek-V3"
+                elif "openrouter" in base_url:
+                    model = "openai/gpt-4o-mini"
+                else:
+                    model = "gpt-3.5-turbo"
+            
             logger.debug(f"[测试 Chat] URL: {url} | Model: {model}")
 
             body = {
-                "model": model or "Pro/deepseek-ai/DeepSeek-V3.2-Exp",
+                "model": model,
                 "messages": [{"role": "user", "content": "hi"}],
                 "max_tokens": 5
             }
@@ -1601,14 +1700,25 @@ def test_api_connection(request: dict) -> dict:
         error_text = e.response.text
         try:
             error_json = json.loads(error_text)
-            error_msg = error_json.get("error", {}).get("message", error_text[:200])
+            # 不同 API 的错误格式
+            if provider_type == "anthropic":
+                error_msg = error_json.get("error", {}).get("message", error_text[:200])
+            elif provider_type == "google":
+                error_msg = error_json.get("error", {}).get("message", error_text[:200])
+            else:
+                error_msg = error_json.get("error", {}).get("message", error_text[:200])
         except:
             error_msg = error_text[:200]
+        
+        # 如果是 400 错误，可能是模型名称不对
+        hint = ""
+        if e.response.status_code == 400:
+            hint = f"\n💡 测试模型: {model} - 请确认该模型名称正确"
         
         return {
             "success": False,
             "message": f"❌ HTTP 错误 {e.response.status_code}",
-            "details": error_msg
+            "details": f"{error_msg}{hint}"
         }
     except httpx.TimeoutException:
         return {
@@ -1621,6 +1731,164 @@ def test_api_connection(request: dict) -> dict:
             "success": False,
             "message": f"❌ 连接失败",
             "details": str(e)
+        }
+
+
+@router.post("/config/fetch-models")
+def fetch_models(request: dict) -> dict:
+    """获取服务商的可用模型列表
+    
+    支持 OpenAI 兼容格式、Claude 原生 API、Gemini 原生 API
+    """
+    base_url = request.get("base_url", "").rstrip("/")
+    api_key = request.get("api_key", "")
+    provider_type = request.get("provider_type", "openai")
+    
+    if not base_url or not api_key:
+        return {"success": False, "message": "请提供 API Base URL 和 API Key", "models": []}
+    
+    try:
+        models = []
+        
+        if provider_type == "anthropic":
+            # Claude API - 使用固定的模型列表（Anthropic 暂不提供 /models 端点的公开访问）
+            # 但可以尝试调用看看
+            url = f"{base_url}/models"
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json"
+            }
+            
+            try:
+                response = httpx.get(url, headers=headers, timeout=15)
+                if response.status_code == 200:
+                    data = response.json()
+                    # Anthropic 返回格式: {"data": [{"id": "claude-xxx", ...}]}
+                    for model in data.get("data", []):
+                        model_id = model.get("id", "")
+                        if model_id:
+                            models.append({
+                                "id": model_id,
+                                "name": model_id,
+                                "description": model.get("display_name", ""),
+                                "context_window": model.get("context_window"),
+                            })
+            except:
+                pass
+            
+            # 如果 API 获取失败，使用已知的 Claude 模型列表
+            if not models:
+                models = [
+                    {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "description": "最新的 Claude 4 模型", "context_window": 200000},
+                    {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "description": "强大且快速的模型", "context_window": 200000},
+                    {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "description": "快速且经济的模型", "context_window": 200000},
+                    {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "description": "最强大的 Claude 3 模型", "context_window": 200000},
+                    {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet", "description": "平衡性能和速度", "context_window": 200000},
+                    {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "description": "最快速的模型", "context_window": 200000},
+                ]
+                
+        elif provider_type == "google":
+            # Gemini API
+            url = f"{base_url}/models?key={api_key}"
+            headers = {"Content-Type": "application/json"}
+            
+            logger.debug(f"[获取模型] Gemini URL: {url}")
+            
+            response = httpx.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Gemini 返回格式: {"models": [{"name": "models/gemini-xxx", "displayName": "...", ...}]}
+            for model in data.get("models", []):
+                model_name = model.get("name", "")
+                # 移除 "models/" 前缀
+                model_id = model_name.replace("models/", "") if model_name.startswith("models/") else model_name
+                
+                # 只保留 generateContent 方法可用的模型
+                supported_methods = model.get("supportedGenerationMethods", [])
+                if "generateContent" not in supported_methods:
+                    continue
+                    
+                if model_id:
+                    models.append({
+                        "id": model_id,
+                        "name": model.get("displayName", model_id),
+                        "description": model.get("description", ""),
+                        "context_window": model.get("inputTokenLimit"),
+                    })
+                    
+        else:
+            # OpenAI 兼容格式
+            # 构建 URL
+            if base_url.endswith("/v1"):
+                url = f"{base_url}/models"
+            elif "/v1" in base_url:
+                url = f"{base_url}/models"
+            else:
+                url = f"{base_url}/v1/models"
+                
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            logger.debug(f"[获取模型] OpenAI 兼容 URL: {url}")
+            
+            response = httpx.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            # OpenAI 返回格式: {"data": [{"id": "gpt-4", "object": "model", ...}]}
+            for model in data.get("data", []):
+                model_id = model.get("id", "")
+                if model_id:
+                    # 过滤掉一些非聊天模型（如 embedding、whisper 等）
+                    skip_prefixes = ("text-embedding", "whisper", "tts", "dall-e", "davinci", "babbage", "ada", "curie")
+                    if any(model_id.lower().startswith(p) for p in skip_prefixes):
+                        continue
+                        
+                    models.append({
+                        "id": model_id,
+                        "name": model_id,
+                        "description": model.get("owned_by", ""),
+                        "context_window": None,
+                    })
+        
+        # 按名称排序
+        models.sort(key=lambda m: m.get("name", "").lower())
+        
+        return {
+            "success": True,
+            "message": f"获取到 {len(models)} 个模型",
+            "models": models
+        }
+        
+    except httpx.HTTPStatusError as e:
+        error_text = e.response.text
+        try:
+            error_json = json.loads(error_text)
+            error_msg = error_json.get("error", {}).get("message", error_text[:200])
+        except:
+            error_msg = error_text[:200]
+        
+        return {
+            "success": False,
+            "message": f"HTTP 错误 {e.response.status_code}: {error_msg}",
+            "models": []
+        }
+    except httpx.TimeoutException:
+        return {
+            "success": False,
+            "message": "连接超时，请检查网络",
+            "models": []
+        }
+    except Exception as e:
+        logger.error(f"[获取模型] 错误: {e}")
+        return {
+            "success": False,
+            "message": f"获取失败: {str(e)}",
+            "models": []
         }
 
 

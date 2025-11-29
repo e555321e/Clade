@@ -204,8 +204,15 @@ class DivineEnergyService:
         Returns:
             总能量消耗
         """
+        # 零消耗的压力类型（自然演化）
+        FREE_PRESSURE_KINDS = {"natural_evolution"}
+        
         total = 0
         for p in pressures:
+            kind = p.get("kind", "")
+            # 自然演化不消耗能量
+            if kind in FREE_PRESSURE_KINDS:
+                continue
             intensity = p.get("intensity", 5)
             total += self.get_cost("pressure", intensity=intensity)
         return total

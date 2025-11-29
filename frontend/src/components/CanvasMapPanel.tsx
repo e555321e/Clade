@@ -109,17 +109,48 @@ export const CanvasMapPanel = forwardRef<CanvasMapPanelHandle, Props>(function C
     return { positions, tileMap, worldWidth, worldHeight, maxCol, maxRow };
   }, [map?.tiles]);
 
-  // 适宜度颜色缓存
+  // 适宜度颜色缓存 - 使用更直观的红-黄-绿渐变
   const suitabilityColors = useMemo(() => {
     const colorMap = new Map<number, number>(); // Store as hex number for Pixi
     if (viewMode === "suitability" && highlightSpeciesId && map?.habitats) {
       for (const hab of map.habitats) {
         if (hab.lineage_code === highlightSpeciesId) {
           const s = Math.max(0, Math.min(1, hab.suitability));
-          const r = s < 0.5 ? 255 : Math.round((1 - s) * 2 * 255);
-          const g = s < 0.5 ? Math.round(s * 2 * 255) : 255;
-          // Convert rgb to hex number
-          const hex = (r << 16) + (g << 8);
+          
+          // 新色阶: 红(0) -> 橙(0.3) -> 黄(0.5) -> 黄绿(0.7) -> 绿(1.0)
+          // 使用更明亮、更易区分的颜色
+          let r: number, g: number, b: number;
+          
+          if (s < 0.2) {
+            // 0-0.2: 红色 #EF4444
+            r = 239; g = 68; b = 68;
+          } else if (s < 0.4) {
+            // 0.2-0.4: 红橙渐变 -> 橙色 #F97316
+            const t = (s - 0.2) / 0.2;
+            r = Math.round(239 + (249 - 239) * t);
+            g = Math.round(68 + (115 - 68) * t);
+            b = Math.round(68 + (22 - 68) * t);
+          } else if (s < 0.6) {
+            // 0.4-0.6: 橙黄渐变 -> 黄色 #FBBF24
+            const t = (s - 0.4) / 0.2;
+            r = Math.round(249 + (251 - 249) * t);
+            g = Math.round(115 + (191 - 115) * t);
+            b = Math.round(22 + (36 - 22) * t);
+          } else if (s < 0.8) {
+            // 0.6-0.8: 黄绿渐变 -> 浅绿 #34D399
+            const t = (s - 0.6) / 0.2;
+            r = Math.round(251 + (52 - 251) * t);
+            g = Math.round(191 + (211 - 191) * t);
+            b = Math.round(36 + (153 - 36) * t);
+          } else {
+            // 0.8-1.0: 浅绿渐变 -> 翠绿 #10B981
+            const t = (s - 0.8) / 0.2;
+            r = Math.round(52 + (16 - 52) * t);
+            g = Math.round(211 + (185 - 211) * t);
+            b = Math.round(153 + (129 - 153) * t);
+          }
+          
+          const hex = (r << 16) + (g << 8) + b;
           colorMap.set(hab.tile_id, hex);
         }
       }

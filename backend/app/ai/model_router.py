@@ -3,13 +3,36 @@
 import asyncio
 import json
 import logging
+import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# 服务商类型定义
+PROVIDER_TYPE_OPENAI = "openai"      # OpenAI 兼容格式
+PROVIDER_TYPE_ANTHROPIC = "anthropic"  # Claude 原生 API
+PROVIDER_TYPE_GOOGLE = "google"       # Gemini 原生 API
+
+# 负载均衡策略
+LB_ROUND_ROBIN = "round_robin"       # 轮询
+LB_RANDOM = "random"                 # 随机
+LB_LEAST_LATENCY = "least_latency"   # 最低延迟
+
+
+@dataclass
+class ProviderPoolConfig:
+    """服务商池配置（用于负载均衡）"""
+    provider_id: str
+    base_url: str
+    api_key: str
+    provider_type: str = PROVIDER_TYPE_OPENAI
+    model: str | None = None  # 该服务商使用的模型（可覆盖默认）
+    weight: int = 1  # 权重（用于加权轮询）
+
 
 @dataclass
 class ModelConfig:
@@ -17,6 +40,7 @@ class ModelConfig:
     model: str
     endpoint: str | None = None
     extra_body: dict[str, Any] | None = None
+    provider_type: str = PROVIDER_TYPE_OPENAI  # 新增：服务商类型
 
 
 class ModelRouter:
@@ -54,6 +78,13 @@ class ModelRouter:
         self._request_stats: dict[str, dict] = {}  # 每个 capability 的统计
         self._last_summary_time = 0  # 上次输出摘要的时间
         self._summary_interval = 10  # 摘要输出间隔（秒）
+        
+        # 【负载均衡】服务商池配置
+        self._provider_pools: dict[str, list[ProviderPoolConfig]] = {}  # capability -> 服务商池
+        self._lb_counters: dict[str, int] = {}  # 轮询计数器
+        self._lb_strategy: str = LB_ROUND_ROBIN  # 默认策略
+        self._lb_enabled: bool = False  # 是否启用负载均衡
+        self._provider_latencies: dict[str, float] = {}  # 服务商延迟记录（用于最低延迟策略）
 
     def set_concurrency_limit(self, limit: int) -> None:
         """Update concurrency limit (requires recreating semaphore)"""
@@ -62,6 +93,87 @@ class ModelRouter:
         # Note: This is safe enough for this app's usage pattern.
         self._semaphore = asyncio.Semaphore(limit)
         logger.info(f"[ModelRouter] Concurrency limit set to {limit}")
+    
+    # ========== 负载均衡相关方法 ==========
+    
+    def configure_load_balance(self, enabled: bool, strategy: str = LB_ROUND_ROBIN) -> None:
+        """配置负载均衡
+        
+        Args:
+            enabled: 是否启用负载均衡
+            strategy: 负载均衡策略 (round_robin, random, least_latency)
+        """
+        self._lb_enabled = enabled
+        self._lb_strategy = strategy
+        logger.info(f"[ModelRouter] 负载均衡: {'启用' if enabled else '禁用'}, 策略: {strategy}")
+    
+    def set_provider_pool(self, capability: str, providers: list[ProviderPoolConfig]) -> None:
+        """为指定capability设置服务商池
+        
+        Args:
+            capability: 能力名称
+            providers: 服务商配置列表
+        """
+        if providers:
+            self._provider_pools[capability] = providers
+            self._lb_counters[capability] = 0
+            logger.info(f"[ModelRouter] 设置 {capability} 服务商池: {len(providers)} 个服务商")
+        elif capability in self._provider_pools:
+            del self._provider_pools[capability]
+            if capability in self._lb_counters:
+                del self._lb_counters[capability]
+    
+    def get_provider_pools_info(self) -> dict[str, list[str]]:
+        """获取所有capability的服务商池信息"""
+        return {
+            cap: [p.provider_id for p in pool] 
+            for cap, pool in self._provider_pools.items()
+        }
+    
+    def _select_provider_from_pool(self, capability: str) -> ProviderPoolConfig | None:
+        """从服务商池中选择一个服务商（根据负载均衡策略）
+        
+        Args:
+            capability: 能力名称
+            
+        Returns:
+            选中的服务商配置，如果没有配置池则返回None
+        """
+        pool = self._provider_pools.get(capability)
+        if not pool:
+            return None
+        
+        if len(pool) == 1:
+            return pool[0]
+        
+        if self._lb_strategy == LB_RANDOM:
+            return random.choice(pool)
+        
+        elif self._lb_strategy == LB_LEAST_LATENCY:
+            # 选择延迟最低的服务商
+            min_latency = float('inf')
+            best_provider = pool[0]
+            for p in pool:
+                latency = self._provider_latencies.get(p.provider_id, 0)
+                if latency < min_latency:
+                    min_latency = latency
+                    best_provider = p
+            return best_provider
+        
+        else:  # LB_ROUND_ROBIN (默认)
+            idx = self._lb_counters.get(capability, 0)
+            selected = pool[idx % len(pool)]
+            self._lb_counters[capability] = idx + 1
+            return selected
+    
+    def _record_provider_latency(self, provider_id: str, latency: float) -> None:
+        """记录服务商的响应延迟（用于最低延迟策略）
+        
+        使用指数移动平均来平滑延迟数据
+        """
+        alpha = 0.3  # 平滑系数
+        old_latency = self._provider_latencies.get(provider_id, latency)
+        self._provider_latencies[provider_id] = alpha * latency + (1 - alpha) * old_latency
     
     async def set_keepalive_mode(self, enabled: bool) -> None:
         """切换连接复用模式（需要重置客户端）
@@ -222,11 +334,26 @@ class ModelRouter:
         prompt_template = self.prompts.get(capability)
         override = self.overrides.get(capability, {})
         
-        # 优先使用 override 中的配置（来自 UI 设置的默认服务商）
-        base_url = (override.get("base_url") or self.api_base_url)
-        api_key = override.get("api_key") or self.api_key
+        # 【负载均衡】如果启用且有服务商池，从池中选择服务商
+        lb_provider: ProviderPoolConfig | None = None
+        if self._lb_enabled and capability in self._provider_pools:
+            lb_provider = self._select_provider_from_pool(capability)
+            if lb_provider:
+                logger.debug(f"[ModelRouter] 负载均衡: {capability} -> {lb_provider.provider_id}")
+        
+        # 优先级: 负载均衡选择 > override配置 > 全局配置
+        if lb_provider:
+            base_url = lb_provider.base_url
+            api_key = lb_provider.api_key
+            provider_type = lb_provider.provider_type
+            model_name = lb_provider.model or override.get("model") or config.model
+        else:
+            base_url = (override.get("base_url") or self.api_base_url)
+            api_key = override.get("api_key") or self.api_key
+            provider_type = override.get("provider_type") or getattr(config, "provider_type", PROVIDER_TYPE_OPENAI)
+            model_name = override.get("model") or config.model
+        
         timeout = override.get("timeout") or self.timeout
-        model_name = override.get("model") or config.model
         extra_body = override.get("extra_body") or config.extra_body
         
         # 判断是否有有效的 API 凭据（来自 override 或全局配置）
@@ -256,34 +383,67 @@ class ModelRouter:
                 }
             }
         
-        endpoint = config.endpoint or "/chat/completions"
-        # 【修复】智能处理 endpoint 路径
-        # 大多数本地 LLM 服务（LMStudio、Ollama 等）需要 /v1/chat/completions
-        # 而云端服务的 base_url 通常已经包含 /v1（如 https://api.deepseek.com/v1）
-        base_url_stripped = base_url.rstrip('/')
-        if not base_url_stripped.endswith('/v1') and endpoint == "/chat/completions":
-            # base_url 不以 /v1 结尾，自动添加 /v1 前缀
-            endpoint = "/v1/chat/completions"
-        url = f"{base_url_stripped}{endpoint}"
-        
         user_content = json.dumps(payload, ensure_ascii=False, indent=2)
-        body = {
-            "model": model_name,
-            "messages": [
-                {"role": "system", "content": formatted_prompt or "You are an AI assistant."},
-                {"role": "user", "content": user_content},
-            ],
-        }
+        base_url_stripped = base_url.rstrip('/')
         
-        if extra_body:
-            body.update(extra_body)
+        # 根据服务商类型构建请求
+        if provider_type == PROVIDER_TYPE_ANTHROPIC:
+            # Claude 原生 API
+            url = f"{base_url_stripped}/messages"
+            body = {
+                "model": model_name,
+                "max_tokens": extra_body.get("max_tokens", 4096) if extra_body else 4096,
+                "messages": [
+                    {"role": "user", "content": user_content},
+                ],
+            }
+            if formatted_prompt:
+                body["system"] = formatted_prompt
+            headers = {
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            }
+        elif provider_type == PROVIDER_TYPE_GOOGLE:
+            # Gemini 原生 API
+            url = f"{base_url_stripped}/models/{model_name}:generateContent?key={api_key}"
+            contents = []
+            if formatted_prompt:
+                contents.append({"role": "user", "parts": [{"text": formatted_prompt}]})
+                contents.append({"role": "model", "parts": [{"text": "好的，我会按照您的指示进行。"}]})
+            contents.append({"role": "user", "parts": [{"text": user_content}]})
+            body = {"contents": contents}
+            if extra_body:
+                if "generationConfig" in extra_body:
+                    body["generationConfig"] = extra_body["generationConfig"]
+            headers = {"Content-Type": "application/json"}
+        else:
+            # OpenAI 兼容格式（默认）
+            endpoint = config.endpoint or "/chat/completions"
+            # 智能处理 endpoint 路径
+            if not base_url_stripped.endswith('/v1') and endpoint == "/chat/completions":
+                endpoint = "/v1/chat/completions"
+            url = f"{base_url_stripped}{endpoint}"
+            
+            body = {
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": formatted_prompt or "You are an AI assistant."},
+                    {"role": "user", "content": user_content},
+                ],
+            }
+            if extra_body:
+                body.update(extra_body)
+            headers = {"Authorization": f"Bearer {api_key}"}
             
         return {
             "is_local": False,
             "url": url,
             "body": body,
-            "headers": {"Authorization": f"Bearer {api_key}"},
+            "headers": headers,
             "timeout": timeout,
+            "provider_type": provider_type,
+            "lb_provider_id": lb_provider.provider_id if lb_provider else None,  # 负载均衡选中的服务商ID
             "meta": {
                 "provider": config.provider,
                 "model": model_name,
@@ -309,11 +469,7 @@ class ModelRouter:
             )
             response.raise_for_status()
             data = response.json()
-            content = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-            )
+            content = self._extract_content(data, req.get("provider_type", PROVIDER_TYPE_OPENAI))
             parsed_content = self._parse_content(content)
             
             return {
@@ -372,11 +528,8 @@ class ModelRouter:
                         response.raise_for_status()
                         data = response.json()
                     
-                    content = (
-                        data.get("choices", [{}])[0]
-                        .get("message", {})
-                        .get("content", "")
-                    )
+                    # 根据服务商类型解析响应
+                    content = self._extract_content(data, req.get("provider_type", PROVIDER_TYPE_OPENAI))
                     parsed_content = self._parse_content(content)
                     
                     # 【诊断】请求成功
@@ -386,6 +539,11 @@ class ModelRouter:
                     # 更新平均时间
                     stats = self._request_stats[capability]
                     stats["avg_time"] = (stats["avg_time"] * (stats["success"] - 1) + process_time) / stats["success"]
+                    
+                    # 【负载均衡】记录服务商延迟
+                    lb_provider_id = req.get("lb_provider_id")
+                    if lb_provider_id:
+                        self._record_provider_latency(lb_provider_id, process_time)
                     
                     self._log_diagnostics("✅ 成功", capability, f"请求#{request_id} 处理耗时:{process_time:.2f}s")
                     
@@ -783,6 +941,39 @@ class ModelRouter:
             except Exception as e:
                 logger.error(f"[ModelRouter] Async capability stream error {capability}: {e}")
                 yield self._stream_error_event(capability, str(e))
+
+    def _extract_content(self, data: dict, provider_type: str) -> str:
+        """从不同API类型的响应中提取内容"""
+        try:
+            if provider_type == PROVIDER_TYPE_ANTHROPIC:
+                # Claude API 响应格式
+                content_blocks = data.get("content", [])
+                if content_blocks:
+                    texts = []
+                    for block in content_blocks:
+                        if block.get("type") == "text":
+                            texts.append(block.get("text", ""))
+                    return "\n".join(texts)
+                return ""
+            elif provider_type == PROVIDER_TYPE_GOOGLE:
+                # Gemini API 响应格式
+                candidates = data.get("candidates", [])
+                if candidates:
+                    content = candidates[0].get("content", {})
+                    parts = content.get("parts", [])
+                    if parts:
+                        return parts[0].get("text", "")
+                return ""
+            else:
+                # OpenAI 兼容格式（默认）
+                return (
+                    data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
+        except Exception as e:
+            logger.warning(f"[ModelRouter] 响应解析失败 ({provider_type}): {e}")
+            return str(data)
 
     def _parse_content(self, content: str) -> Any:
         """解析AI返回的内容，尝试提取JSON或返回原始文本"""
