@@ -501,6 +501,17 @@ class SimulationEngine:
                                     current_map_state.sea_level
                                 )
                                 logger.info(f"[板块系统] 水体重新分类完成（湖泊检测）")
+                                
+                                # 处理海陆变化导致的物种强制迁徙
+                                relocation_result = habitat_manager.handle_terrain_type_changes(
+                                    alive_species, updated_tiles, self.turn_counter
+                                )
+                                if relocation_result["forced_relocations"] > 0:
+                                    self._emit_event(
+                                        "migration", 
+                                        f"🌊 海陆变化导致 {relocation_result['forced_relocations']} 次物种迁徙",
+                                        "生态"
+                                    )
                         
                         # 合并压力反馈
                         for key, value in tectonic_result.pressure_feedback.items():

@@ -919,6 +919,122 @@ class HabitatManager:
         
         return capacities
 
+    def handle_terrain_type_changes(
+        self,
+        species_list: Sequence[Species],
+        tiles: list[MapTile],
+        turn_index: int,
+    ) -> dict[str, int]:
+        """处理海陆变化导致的物种强制迁徙
+        
+        当海洋变成陆地（或陆地变成海洋）时：
+        - 海洋生物必须迁离变成陆地的地块
+        - 陆生生物必须迁离变成海洋的地块
+        
+        Returns:
+            {"forced_relocations": int, "extinctions": int}
+        """
+        habitats = self.repo.latest_habitats()
+        if not habitats:
+            return {"forced_relocations": 0, "extinctions": 0}
+        
+        # 构建地块映射
+        tile_map = {t.id: t for t in tiles}
+        species_map = {sp.id: sp for sp in species_list if sp.id}
+        
+        # 按物种分组栖息地
+        species_habitats: dict[int, list[HabitatPopulation]] = {}
+        for h in habitats:
+            if h.species_id not in species_habitats:
+                species_habitats[h.species_id] = []
+            species_habitats[h.species_id].append(h)
+        
+        relocations = 0
+        extinctions = 0
+        updated_habitats: list[HabitatPopulation] = []
+        removed_habitats: list[tuple[int, int]] = []  # (tile_id, species_id)
+        
+        for species_id, sp_habitats in species_habitats.items():
+            species = species_map.get(species_id)
+            if not species:
+                continue
+            
+            habitat_type = (getattr(species, 'habitat_type', 'terrestrial') or 'terrestrial').lower()
+            is_aquatic = habitat_type in {'marine', 'deep_sea', 'coastal', 'freshwater'}
+            
+            valid_habitats = []
+            invalid_habitats = []
+            
+            for hab in sp_habitats:
+                tile = tile_map.get(hab.tile_id)
+                if not tile:
+                    continue
+                
+                tile_is_water = tile.elevation < 0
+                
+                # 检查物种是否还能在这个地块生存
+                if is_aquatic and not tile_is_water:
+                    # 水生生物在陆地上无法生存
+                    invalid_habitats.append(hab)
+                elif not is_aquatic and tile_is_water and habitat_type != 'amphibious':
+                    # 陆生生物在水中无法生存（两栖除外）
+                    invalid_habitats.append(hab)
+                else:
+                    valid_habitats.append(hab)
+            
+            if invalid_habitats:
+                # 需要迁移
+                if valid_habitats:
+                    # 将种群转移到有效栖息地
+                    total_displaced = sum(h.population for h in invalid_habitats)
+                    total_valid_suit = sum(h.suitability for h in valid_habitats) or 1.0
+                    
+                    for valid_hab in valid_habitats:
+                        # 按适宜度比例分配迁入种群
+                        portion = valid_hab.suitability / total_valid_suit
+                        added_pop = int(total_displaced * portion * 0.7)  # 迁移损失30%
+                        
+                        updated_habitats.append(HabitatPopulation(
+                            tile_id=valid_hab.tile_id,
+                            species_id=species_id,
+                            population=valid_hab.population + added_pop,
+                            suitability=valid_hab.suitability,
+                            turn_index=turn_index,
+                        ))
+                    
+                    relocations += len(invalid_habitats)
+                    logger.info(f"[栖息地] {species.common_name} 从 {len(invalid_habitats)} 个不适宜地块迁出")
+                else:
+                    # 没有有效栖息地，物种面临严重危机
+                    extinctions += 1
+                    logger.warning(f"[栖息地] {species.common_name} 所有栖息地变得不适宜！")
+                
+                # 标记需要移除的栖息地
+                for inv_hab in invalid_habitats:
+                    removed_habitats.append((inv_hab.tile_id, species_id))
+        
+        # 保存更新
+        if updated_habitats:
+            self.repo.write_habitats(updated_habitats)
+        
+        # 移除不适宜的栖息地记录
+        if removed_habitats:
+            for tile_id, species_id in removed_habitats:
+                # 将种群设为0
+                updated_habitats.append(HabitatPopulation(
+                    tile_id=tile_id,
+                    species_id=species_id,
+                    population=0,
+                    suitability=0.0,
+                    turn_index=turn_index,
+                ))
+            self.repo.write_habitats(updated_habitats)
+        
+        if relocations > 0 or extinctions > 0:
+            logger.info(f"[栖息地] 海陆变化: {relocations} 次迁移, {extinctions} 个物种危机")
+        
+        return {"forced_relocations": relocations, "extinctions": extinctions}
+    
     def adjust_habitats_for_climate(
         self,
         species_list: Sequence[Species],
