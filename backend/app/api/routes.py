@@ -3610,13 +3610,24 @@ async def use_divine_skill(request: dict) -> dict:
     elif skill_id == "mass_extinction":
         all_species = species_repository.list_species()
         culled = 0
+        
+        def calculate_fitness(sp):
+            """计算物种适应度（0-1范围）"""
+            traits = sp.abstract_traits or {}
+            adaptability = traits.get("适应性", 5) / 10.0
+            morph = sp.morphology_stats or {}
+            morph_avg = sum(morph.values()) / max(1, len(morph)) if morph else 0.5
+            return (adaptability + morph_avg) / 2
+        
         for sp in all_species:
-            if sp.status == "alive" and sp.fitness_score and sp.fitness_score < 0.25:
-                sp.status = "extinct"
-                sp.extinction_turn = current_turn
-                sp.extinction_cause = "divine_judgement"
-                species_repository.upsert(sp)
-                culled += 1
+            if sp.status == "alive":
+                fitness = calculate_fitness(sp)
+                if fitness < 0.25:
+                    sp.status = "extinct"
+                    sp.extinction_turn = current_turn
+                    sp.extinction_cause = "divine_judgement"
+                    species_repository.upsert(sp)
+                    culled += 1
         result["details"] = f"大灭绝清除了 {culled} 个低适应力物种"
     
     elif skill_id == "life_spark":
@@ -3692,9 +3703,15 @@ async def use_divine_skill(request: dict) -> dict:
             target.status = "alive"
             target.extinction_turn = None
             target.extinction_cause = None
-            # 设置初始种群为灭绝前的50%
+            # 设置初始种群为灭绝前的50%（存储在 morphology_stats 中）
             restored_population = max(1000, int(last_population * 0.5))
-            target.population = restored_population
+            if not target.morphology_stats:
+                target.morphology_stats = {}
+            target.morphology_stats["population"] = restored_population
+            # 记录历史
+            if not target.history_highlights:
+                target.history_highlights = []
+            target.history_highlights.append(f"回合{current_turn}: 被复苏之光复活")
             species_repository.upsert(target)
             
             result["details"] = f"复苏之光复活了「{target.common_name}」，种群恢复至 {restored_population:,}"
@@ -3821,7 +3838,9 @@ def add_follower(request: dict) -> dict:
     if species.status != "alive":
         raise HTTPException(status_code=400, detail=f"物种 {lineage_code} 已灭绝")
     
-    population = species.population or 100000
+    # 从 morphology_stats 获取种群
+    morph = species.morphology_stats or {}
+    population = morph.get("population", 100000)
     trophic = species.trophic_level or 1
     
     success = divine_progression_service.add_follower(
@@ -3865,10 +3884,14 @@ def bless_follower(request: dict) -> dict:
     if not success:
         raise HTTPException(status_code=400, detail=msg)
     
-    # 应用效果到物种
+    # 应用效果到物种：提升形态特征
     species = species_repository.get_by_lineage(lineage_code)
-    if species and species.fitness_score:
-        species.fitness_score = min(1.0, species.fitness_score + 0.2)
+    if species and species.morphology_stats:
+        for trait in species.morphology_stats:
+            species.morphology_stats[trait] = min(1.0, species.morphology_stats[trait] * 1.1)
+        if not species.history_highlights:
+            species.history_highlights = []
+        species.history_highlights.append(f"获得神眷祝福，适应能力提升")
         species_repository.upsert(species)
     
     return {
@@ -4057,40 +4080,54 @@ async def execute_miracle(request: dict) -> dict:
         result["affected_species"] = [sp.lineage_code for sp in selected]
     
     elif miracle_id == "judgement_day":
-        # 清除低适应力物种
+        # 清除低适应力物种（基于 abstract_traits 的适应性评估）
         all_species = species_repository.list_species()
         culled = 0
         survivors = []
+        
+        def calculate_fitness(sp):
+            """计算物种适应度（0-1范围）"""
+            traits = sp.abstract_traits or {}
+            adaptability = traits.get("适应性", 5) / 10.0
+            morph = sp.morphology_stats or {}
+            morph_avg = sum(morph.values()) / max(1, len(morph)) if morph else 0.5
+            return (adaptability + morph_avg) / 2
+        
         for sp in all_species:
             if sp.status == "alive":
-                if sp.fitness_score and sp.fitness_score < 0.25:
+                fitness = calculate_fitness(sp)
+                if fitness < 0.25:
                     sp.status = "extinct"
                     sp.extinction_turn = current_turn
                     sp.extinction_cause = "divine_judgement"
                     species_repository.upsert(sp)
                     culled += 1
                 else:
-                    # 存活者获得加成
-                    if sp.fitness_score:
-                        sp.fitness_score = min(1.0, sp.fitness_score + 0.1)
+                    # 存活者获得加成：提升形态特征
+                    if sp.morphology_stats:
+                        for trait in sp.morphology_stats:
+                            sp.morphology_stats[trait] = min(1.0, sp.morphology_stats[trait] * 1.05)
                     survivors.append(sp.lineage_code)
                     species_repository.upsert(sp)
         result["details"] = f"末日审判清除了 {culled} 个物种，{len(survivors)} 个物种获得神恩"
     
     elif miracle_id == "great_prosperity":
-        # 大繁荣：增加所有物种种群
+        # 大繁荣：提升所有物种适应能力
         all_species = species_repository.list_species()
         boosted = 0
         for sp in all_species:
             if sp.status == "alive":
-                if sp.population:
-                    sp.population = int(sp.population * 1.5)
-                # 提升适应力
-                if sp.fitness_score:
-                    sp.fitness_score = min(1.0, sp.fitness_score + 0.05)
+                # 提升形态特征（增强适应力）
+                if sp.morphology_stats:
+                    for trait in sp.morphology_stats:
+                        sp.morphology_stats[trait] = min(1.0, sp.morphology_stats[trait] * 1.1)
+                # 标记为受到大繁荣祝福
+                if not sp.history_highlights:
+                    sp.history_highlights = []
+                sp.history_highlights.append(f"回合{current_turn}: 获得大繁荣祝福，适应能力提升")
                 species_repository.upsert(sp)
                 boosted += 1
-        result["details"] = f"大繁荣降临，{boosted} 个物种获得增长"
+        result["details"] = f"大繁荣降临，{boosted} 个物种获得祝福，适应能力提升10%"
     
     elif miracle_id == "divine_sanctuary":
         # 神圣避难所：保护所有存活物种10回合
@@ -4105,14 +4142,19 @@ async def execute_miracle(request: dict) -> dict:
         result["details"] = f"神圣避难所庇护了 {protected} 个物种，持续10回合"
     
     elif miracle_id == "genesis_flood":
-        # 创世洪水：海岸物种受冲击
+        # 创世洪水：海岸物种受冲击，降低形态特征
         all_species = species_repository.list_species()
         affected = 0
         for sp in all_species:
             if sp.status == "alive" and sp.habitat_type in ("coastal", "marine", "freshwater"):
-                # 海洋/水生物种受影响
-                if sp.fitness_score:
-                    sp.fitness_score = max(0.1, sp.fitness_score - 0.1)
+                # 海洋/水生物种受影响：降低形态特征
+                if sp.morphology_stats:
+                    for trait in sp.morphology_stats:
+                        sp.morphology_stats[trait] = max(0.1, sp.morphology_stats[trait] * 0.9)
+                # 记录历史
+                if not sp.history_highlights:
+                    sp.history_highlights = []
+                sp.history_highlights.append(f"回合{current_turn}: 遭受创世洪水冲击")
                 affected += 1
                 species_repository.upsert(sp)
         result["details"] = f"创世洪水重塑海岸，{affected} 个水生物种受到冲击"
@@ -4221,11 +4263,15 @@ def place_wager(request: dict) -> dict:
             detail=f"能量不足！下注 {bet_amount} 能量，当前只有 {energy_service.get_state().current}"
         )
     
-    # 记录初始状态
+    # 记录初始状态（从 morphology_stats 获取种群，计算适应度）
+    morph = species.morphology_stats or {}
+    traits = species.abstract_traits or {}
+    calculated_fitness = (traits.get("适应性", 5) / 10.0 + sum(morph.values()) / max(1, len(morph))) / 2 if morph else 0.5
+    
     initial_state = {
-        "population": species.population,
-        "fitness": species.fitness_score,
-        "regions": len(species.regions) if species.regions else 1,
+        "population": morph.get("population", 10000),
+        "fitness": calculated_fitness,
+        "regions": len(species.regions) if hasattr(species, 'regions') and species.regions else 1,
     }
     
     current_turn = simulation_engine.turn_counter
@@ -4307,8 +4353,11 @@ def check_wager(request: dict) -> dict:
             same_niche = [sp for sp in all_species 
                          if sp.status == "alive" 
                          and sp.trophic_level == species.trophic_level]
-            max_pop = max((sp.population or 0) for sp in same_niche)
-            success = (species.population or 0) >= max_pop
+            # 从 morphology_stats 获取种群
+            def get_pop(sp):
+                return (sp.morphology_stats or {}).get("population", 0)
+            max_pop = max(get_pop(sp) for sp in same_niche) if same_niche else 0
+            success = get_pop(species) >= max_pop
             reason = "已成为霸主" if success else "未能成为霸主"
         else:
             reason = "物种已灭绝"
@@ -4341,13 +4390,16 @@ def check_wager(request: dict) -> dict:
         sp1_alive = sp1 and sp1.status == "alive"
         sp2_alive = sp2 and sp2.status == "alive"
         
+        def get_pop(sp):
+            return (sp.morphology_stats or {}).get("population", 0) if sp else 0
+        
         if sp1_alive and not sp2_alive:
             winner = wager.target_species
         elif sp2_alive and not sp1_alive:
             winner = wager.secondary_species
         elif sp1_alive and sp2_alive:
             # 都存活，比较种群
-            if (sp1.population or 0) > (sp2.population or 0):
+            if get_pop(sp1) > get_pop(sp2):
                 winner = wager.target_species
             else:
                 winner = wager.secondary_species
