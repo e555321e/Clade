@@ -101,18 +101,31 @@ def _infer_ecological_role(species) -> str:
     
     特殊情况：腐食者(detritivore)通过 diet_type 识别
     """
-    trophic = getattr(species, 'trophic_level', 2.0)
     diet_type = getattr(species, 'diet_type', None)
     
     # 特殊处理：腐食者（分解者）
     if diet_type == "detritivore":
         return "decomposer"
     
-    # 基于营养级判断
+    # 【修复】优先使用 diet_type 来推断生态角色（更可靠）
+    if diet_type == "autotroph":
+        return "producer"
+    elif diet_type == "herbivore":
+        return "herbivore"
+    elif diet_type == "carnivore":
+        return "carnivore"
+    elif diet_type == "omnivore":
+        return "omnivore"
+    
+    # 回退方案：基于营养级判断
+    trophic = getattr(species, 'trophic_level', None)
+    # 【修复】确保 trophic 是有效的数字
+    if trophic is None or not isinstance(trophic, (int, float)):
+        trophic = 2.0  # 默认为初级消费者
+    
     if trophic < 1.5:
         return "producer"
     elif trophic < 2.0:
-        # 边界区域：混合营养生物（既能自养又能捕食）
         return "mixotroph"
     elif trophic < 2.8:
         return "herbivore"

@@ -1675,21 +1675,29 @@ class SimulationEngine:
     def _infer_ecological_role(self, species) -> str:
         """根据物种营养级推断生态角色
         
-        营养级划分规则：
-        - T < 1.5: 纯生产者 (producer)
-        - 1.5 ≤ T < 2.0: 混合营养 (mixotroph)
-        - 2.0 ≤ T < 2.8: 草食者 (herbivore)
-        - 2.8 ≤ T < 3.5: 杂食者 (omnivore)
-        - T ≥ 3.5: 肉食者 (carnivore)
+        优先使用 diet_type，回退到 trophic_level
         """
-        trophic = getattr(species, 'trophic_level', 2.0)
         diet_type = getattr(species, 'diet_type', None)
         
         # 特殊处理：腐食者（分解者）
         if diet_type == "detritivore":
             return "decomposer"
         
-        # 基于营养级判断
+        # 【修复】优先使用 diet_type 来推断生态角色（更可靠）
+        if diet_type == "autotroph":
+            return "producer"
+        elif diet_type == "herbivore":
+            return "herbivore"
+        elif diet_type == "carnivore":
+            return "carnivore"
+        elif diet_type == "omnivore":
+            return "omnivore"
+        
+        # 回退方案：基于营养级判断
+        trophic = getattr(species, 'trophic_level', None)
+        if trophic is None or not isinstance(trophic, (int, float)):
+            trophic = 2.0
+        
         if trophic < 1.5:
             return "producer"
         elif trophic < 2.0:
