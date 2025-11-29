@@ -618,31 +618,71 @@ class PlateMotionEngine:
         terrain_changes: list[TerrainChange],
         events: list[TectonicEvent],
     ) -> dict[str, float]:
-        """计算对压力系统的反馈"""
+        """计算对压力系统的反馈
+        
+        【阈值设计说明】
+        正常地质活动（如小型火山喷发、轻微地震）是地球的常态，不应产生全球性压力。
+        只有当地质活动达到"显著"水平时，才会对生态系统产生明显影响。
+        
+        阈值参考：
+        - 火山：magnitude < 5 为小型喷发（不产生压力），>= 7 为大型喷发
+        - 地震：小于5次或平均震级< 5 为背景活动
+        - 硫气溶胶：只有大规模火山群喷发（>=3次高强度）才产生显著影响
+        """
         feedback = {}
         
-        # 统计地震
+        # ========== 地震评估 ==========
         earthquakes = [e for e in events if e.event_type == "earthquake"]
         if earthquakes:
-            avg_magnitude = sum(e.magnitude for e in earthquakes) / len(earthquakes)
-            feedback["tectonic"] = min(5.0, len(earthquakes) * 0.5 + avg_magnitude * 0.3)
+            # 只有中强以上地震（magnitude >= 5）才计入
+            significant_quakes = [e for e in earthquakes if e.magnitude >= 5]
+            if len(significant_quakes) >= 3:  # 需要至少3次显著地震
+                avg_magnitude = sum(e.magnitude for e in significant_quakes) / len(significant_quakes)
+                # 压力值 = (数量因子 + 强度因子)，但需要超过阈值
+                raw_tectonic = len(significant_quakes) * 0.3 + (avg_magnitude - 5) * 0.5
+                feedback["tectonic"] = min(5.0, max(0, raw_tectonic))
         
-        # 统计火山
-        volcanoes = [e for e in events if e.event_type == "volcanic_eruption"]
+        # ========== 火山评估 ==========
+        volcanoes = [e for e in events if e.event_type in ("volcanic_eruption", "supervolcano_eruption")]
         if volcanoes:
-            total_intensity = sum(e.magnitude for e in volcanoes) / 10
-            feedback["volcanic"] = min(8.0, total_intensity)
-            feedback["sulfur_aerosol"] = len(volcanoes) * 0.3
+            # 区分小型喷发和大型喷发
+            large_eruptions = [e for e in volcanoes if e.magnitude >= 7]  # 大型喷发
+            medium_eruptions = [e for e in volcanoes if 5 <= e.magnitude < 7]  # 中型喷发
+            small_eruptions = [e for e in volcanoes if e.magnitude < 5]  # 小型喷发（忽略）
+            
+            # 超级火山始终产生极端压力
+            super_volcanoes = [e for e in volcanoes if e.event_type == "supervolcano_eruption"]
+            
+            if super_volcanoes:
+                # 超级火山：极端事件
+                total_intensity = sum(e.magnitude for e in super_volcanoes) / 10
+                feedback["volcanic"] = min(10.0, 5.0 + total_intensity)
+                feedback["sulfur_aerosol"] = min(8.0, 3.0 + len(super_volcanoes) * 2.0)
+            elif large_eruptions:
+                # 大型喷发：产生显著压力
+                total_intensity = sum(e.magnitude for e in large_eruptions) / 10
+                feedback["volcanic"] = min(6.0, total_intensity)
+                # 只有>=2次大型喷发才产生明显硫气溶胶
+                if len(large_eruptions) >= 2:
+                    feedback["sulfur_aerosol"] = min(4.0, len(large_eruptions) * 0.8)
+            elif len(medium_eruptions) >= 3:
+                # 多次中型喷发才产生轻微压力
+                total_intensity = sum(e.magnitude for e in medium_eruptions) / 10
+                feedback["volcanic"] = min(3.0, total_intensity * 0.5)
+                # 中型喷发不产生硫气溶胶（除非数量很多）
+                if len(medium_eruptions) >= 5:
+                    feedback["sulfur_aerosol"] = min(2.0, len(medium_eruptions) * 0.2)
+            # 小型喷发：背景地质活动，不产生压力反馈
         
-        # 统计造山
+        # ========== 造山评估 ==========
         uplifts = [tc for tc in terrain_changes if tc.elevation_delta > 5]
-        if len(uplifts) > 10:
-            feedback["altitude_change"] = len(uplifts) * 0.2
+        if len(uplifts) > 15:  # 提高阈值
+            feedback["altitude_change"] = min(3.0, (len(uplifts) - 15) * 0.15)
         
-        # 统计沉降
+        # ========== 沉降评估 ==========
         subsidences = [tc for tc in terrain_changes if tc.elevation_delta < -3]
-        if len(subsidences) > 10:
-            feedback["sea_level"] = len(subsidences) * 0.1
+        if len(subsidences) > 15:  # 提高阈值
+            feedback["sea_level"] = min(3.0, (len(subsidences) - 15) * 0.08)
         
         return feedback
     
