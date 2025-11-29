@@ -494,12 +494,11 @@ class SimulationEngine:
                                 avg_change = sum(abs(c["delta"]) for c in tectonic_result.terrain_changes) / len(tectonic_result.terrain_changes)
                                 logger.info(f"[板块系统] 应用了 {len(updated_tiles)} 处地形变化 (平均 {avg_change:.2f}m)")
                                 
-                                # 如果有较大变化，重新分类地形
-                                max_change = max(abs(c["delta"]) for c in tectonic_result.terrain_changes)
-                                if max_change > 10:  # 变化超过10米时重新分类
-                                    self.map_manager.reclassify_terrain_by_sea_level(
-                                        current_map_state.sea_level
-                                    )
+                                # 每回合都重新分类地形和水体（检测新湖泊、海岸变化等）
+                                self.map_manager.reclassify_terrain_by_sea_level(
+                                    current_map_state.sea_level
+                                )
+                                logger.info(f"[板块系统] 水体重新分类完成（湖泊检测）")
                         
                         # 合并压力反馈
                         for key, value in tectonic_result.pressure_feedback.items():

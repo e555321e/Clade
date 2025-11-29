@@ -30,7 +30,9 @@ class FeatureType(Enum):
     TRENCH = "trench"             # 海沟
     RIDGE = "ridge"               # 洋中脊
     RIFT = "rift"                 # 裂谷
+    RIFT_LAKE = "rift_lake"       # 裂谷湖（构造湖）
     MOUNTAIN_RANGE = "mountain"   # 山脉
+    CRATER_LAKE = "crater_lake"   # 火山口湖
 
 
 class MotionPhase(Enum):

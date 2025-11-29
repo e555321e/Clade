@@ -82,6 +82,7 @@ class GeologicalFeatureDistributor:
         self.hotspots.clear()
         self.trenches.clear()
         self.ridges.clear()
+        self.rift_lakes: list[GeologicalFeature] = []
         self._used_names.clear()
         
         # 按边界类型分组地块
@@ -104,13 +105,17 @@ class GeologicalFeatureDistributor:
         # === 5. 生成海沟 ===
         self._generate_trenches(subduction_tiles, tiles, plates)
         
-        # === 6. 更新地块属性 ===
+        # === 6. 生成裂谷湖（构造湖）===
+        self._generate_rift_lakes(divergent_tiles, tiles, plates)
+        
+        # === 7. 更新地块属性 ===
         self._update_tile_properties(tiles)
         
         return {
             "volcanoes": self.volcanoes.copy(),
             "hotspots": self.hotspots.copy(),
             "trenches": self.trenches.copy(),
+            "rift_lakes": self.rift_lakes.copy(),
         }
     
     def _group_tiles_by_boundary(
@@ -330,6 +335,68 @@ class GeologicalFeatureDistributor:
                     boundary_type=BoundaryType.SUBDUCTION,
                 )
                 self.trenches.append(trench)
+    
+    def _generate_rift_lakes(
+        self,
+        divergent_tiles: list[SimpleTile],
+        all_tiles: list[SimpleTile],
+        plates: list[Plate],
+    ) -> None:
+        """在裂谷地带生成构造湖（类似东非大裂谷湖群）"""
+        if not divergent_tiles:
+            return
+        
+        cfg = self.config
+        lake_prob = cfg.get("rift_lake_probability", 0.15)
+        min_dist = cfg.get("rift_lake_min_distance", 8)
+        
+        # 只在陆地裂谷生成湖泊
+        land_rifts = [t for t in divergent_tiles if t.elevation >= 0]
+        
+        for tile in land_rifts:
+            if random.random() > lake_prob:
+                continue
+            
+            # 检查与现有湖泊的距离
+            if not self._check_lake_distance(tile.x, tile.y, min_dist):
+                continue
+            
+            # 创建裂谷湖标记
+            lake = GeologicalFeature(
+                id=len(self.rift_lakes),
+                feature_type=FeatureType.RIFT_LAKE,
+                x=tile.x,
+                y=tile.y,
+                tile_id=tile.id,
+                intensity=random.uniform(0.3, 0.8),
+                plate_id=tile.plate_id,
+                boundary_type=BoundaryType.DIVERGENT,
+                name=self._generate_lake_name(),
+            )
+            self.rift_lakes.append(lake)
+            
+            # 标记地块为潜在湖泊区域（降低海拔使其成为凹地）
+            tile.elevation = max(-50, tile.elevation - random.uniform(100, 300))
+    
+    def _check_lake_distance(self, x: int, y: int, min_dist: int) -> bool:
+        """检查新湖泊与现有湖泊的距离"""
+        for lake in self.rift_lakes:
+            if self._distance(x, y, lake.x, lake.y) < min_dist:
+                return False
+        return True
+    
+    def _generate_lake_name(self) -> str:
+        """生成湖泊名称"""
+        prefixes = ["明", "清", "碧", "蓝", "翠", "幽", "静", "澄", "深", "玄"]
+        suffixes = ["湖", "潭", "泽", "海", "池"]
+        
+        for _ in range(50):
+            name = random.choice(prefixes) + random.choice(suffixes)
+            if name not in self._used_names:
+                self._used_names.add(name)
+                return name
+        
+        return f"湖{len(self.rift_lakes) + 1}"
     
     def _check_volcano_distance(self, x: int, y: int, min_dist: int) -> bool:
         """检查新火山与现有火山的距离"""

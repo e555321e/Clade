@@ -72,6 +72,11 @@ TECTONIC_CONFIG = {
         "trench_max_depth": -8000,              # 海沟最大深度 (米)
         "trench_deepen_rate": 50,               # 海沟每回合加深速率 (米)
         "trench_min_ocean_depth": -500,         # 形成海沟的最小海洋深度
+        
+        # 构造湖泊
+        "rift_lake_probability": 0.15,          # 裂谷地带形成湖泊的概率
+        "rift_lake_min_distance": 8,            # 裂谷湖最小间距
+        "crater_lake_probability": 0.3,         # 火山口形成湖泊的概率
     },
     
     # ==================== 事件概率 ====================
