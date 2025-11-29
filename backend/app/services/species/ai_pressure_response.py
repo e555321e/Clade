@@ -832,6 +832,33 @@ class AIPressureResponseService:
         total_pressure = sum(abs(v) for v in environment_pressure.values())
         population = species.morphology_stats.get("population", 10000) if species.morphology_stats else 10000
         
+        # 获取食性类型
+        diet_type = getattr(species, 'diet_type', 'omnivore')
+        diet_type_cn = {
+            "autotroph": "自养生物（化能/光合）",
+            "herbivore": "草食动物",
+            "carnivore": "肉食动物",
+            "omnivore": "杂食动物",
+            "detritivore": "腐食/分解者",
+        }.get(diet_type, diet_type)
+        
+        # 提取关键适应性特质（用于快速判断）
+        key_traits = []
+        traits = species.abstract_traits or {}
+        if traits.get("耐热性", 0) >= 8:
+            key_traits.append("🔥高耐热")
+        if traits.get("耐寒性", 0) >= 8:
+            key_traits.append("❄️高耐寒")
+        if traits.get("耐盐性", 0) >= 8:
+            key_traits.append("🧂高耐盐")
+        if traits.get("耐旱性", 0) >= 8:
+            key_traits.append("🏜️高耐旱")
+        if traits.get("光照需求", 0) <= 2:
+            key_traits.append("🌑无需光照")
+        if traits.get("氧气需求", 0) <= 2:
+            key_traits.append("💨低氧适应")
+        key_traits_str = ", ".join(key_traits) if key_traits else "无特殊适应性"
+        
         return {
             "latin_name": species.latin_name,
             "common_name": species.common_name,
@@ -839,6 +866,8 @@ class AIPressureResponseService:
             "trophic_level": species.trophic_level,
             "trophic_category": trophic_category,
             "habitat_type": species.habitat_type or "terrestrial",
+            "diet_type": diet_type_cn,
+            "key_adaptations": key_traits_str,
             "population": int(population),
             "description": (species.description or "")[:200],
             "traits_summary": traits_summary,
