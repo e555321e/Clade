@@ -3893,11 +3893,11 @@ def bless_follower(request: dict) -> dict:
     if not success:
         raise HTTPException(status_code=400, detail=msg)
     
-    # 应用效果到物种：提升形态特征
+    # 应用效果到物种：提升抽象特征
     species = species_repository.get_by_lineage(lineage_code)
-    if species and species.morphology_stats:
-        for trait in species.morphology_stats:
-            species.morphology_stats[trait] = min(1.0, species.morphology_stats[trait] * 1.1)
+    if species and species.abstract_traits:
+        for trait in species.abstract_traits:
+            species.abstract_traits[trait] = min(10.0, species.abstract_traits[trait] * 1.1)
         if not species.history_highlights:
             species.history_highlights = []
         species.history_highlights.append(f"获得神眷祝福，适应能力提升")
@@ -4112,24 +4112,24 @@ async def execute_miracle(request: dict) -> dict:
                     species_repository.upsert(sp)
                     culled += 1
                 else:
-                    # 存活者获得加成：提升形态特征
-                    if sp.morphology_stats:
-                        for trait in sp.morphology_stats:
-                            sp.morphology_stats[trait] = min(1.0, sp.morphology_stats[trait] * 1.05)
+                    # 存活者获得加成：提升抽象特征
+                    if sp.abstract_traits:
+                        for trait in sp.abstract_traits:
+                            sp.abstract_traits[trait] = min(10.0, sp.abstract_traits[trait] * 1.05)
                     survivors.append(sp.lineage_code)
                     species_repository.upsert(sp)
         result["details"] = f"末日审判清除了 {culled} 个物种，{len(survivors)} 个物种获得神恩"
     
     elif miracle_id == "great_prosperity":
-        # 大繁荣：提升所有物种适应能力
+        # 大繁荣：提升所有物种的抽象特征（0-10范围）
         all_species = species_repository.list_species()
         boosted = 0
         for sp in all_species:
             if sp.status == "alive":
-                # 提升形态特征（增强适应力）
-                if sp.morphology_stats:
-                    for trait in sp.morphology_stats:
-                        sp.morphology_stats[trait] = min(1.0, sp.morphology_stats[trait] * 1.1)
+                # 提升抽象特征（适应性、繁殖速度等，0-10范围）
+                if sp.abstract_traits:
+                    for trait in sp.abstract_traits:
+                        sp.abstract_traits[trait] = min(10.0, sp.abstract_traits[trait] * 1.1)
                 # 标记为受到大繁荣祝福
                 if not sp.history_highlights:
                     sp.history_highlights = []
@@ -4151,15 +4151,15 @@ async def execute_miracle(request: dict) -> dict:
         result["details"] = f"神圣避难所庇护了 {protected} 个物种，持续10回合"
     
     elif miracle_id == "genesis_flood":
-        # 创世洪水：海岸物种受冲击，降低形态特征
+        # 创世洪水：海岸物种受冲击，降低抽象特征
         all_species = species_repository.list_species()
         affected = 0
         for sp in all_species:
             if sp.status == "alive" and sp.habitat_type in ("coastal", "marine", "freshwater"):
-                # 海洋/水生物种受影响：降低形态特征
-                if sp.morphology_stats:
-                    for trait in sp.morphology_stats:
-                        sp.morphology_stats[trait] = max(0.1, sp.morphology_stats[trait] * 0.9)
+                # 海洋/水生物种受影响：降低抽象特征（适应性等）
+                if sp.abstract_traits:
+                    for trait in sp.abstract_traits:
+                        sp.abstract_traits[trait] = max(1.0, sp.abstract_traits[trait] * 0.9)
                 # 记录历史
                 if not sp.history_highlights:
                     sp.history_highlights = []
