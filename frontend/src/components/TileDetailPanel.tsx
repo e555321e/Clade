@@ -34,46 +34,64 @@ interface Props {
   onSelectSpecies: (lineageCode: string) => void;
 }
 
-// 格式化宜居度分解为 tooltip 文本
+// 12 维特征名称和图标映射
+const DIMENSION_INFO: Record<string, { icon: string; label: string; weight: number }> = {
+  thermal: { icon: "🌡️", label: "温度", weight: 0.10 },
+  moisture: { icon: "💧", label: "湿度", weight: 0.08 },
+  altitude: { icon: "⛰️", label: "海拔", weight: 0.08 },
+  salinity: { icon: "🧂", label: "盐度", weight: 0.10 },
+  resources: { icon: "💎", label: "资源", weight: 0.08 },
+  aquatic: { icon: "🌊", label: "水域性", weight: 0.22 },
+  depth: { icon: "🔽", label: "深度", weight: 0.08 },
+  light: { icon: "☀️", label: "光照", weight: 0.06 },
+  volcanic: { icon: "🌋", label: "地热", weight: 0.04 },
+  stability: { icon: "🏔️", label: "稳定性", weight: 0.04 },
+  vegetation: { icon: "🌿", label: "植被", weight: 0.06 },
+  river: { icon: "🏞️", label: "河流", weight: 0.06 },
+};
+
+// 格式化宜居度分解为 tooltip 文本 (新版 12 维系统)
 function formatBreakdownTooltip(breakdown: SuitabilityBreakdown, displayedSuitability: number): string {
-  // 计算各因子的实际贡献
-  const tempContrib = breakdown.temp_score * 0.20;
-  const humidContrib = breakdown.humidity_score * 0.15;
-  const foodContrib = breakdown.food_score * 0.30;
-  const biomeContrib = breakdown.biome_score * 0.25;
-  const specialContrib = breakdown.special_bonus * 0.10;
-  
-  // 正确判断是否为消费者：has_prey 必须是 true 或 false，而非 null/undefined
-  const isConsumer = breakdown.has_prey === true || breakdown.has_prey === false;
-  const foodLabel = isConsumer ? "猎物供给" : "地块资源";
-  
-  // 根据分解数据计算的宜居度
-  const calculatedTotal = tempContrib + humidContrib + foodContrib + biomeContrib + specialContrib;
-  
   const lines: string[] = [
-    `📊 宜居度: ${(calculatedTotal * 100).toFixed(0)}%`,
-    `────────────────`,
-    `🌡️ 温度: ${(breakdown.temp_score * 100).toFixed(0)}% ×20% → ${(tempContrib * 100).toFixed(1)}%`,
-    `💧 湿度: ${(breakdown.humidity_score * 100).toFixed(0)}% ×15% → ${(humidContrib * 100).toFixed(1)}%`,
-    `🍖 ${foodLabel}: ${(breakdown.food_score * 100).toFixed(0)}% ×30% → ${(foodContrib * 100).toFixed(1)}%`,
+    `📊 宜居度: ${(displayedSuitability * 100).toFixed(0)}%`,
+    `════════════════════`,
   ];
   
-  // 对消费者显示猎物状态
-  if (isConsumer) {
-    if (breakdown.has_prey) {
-      const abundance = breakdown.prey_abundance ?? 0;
-      if (abundance < 0.5) {
-        lines.push(`   ⚠️ 猎物稀缺 (${abundance.toFixed(2)})`);
-      }
-    } else {
-      lines.push(`   ⚠️ 无猎物！`);
-    }
+  // 显示语义和特征分数
+  if (breakdown.semantic_score > 0 || breakdown.feature_score > 0) {
+    lines.push(`🧠 语义匹配: ${(breakdown.semantic_score * 100).toFixed(0)}% (×40%)`);
+    lines.push(`📐 特征匹配: ${(breakdown.feature_score * 100).toFixed(0)}% (×60%)`);
+    lines.push(`────────────────────`);
   }
   
-  lines.push(`🌿 环境: ${(breakdown.biome_score * 100).toFixed(0)}% ×25% → ${(biomeContrib * 100).toFixed(1)}%`);
+  // 显示 12 维特征分解
+  lines.push(`📊 特征分解:`);
   
-  if (breakdown.special_bonus > 0) {
-    lines.push(`✨ 特殊: ${(breakdown.special_bonus * 100).toFixed(0)}% ×10% → ${(specialContrib * 100).toFixed(1)}%`);
+  // 找出最低分的维度（可能是瓶颈）
+  const dimensions = Object.entries(DIMENSION_INFO);
+  const scores: { key: string; score: number; info: typeof DIMENSION_INFO[string] }[] = [];
+  
+  for (const [key, info] of dimensions) {
+    const score = (breakdown as Record<string, number>)[key] ?? 0;
+    scores.push({ key, score, info });
+  }
+  
+  // 按分数排序，低分在前（问题因素优先显示）
+  scores.sort((a, b) => a.score - b.score);
+  
+  // 显示前 6 个最重要/最低分的维度
+  const showCount = 6;
+  for (let i = 0; i < Math.min(showCount, scores.length); i++) {
+    const { score, info } = scores[i];
+    const pct = (score * 100).toFixed(0);
+    const bar = score < 0.5 ? "⚠️" : score < 0.8 ? "○" : "●";
+    lines.push(`  ${info.icon} ${info.label}: ${pct}% ${bar}`);
+  }
+  
+  // 如果水域性匹配度低，特别提示
+  if (breakdown.aquatic < 0.5) {
+    lines.push(`────────────────────`);
+    lines.push(`⚠️ 水域/陆地不匹配！`);
   }
   
   return lines.join('\n');

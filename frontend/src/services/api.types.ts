@@ -176,13 +176,32 @@ export interface MapTileInfo {
 
 // 宜居度分解数据
 export interface SuitabilityBreakdown {
-  temp_score: number;       // 温度适应分 (0-1)
-  humidity_score: number;   // 湿度适应分 (0-1)
-  food_score: number;       // 食物/资源分 (0-1)
-  biome_score: number;      // 环境匹配分 (0-1)
-  special_bonus: number;    // 特殊加成分 (0-1)
-  has_prey?: boolean;       // 是否有猎物（仅消费者）
-  prey_abundance?: number;  // 猎物丰富度（仅消费者）
+  // === 总体分数 ===
+  semantic_score: number;   // 语义相似度 (0-1)，来自 Embedding
+  feature_score: number;    // 特征相似度 (0-1)，来自 12D 向量
+  
+  // === 12 维特征分解 ===
+  thermal: number;          // 热量匹配 (0-1)
+  moisture: number;         // 水分匹配 (0-1)
+  altitude: number;         // 海拔匹配 (0-1)
+  salinity: number;         // 盐度匹配 (0-1)
+  resources: number;        // 资源匹配 (0-1)
+  aquatic: number;          // 水域性匹配 (0-1) - 最重要！
+  depth: number;            // 深度匹配 (0-1)
+  light: number;            // 光照匹配 (0-1)
+  volcanic: number;         // 地热匹配 (0-1)
+  stability: number;        // 稳定性匹配 (0-1)
+  vegetation: number;       // 植被匹配 (0-1)
+  river: number;            // 河流匹配 (0-1)
+  
+  // === 兼容旧字段（可选）===
+  temp_score?: number;
+  humidity_score?: number;
+  food_score?: number;
+  biome_score?: number;
+  special_bonus?: number;
+  has_prey?: boolean;
+  prey_abundance?: number;
 }
 
 export interface HabitatEntry {

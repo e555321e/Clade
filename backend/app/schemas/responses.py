@@ -105,14 +105,36 @@ class MapTileInfo(BaseModel):
 
 
 class SuitabilityBreakdown(BaseModel):
-    """宜居度分解数据"""
-    temp_score: float = 0.0       # 温度适应分 (0-1)
-    humidity_score: float = 0.0   # 湿度适应分 (0-1)
-    food_score: float = 0.0       # 食物/资源分 (0-1)
-    biome_score: float = 0.0      # 环境匹配分 (0-1)
-    special_bonus: float = 0.0    # 特殊加成分 (0-1)
-    has_prey: bool | None = None  # 是否有猎物（仅消费者）
-    prey_abundance: float | None = None  # 猎物丰富度（仅消费者）
+    """宜居度分解数据 - 混合 Embedding 系统
+    
+    结合语义相似度和特征相似度计算宜居度。
+    """
+    # === 总体分数 ===
+    semantic_score: float = 0.0   # 语义相似度 (0-1)，来自 Embedding
+    feature_score: float = 0.0    # 特征相似度 (0-1)，来自 12D 向量
+    
+    # === 12 维特征分解 ===
+    thermal: float = 0.0          # 热量匹配 (0-1)
+    moisture: float = 0.0         # 水分匹配 (0-1)
+    altitude: float = 0.0         # 海拔匹配 (0-1)
+    salinity: float = 0.0         # 盐度匹配 (0-1)
+    resources: float = 0.0        # 资源匹配 (0-1)
+    aquatic: float = 0.0          # 水域性匹配 (0-1) - 最重要！
+    depth: float = 0.0            # 深度匹配 (0-1)
+    light: float = 0.0            # 光照匹配 (0-1)
+    volcanic: float = 0.0         # 地热匹配 (0-1)
+    stability: float = 0.0        # 稳定性匹配 (0-1)
+    vegetation: float = 0.0       # 植被匹配 (0-1)
+    river: float = 0.0            # 河流匹配 (0-1)
+    
+    # === 兼容旧字段（可选） ===
+    temp_score: float | None = None       # 旧版温度分
+    humidity_score: float | None = None   # 旧版湿度分
+    food_score: float | None = None       # 旧版食物分
+    biome_score: float | None = None      # 旧版环境分
+    special_bonus: float | None = None    # 旧版特殊加成
+    has_prey: bool | None = None          # 是否有猎物（仅消费者）
+    prey_abundance: float | None = None   # 猎物丰富度（仅消费者）
 
 
 class HabitatEntry(BaseModel):

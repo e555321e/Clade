@@ -836,45 +836,46 @@ class MapStateManager:
                     tile_consumer_populations[item.tile_id] = 0
                 tile_consumer_populations[item.tile_id] += item.population
         
+        # 使用混合 Embedding 宜居度服务
+        from .suitability_service import get_suitability_service
+        from ...schemas.responses import SuitabilityBreakdown
+        
+        suitability_service = get_suitability_service()
+        
         habitat_entries = []
         for item in habitats:
             species = species_map.get(item.species_id)
             tile = tile_map.get(item.tile_id)
             
-            # 计算宜居度分解
+            # 计算宜居度分解 (使用新的混合 Embedding 系统)
             breakdown = None
-            if species and tile:
-                trophic = getattr(species, 'trophic_level', 1.0) or 1.0
-                
-                # 计算该物种的猎物种群（比它低一个营养级）
-                prey_pop = 0
-                if trophic >= 2.0:
-                    prey_range = math.floor((trophic - 1) * 2) / 2.0
-                    tile_prey = tile_prey_populations.get(item.tile_id, {})
-                    prey_pop = sum(p for r, p in tile_prey.items() if r <= prey_range)
-                
-                consumer_pop = tile_consumer_populations.get(item.tile_id, 0)
-                
-                breakdown_data = self._suitability_score_with_breakdown(
-                    species, 
-                    tile,
-                    prey_tile_populations={item.tile_id: prey_pop} if prey_pop > 0 else None,
-                    consumer_tile_populations={item.tile_id: consumer_pop} if consumer_pop > 0 else None,
-                )
-                
-                from ...schemas.responses import SuitabilityBreakdown
-                breakdown = SuitabilityBreakdown(
-                    temp_score=round(breakdown_data["temp_score"], 3),
-                    humidity_score=round(breakdown_data["humidity_score"], 3),
-                    food_score=round(breakdown_data["food_score"], 3),
-                    biome_score=round(breakdown_data["biome_score"], 3),
-                    special_bonus=round(breakdown_data["special_bonus"], 3),
-                    has_prey=breakdown_data.get("has_prey"),
-                    prey_abundance=round(breakdown_data["prey_abundance"], 2) if breakdown_data.get("prey_abundance") is not None else None,
-                )
+            calculated_suitability = item.suitability
             
-            # 使用实时计算的宜居度，保证与 breakdown 一致
-            calculated_suitability = breakdown_data["total"] if breakdown_data else item.suitability
+            if species and tile:
+                try:
+                    result = suitability_service.compute_suitability(species, tile)
+                    calculated_suitability = result.total
+                    
+                    # 构建分解数据
+                    breakdown = SuitabilityBreakdown(
+                        semantic_score=result.semantic_score,
+                        feature_score=result.feature_score,
+                        # 12 维特征分解
+                        thermal=result.feature_breakdown.get("thermal", 0),
+                        moisture=result.feature_breakdown.get("moisture", 0),
+                        altitude=result.feature_breakdown.get("altitude", 0),
+                        salinity=result.feature_breakdown.get("salinity", 0),
+                        resources=result.feature_breakdown.get("resources", 0),
+                        aquatic=result.feature_breakdown.get("aquatic", 0),
+                        depth=result.feature_breakdown.get("depth", 0),
+                        light=result.feature_breakdown.get("light", 0),
+                        volcanic=result.feature_breakdown.get("volcanic", 0),
+                        stability=result.feature_breakdown.get("stability", 0),
+                        vegetation=result.feature_breakdown.get("vegetation", 0),
+                        river=result.feature_breakdown.get("river", 0),
+                    )
+                except Exception as e:
+                    logger.warning(f"[MapManager] 宜居度计算失败: {e}")
             
             habitat_entries.append(
                 HabitatEntry(
