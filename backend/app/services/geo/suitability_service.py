@@ -276,12 +276,61 @@ class SuitabilityService:
     # ============ 特征向量提取 ============
     
     def _extract_species_features(self, species: "Species") -> np.ndarray:
-        """从物种属性提取 12 维特征向量"""
+        """从物种属性提取 12 维特征向量
+        
+        【改进】综合多个属性判断水生/陆生，而不仅仅依赖 habitat_type
+        """
         traits = getattr(species, 'abstract_traits', {}) or {}
-        habitat = (getattr(species, 'habitat_type', 'terrestrial') or 'terrestrial').lower()
+        habitat = (getattr(species, 'habitat_type', '') or '').lower()
         trophic = getattr(species, 'trophic_level', 1.0) or 1.0
         caps = getattr(species, 'capabilities', []) or []
-        growth = getattr(species, 'growth_form', 'aquatic') or 'aquatic'
+        growth = (getattr(species, 'growth_form', '') or '').lower()
+        common_name = (getattr(species, 'common_name', '') or '').lower()
+        desc = (getattr(species, 'description', '') or '').lower()
+        
+        # 【智能判断】物种是否为水生
+        # 综合考虑: habitat_type, growth_form, common_name, description, capabilities
+        is_aquatic_species = False
+        is_deep_sea = False
+        is_freshwater = False
+        
+        # 1. 从 habitat_type 判断
+        if habitat in ("marine", "deep_sea", "freshwater", "coastal"):
+            is_aquatic_species = True
+            is_deep_sea = habitat == "deep_sea"
+            is_freshwater = habitat == "freshwater"
+        
+        # 2. 从 growth_form 判断 (水生植物)
+        if growth == "aquatic" and trophic < 2.0:
+            is_aquatic_species = True
+        
+        # 3. 从名称/描述判断
+        aquatic_keywords = ["藻", "浮游", "海洋", "深海", "水生", "海", "鱼", "虾", "蟹", "贝", 
+                          "珊瑚", "水母", "海星", "海胆", "鲸", "鲨", "细菌"]
+        freshwater_keywords = ["淡水", "河", "湖", "溪"]
+        deep_keywords = ["深海", "热泉", "硫", "化能"]
+        
+        for kw in aquatic_keywords:
+            if kw in common_name or kw in desc:
+                is_aquatic_species = True
+                break
+        
+        for kw in freshwater_keywords:
+            if kw in common_name or kw in desc:
+                is_freshwater = True
+                is_aquatic_species = True
+                break
+        
+        for kw in deep_keywords:
+            if kw in common_name or kw in desc:
+                is_deep_sea = True
+                is_aquatic_species = True
+                break
+        
+        # 4. 从能力判断
+        if "chemosynthesis" in caps:
+            is_deep_sea = True
+            is_aquatic_species = True
         
         # D0: 热量偏好 (0=极寒, 0.5=温和, 1=极热)
         heat = traits.get('耐热性', 5)
@@ -292,82 +341,93 @@ class SuitabilityService:
         # D1: 水分偏好 (0=干旱, 1=湿润)
         drought = traits.get('耐旱性', 5)
         moisture = 1 - drought / 10
+        if is_aquatic_species:
+            moisture = max(moisture, 0.8)  # 水生物种偏好高湿度
         
         # D2: 海拔偏好 (0=深海, 0.5=海平面, 1=高山)
-        altitude_map = {
-            "deep_sea": 0.1,
-            "marine": 0.3,
-            "coastal": 0.45,
-            "freshwater": 0.5,
-            "amphibious": 0.5,
-            "terrestrial": 0.6,
-            "aerial": 0.75,
-        }
-        altitude = altitude_map.get(habitat, 0.5)
+        if is_deep_sea:
+            altitude = 0.1
+        elif is_aquatic_species and not is_freshwater:
+            altitude = 0.3  # 海洋
+        elif is_freshwater:
+            altitude = 0.5  # 淡水
+        elif habitat == "aerial":
+            altitude = 0.75
+        elif habitat == "terrestrial" or not is_aquatic_species:
+            altitude = 0.6
+        else:
+            altitude = 0.5
         
         # D3: 盐度偏好 (0=淡水, 1=高盐)
-        salinity_map = {
-            "marine": 0.9,
-            "deep_sea": 0.9,
-            "coastal": 0.7,
-            "freshwater": 0.1,
-            "amphibious": 0.4,
-            "terrestrial": 0.3,
-            "aerial": 0.3,
-        }
-        salinity_pref = salinity_map.get(habitat, 0.5)
+        if is_freshwater:
+            salinity_pref = 0.1
+        elif is_aquatic_species:
+            salinity_pref = 0.85  # 海洋生物偏好高盐
+        else:
+            salinity_pref = 0.3  # 陆生不太在意
         
-        # D4: 资源偏好 (生产者需要高资源)
-        resources_pref = 0.8 if trophic < 2.0 else 0.4
+        # D4: 资源偏好 (生产者需要高资源，水生消费者也需要)
+        if trophic < 2.0:
+            resources_pref = 0.8
+        elif is_aquatic_species:
+            resources_pref = 0.5  # 水生消费者需要猎物，间接需要资源
+        else:
+            resources_pref = 0.4
         
         # D5: 水域性 (0=纯陆地, 1=纯水域) - 最重要！
-        aquatic_map = {
-            "marine": 1.0,
-            "deep_sea": 1.0,
-            "freshwater": 1.0,
-            "coastal": 0.8,
-            "amphibious": 0.5,
-            "terrestrial": 0.0,
-            "aerial": 0.1,
-        }
-        aquatic = aquatic_map.get(habitat, 0.0)
+        if is_aquatic_species:
+            aquatic = 1.0
+        elif habitat == "amphibious":
+            aquatic = 0.5
+        else:
+            aquatic = 0.0
         
         # D6: 深度偏好 (0=浅/陆, 1=深海)
-        depth_pref = 1.0 if habitat == "deep_sea" else (0.3 if habitat == "marine" else 0.0)
+        if is_deep_sea:
+            depth_pref = 0.9
+        elif is_aquatic_species:
+            depth_pref = 0.4  # 一般水生物种偏好中等深度
+        else:
+            depth_pref = 0.0
         
         # D7: 光照需求 (0=喜暗, 1=需光)
         if "photosynthesis" in caps:
             light_pref = 0.95  # 光合作用必须有光
-        elif "bioluminescence" in caps:
-            light_pref = 0.2   # 发光生物适应黑暗
-        elif habitat == "deep_sea":
+        elif "chemosynthesis" in caps or "bioluminescence" in caps:
+            light_pref = 0.2   # 化能/发光生物适应黑暗
+        elif is_deep_sea:
             light_pref = 0.1
+        elif is_aquatic_species:
+            light_pref = 0.5  # 一般水生物种
         else:
             light_pref = 0.6
         
         # D8: 地热偏好
-        if "chemosynthesis" in caps:
-            volcanic_pref = 0.9  # 化能合成喜欢地热
+        if "chemosynthesis" in caps or is_deep_sea:
+            volcanic_pref = 0.8  # 深海/化能合成物种喜欢地热
         else:
-            volcanic_pref = 0.2
+            volcanic_pref = 0.3
         
         # D9: 稳定性偏好 (大多数生物喜欢稳定)
-        stability_pref = 0.7
+        stability_pref = 0.6
         
         # D10: 植被偏好
-        vegetation_map = {
-            "aquatic": 0.1,
-            "moss": 0.3,
-            "herb": 0.5,
-            "shrub": 0.7,
-            "tree": 0.9,
-        }
-        vegetation_pref = vegetation_map.get(growth, 0.3)
-        if trophic >= 2.0:  # 动物对植被要求低
+        if is_aquatic_species:
+            vegetation_pref = 0.2  # 水生物种不关心陆地植被
+        elif growth in ("moss", "herb", "shrub", "tree"):
+            vegetation_map = {"moss": 0.3, "herb": 0.5, "shrub": 0.7, "tree": 0.9}
+            vegetation_pref = vegetation_map.get(growth, 0.5)
+        else:
             vegetation_pref = 0.4
         
         # D11: 河流偏好
-        river_pref = 0.8 if habitat == "freshwater" else 0.4
+        # 【改进】海洋生物不关心河流，用中性值
+        if is_freshwater:
+            river_pref = 0.9  # 淡水物种非常需要河流
+        elif is_aquatic_species:
+            river_pref = 0.3  # 海洋物种不需要河流，给低值使其与无河流地块匹配
+        else:
+            river_pref = 0.4  # 陆生物种中等偏好
         
         return np.array([
             thermal, moisture, altitude, salinity_pref,
@@ -376,7 +436,10 @@ class SuitabilityService:
         ])
     
     def _extract_tile_features(self, tile: "MapTile") -> np.ndarray:
-        """从地块属性提取 12 维特征向量"""
+        """从地块属性提取 12 维特征向量
+        
+        【改进】更智能地检测水域地块
+        """
         biome = (getattr(tile, 'biome', '') or '').lower()
         temp = getattr(tile, 'temperature', 20)
         humidity = getattr(tile, 'humidity', 0.5)
@@ -389,34 +452,73 @@ class SuitabilityService:
         volcanic = getattr(tile, 'volcanic_potential', 0)
         earthquake = getattr(tile, 'earthquake_risk', 0)
         
+        # 【智能判断】地块是否为水域
+        # 综合考虑: biome名称, elevation, is_lake, salinity
+        water_keywords = ["海", "洋", "水", "湖", "河", "溪", "浅海", "深海", "大陆架", "大陆坡", "海沟"]
+        is_water = False
+        is_deep_water = False
+        is_freshwater_tile = False
+        
+        # 1. 从 biome 名称判断
+        for kw in water_keywords:
+            if kw in biome:
+                is_water = True
+                break
+        
+        # 2. 从海拔判断 (海拔<0 通常是水下)
+        if elevation < 0:
+            is_water = True
+        
+        # 3. 湖泊判断
+        if is_lake:
+            is_water = True
+            is_freshwater_tile = salinity < 10
+        
+        # 4. 从盐度判断
+        if salinity > 20:
+            is_water = True
+        elif salinity < 5 and is_water:
+            is_freshwater_tile = True
+        
+        # 5. 深海判断
+        if elevation < -1000 or "深海" in biome or "海沟" in biome:
+            is_deep_water = True
+            is_water = True
+        
         # D0: 热量 (归一化温度)
         thermal = (temp + 30) / 70  # [-30, 40] -> [0, 1]
         thermal = np.clip(thermal, 0, 1)
         
         # D1: 水分
         moisture = humidity
+        if is_water:
+            moisture = 1.0  # 水域湿度为最高
         
         # D2: 海拔 (sigmoid 归一化)
         # -5000m -> 0.0, 0m -> 0.5, 5000m -> 1.0
         altitude = 1 / (1 + np.exp(-elevation / 1500))
         
         # D3: 盐度
-        salinity_norm = min(1.0, salinity / 40)
+        if is_water:
+            salinity_norm = min(1.0, salinity / 40)
+        else:
+            salinity_norm = 0.3  # 陆地盐度中性
         
         # D4: 资源
         resources_norm = min(1.0, math.log(resources + 1) / math.log(1001))
         
         # D5: 水域性 - 最重要！
-        is_water = "海" in biome or "深海" in biome or is_lake
         aquatic = 1.0 if is_water else 0.0
         
         # D6: 深度
-        if elevation < -3000:
+        if is_deep_water or elevation < -3000:
             depth = 1.0  # 深海
         elif elevation < -1000:
             depth = 0.7  # 中层
         elif elevation < 0:
-            depth = 0.3  # 浅海
+            depth = 0.4  # 浅海
+        elif is_lake:
+            depth = 0.3  # 湖泊
         else:
             depth = 0.0  # 陆地
         
@@ -424,9 +526,11 @@ class SuitabilityService:
         if elevation < -1000:
             light = 0.1  # 深海无光
         elif elevation < -200:
-            light = 0.5  # 弱光层
+            light = 0.4  # 弱光层
+        elif is_water:
+            light = 0.7  # 浅水有光但弱于陆地
         else:
-            light = 0.9  # 有光
+            light = 0.9  # 陆地有光
         
         # D8: 地热
         volcanic_val = volcanic
@@ -435,7 +539,9 @@ class SuitabilityService:
         stability = 1.0 - earthquake
         
         # D10: 植被密度
-        if "森林" in cover or "林" in cover or "雨林" in cover:
+        if is_water:
+            vegetation = 0.2  # 水域无陆地植被
+        elif "森林" in cover or "林" in cover or "雨林" in cover:
             vegetation = 0.9
         elif "草" in cover or "灌" in cover:
             vegetation = 0.6
@@ -447,7 +553,13 @@ class SuitabilityService:
             vegetation = 0.3
         
         # D11: 河流
-        river = 1.0 if has_river else 0.0
+        # 【改进】对于海洋地块，河流值应该是低的（与海洋物种匹配）
+        if is_freshwater_tile or has_river:
+            river = 0.9
+        elif is_water:
+            river = 0.3  # 海洋无河流，给低值与海洋物种匹配
+        else:
+            river = 0.4  # 陆地无河流
         
         return np.array([
             thermal, moisture, altitude, salinity_norm,

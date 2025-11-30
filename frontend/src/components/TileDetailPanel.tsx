@@ -35,19 +35,19 @@ interface Props {
 }
 
 // 12 维特征名称和图标映射
-const DIMENSION_INFO: Record<string, { icon: string; label: string; weight: number }> = {
-  thermal: { icon: "🌡️", label: "温度", weight: 0.10 },
+const DIMENSION_INFO: Record<string, { icon: string; label: string; weight: number; critical?: boolean }> = {
+  aquatic: { icon: "🌊", label: "水域性", weight: 0.22, critical: true },  // 最重要
+  thermal: { icon: "🌡️", label: "温度", weight: 0.10, critical: true },
+  salinity: { icon: "🧂", label: "盐度", weight: 0.10 },
   moisture: { icon: "💧", label: "湿度", weight: 0.08 },
   altitude: { icon: "⛰️", label: "海拔", weight: 0.08 },
-  salinity: { icon: "🧂", label: "盐度", weight: 0.10 },
   resources: { icon: "💎", label: "资源", weight: 0.08 },
-  aquatic: { icon: "🌊", label: "水域性", weight: 0.22 },
   depth: { icon: "🔽", label: "深度", weight: 0.08 },
   light: { icon: "☀️", label: "光照", weight: 0.06 },
-  volcanic: { icon: "🌋", label: "地热", weight: 0.04 },
-  stability: { icon: "🏔️", label: "稳定性", weight: 0.04 },
   vegetation: { icon: "🌿", label: "植被", weight: 0.06 },
   river: { icon: "🏞️", label: "河流", weight: 0.06 },
+  volcanic: { icon: "🌋", label: "地热", weight: 0.04 },
+  stability: { icon: "🏔️", label: "稳定性", weight: 0.04 },
 };
 
 // 格式化宜居度分解为 tooltip 文本 (新版 12 维系统)
@@ -59,39 +59,44 @@ function formatBreakdownTooltip(breakdown: SuitabilityBreakdown, displayedSuitab
   
   // 显示语义和特征分数
   if (breakdown.semantic_score > 0 || breakdown.feature_score > 0) {
-    lines.push(`🧠 语义匹配: ${(breakdown.semantic_score * 100).toFixed(0)}% (×40%)`);
-    lines.push(`📐 特征匹配: ${(breakdown.feature_score * 100).toFixed(0)}% (×60%)`);
+    lines.push(`🧠 语义: ${(breakdown.semantic_score * 100).toFixed(0)}% × 40%`);
+    lines.push(`📐 特征: ${(breakdown.feature_score * 100).toFixed(0)}% × 60%`);
     lines.push(`────────────────────`);
   }
   
-  // 显示 12 维特征分解
-  lines.push(`📊 特征分解:`);
-  
-  // 找出最低分的维度（可能是瓶颈）
-  const dimensions = Object.entries(DIMENSION_INFO);
+  // 收集所有维度分数
   const scores: { key: string; score: number; info: typeof DIMENSION_INFO[string] }[] = [];
-  
-  for (const [key, info] of dimensions) {
+  for (const [key, info] of Object.entries(DIMENSION_INFO)) {
     const score = (breakdown as Record<string, number>)[key] ?? 0;
     scores.push({ key, score, info });
   }
   
-  // 按分数排序，低分在前（问题因素优先显示）
-  scores.sort((a, b) => a.score - b.score);
+  // 只显示重要/低分的维度
+  // 规则：只显示权重高或分数低的维度
+  const criticalDims = scores.filter(s => s.info.critical || s.score < 0.6);
+  const sortedDims = criticalDims.sort((a, b) => {
+    // 关键维度优先，然后按分数升序
+    if (a.info.critical && !b.info.critical) return -1;
+    if (!a.info.critical && b.info.critical) return 1;
+    return a.score - b.score;
+  });
   
-  // 显示前 6 个最重要/最低分的维度
-  const showCount = 6;
-  for (let i = 0; i < Math.min(showCount, scores.length); i++) {
-    const { score, info } = scores[i];
-    const pct = (score * 100).toFixed(0);
-    const bar = score < 0.5 ? "⚠️" : score < 0.8 ? "○" : "●";
-    lines.push(`  ${info.icon} ${info.label}: ${pct}% ${bar}`);
+  // 最多显示 5 个
+  const showDims = sortedDims.slice(0, 5);
+  
+  if (showDims.length > 0) {
+    lines.push(`📊 关键因素:`);
+    for (const { score, info } of showDims) {
+      const pct = (score * 100).toFixed(0);
+      const bar = score < 0.5 ? "⚠️" : score < 0.8 ? "○" : "●";
+      lines.push(`  ${info.icon} ${info.label}: ${pct}% ${bar}`);
+    }
   }
   
-  // 如果水域性匹配度低，特别提示
-  if (breakdown.aquatic < 0.5) {
+  // 特别警告
+  if (breakdown.aquatic < 0.4) {
     lines.push(`────────────────────`);
-    lines.push(`⚠️ 水域/陆地不匹配！`);
+    lines.push(`⚠️ 水域/陆地严重不匹配！`);
   }
   
   return lines.join('\n');
