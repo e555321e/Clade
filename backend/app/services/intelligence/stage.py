@@ -78,12 +78,13 @@ class EcologicalIntelligenceStage:
         from .config import load_config_from_yaml
         from ...repositories.environment_repository import environment_repository
         from pathlib import Path
-        from ...core.config import settings
+        from ...core.config import get_settings
         
         logger.info("开始生态智能体评估...")
         ctx.emit_event("stage", "🧠 生态智能体评估", "AI")
         
         # 【新增】读取 UI 配置，检查 AI 叙事开关
+        settings = get_settings()
         ui_config_path = Path(settings.ui_config_path)
         ui_config = environment_repository.load_ui_config(ui_config_path)
         narrative_enabled = getattr(ui_config, 'ai_narrative_enabled', False)
