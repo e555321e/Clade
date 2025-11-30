@@ -35,7 +35,7 @@ interface Props {
 }
 
 // 格式化宜居度分解为 tooltip 文本
-function formatBreakdownTooltip(breakdown: SuitabilityBreakdown, total: number): string {
+function formatBreakdownTooltip(breakdown: SuitabilityBreakdown, displayedSuitability: number): string {
   // 计算各因子的实际贡献
   const tempContrib = breakdown.temp_score * 0.20;
   const humidContrib = breakdown.humidity_score * 0.15;
@@ -43,48 +43,38 @@ function formatBreakdownTooltip(breakdown: SuitabilityBreakdown, total: number):
   const biomeContrib = breakdown.biome_score * 0.25;
   const specialContrib = breakdown.special_bonus * 0.10;
   
-  const isConsumer = breakdown.has_prey !== undefined;
+  // 正确判断是否为消费者：has_prey 必须是 true 或 false，而非 null/undefined
+  const isConsumer = breakdown.has_prey === true || breakdown.has_prey === false;
   const foodLabel = isConsumer ? "猎物供给" : "地块资源";
   
+  // 根据分解数据计算的宜居度
+  const calculatedTotal = tempContrib + humidContrib + foodContrib + biomeContrib + specialContrib;
+  
   const lines: string[] = [
-    `📊 宜居度: ${(total * 100).toFixed(0)}%`,
-    `════════════════════`,
-    `🌡️ 温度适应`,
-    `   分数: ${(breakdown.temp_score * 100).toFixed(0)}% × 20% = ${(tempContrib * 100).toFixed(1)}%`,
-    ``,
-    `💧 湿度适应`,
-    `   分数: ${(breakdown.humidity_score * 100).toFixed(0)}% × 15% = ${(humidContrib * 100).toFixed(1)}%`,
-    ``,
-    `🍖 ${foodLabel}`,
-    `   分数: ${(breakdown.food_score * 100).toFixed(0)}% × 30% = ${(foodContrib * 100).toFixed(1)}%`,
+    `📊 宜居度: ${(calculatedTotal * 100).toFixed(0)}%`,
+    `────────────────`,
+    `🌡️ 温度: ${(breakdown.temp_score * 100).toFixed(0)}% ×20% → ${(tempContrib * 100).toFixed(1)}%`,
+    `💧 湿度: ${(breakdown.humidity_score * 100).toFixed(0)}% ×15% → ${(humidContrib * 100).toFixed(1)}%`,
+    `🍖 ${foodLabel}: ${(breakdown.food_score * 100).toFixed(0)}% ×30% → ${(foodContrib * 100).toFixed(1)}%`,
   ];
   
-  // 对消费者显示猎物信息
+  // 对消费者显示猎物状态
   if (isConsumer) {
     if (breakdown.has_prey) {
-      lines.push(`   丰富度: ${breakdown.prey_abundance?.toFixed(2) || '?'}`);
-      if ((breakdown.prey_abundance || 0) < 0.5) {
-        lines.push(`   ⚠️ 猎物稀缺`);
-      } else if ((breakdown.prey_abundance || 0) < 1) {
-        lines.push(`   ⚠️ 猎物偏少`);
+      const abundance = breakdown.prey_abundance ?? 0;
+      if (abundance < 0.5) {
+        lines.push(`   ⚠️ 猎物稀缺 (${abundance.toFixed(2)})`);
       }
     } else {
-      lines.push(`   ⚠️ 无猎物！极低分`);
+      lines.push(`   ⚠️ 无猎物！`);
     }
   }
   
-  lines.push(``);
-  lines.push(`🌿 环境匹配`);
-  lines.push(`   分数: ${(breakdown.biome_score * 100).toFixed(0)}% × 25% = ${(biomeContrib * 100).toFixed(1)}%`);
+  lines.push(`🌿 环境: ${(breakdown.biome_score * 100).toFixed(0)}% ×25% → ${(biomeContrib * 100).toFixed(1)}%`);
   
   if (breakdown.special_bonus > 0) {
-    lines.push(``);
-    lines.push(`✨ 特殊加成`);
-    lines.push(`   分数: ${(breakdown.special_bonus * 100).toFixed(0)}% × 10% = ${(specialContrib * 100).toFixed(1)}%`);
+    lines.push(`✨ 特殊: ${(breakdown.special_bonus * 100).toFixed(0)}% ×10% → ${(specialContrib * 100).toFixed(1)}%`);
   }
-  
-  lines.push(`════════════════════`);
-  lines.push(`合计: ${(tempContrib * 100).toFixed(1)} + ${(humidContrib * 100).toFixed(1)} + ${(foodContrib * 100).toFixed(1)} + ${(biomeContrib * 100).toFixed(1)}${breakdown.special_bonus > 0 ? ` + ${(specialContrib * 100).toFixed(1)}` : ''} = ${(total * 100).toFixed(0)}%`);
   
   return lines.join('\n');
 }
@@ -514,32 +504,14 @@ export function TileDetailPanel({ tile, habitats, selectedSpecies, onSelectSpeci
                   </div>
                   
                   <div 
-                    className={`suitability-meter-container ${
+                    className={`suitability-meter ${
                       entry.suitability > 0.7 ? 'high' : 
                       entry.suitability > 0.4 ? 'mid' : 'low'
                     }`}
                     title={entry.breakdown ? formatBreakdownTooltip(entry.breakdown, entry.suitability) : `宜居度: ${fmt(entry.suitability, 2)}`}
                   >
-                    <div className="suitability-meter">
-                      <div className="suitability-fill" style={{ height: `${entry.suitability * 100}%` }}></div>
-                      <span className="suitability-text">{fmt(entry.suitability, 2)}</span>
-                    </div>
-                    {entry.breakdown && (
-                      <div className="suitability-mini-bars">
-                        <div className="mini-bar" title={`温度: ${(entry.breakdown.temp_score * 100).toFixed(0)}%`}>
-                          <div className="mini-fill" style={{ height: `${entry.breakdown.temp_score * 100}%`, background: '#ef4444' }}></div>
-                        </div>
-                        <div className="mini-bar" title={`湿度: ${(entry.breakdown.humidity_score * 100).toFixed(0)}%`}>
-                          <div className="mini-fill" style={{ height: `${entry.breakdown.humidity_score * 100}%`, background: '#3b82f6' }}></div>
-                        </div>
-                        <div className="mini-bar" title={`${entry.breakdown.has_prey !== undefined ? '猎物' : '资源'}: ${(entry.breakdown.food_score * 100).toFixed(0)}%`}>
-                          <div className="mini-fill" style={{ height: `${entry.breakdown.food_score * 100}%`, background: entry.breakdown.has_prey === false ? '#f59e0b' : '#22c55e' }}></div>
-                        </div>
-                        <div className="mini-bar" title={`环境: ${(entry.breakdown.biome_score * 100).toFixed(0)}%`}>
-                          <div className="mini-fill" style={{ height: `${entry.breakdown.biome_score * 100}%`, background: '#8b5cf6' }}></div>
-                        </div>
-                      </div>
-                    )}
+                    <div className="suitability-fill" style={{ height: `${entry.suitability * 100}%` }}></div>
+                    <span className="suitability-text">{fmt(entry.suitability, 2)}</span>
                     {entry.breakdown?.has_prey === false && (
                       <span className="no-prey-indicator" title="无猎物！">⚠</span>
                     )}

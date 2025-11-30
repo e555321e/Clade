@@ -873,6 +873,9 @@ class MapStateManager:
                     prey_abundance=round(breakdown_data["prey_abundance"], 2) if breakdown_data.get("prey_abundance") is not None else None,
                 )
             
+            # 使用实时计算的宜居度，保证与 breakdown 一致
+            calculated_suitability = breakdown_data["total"] if breakdown_data else item.suitability
+            
             habitat_entries.append(
                 HabitatEntry(
                     species_id=item.species_id,
@@ -881,7 +884,7 @@ class MapStateManager:
                     latin_name=species.latin_name if species else "Unknown",
                     tile_id=item.tile_id,
                     population=item.population,
-                    suitability=item.suitability,
+                    suitability=calculated_suitability,
                     breakdown=breakdown,
                 )
             )
