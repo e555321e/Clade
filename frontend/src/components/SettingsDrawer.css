@@ -2008,7 +2008,7 @@
   height: 0;
 }
 
-.toggle-slider {
+.toggle-switch .toggle-slider {
   position: absolute;
   cursor: pointer;
   inset: 0;
@@ -2018,7 +2018,7 @@
   transition: all 0.3s ease;
 }
 
-.toggle-slider::before {
+.toggle-switch .toggle-slider::before {
   content: "";
   position: absolute;
   height: 20px;

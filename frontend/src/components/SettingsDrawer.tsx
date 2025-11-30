@@ -1790,7 +1790,6 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                           checked={form.load_balance_enabled ?? false}
                           onChange={(e) => dispatch({ type: 'UPDATE_GLOBAL', field: 'load_balance_enabled', value: e.target.checked })}
                         />
-                        <span className="toggle-slider"></span>
                         <span className="toggle-label">启用负载均衡</span>
                       </label>
                       <span className="field-hint">在「智能路由」页面为每个能力选择多个服务商</span>
