@@ -99,6 +99,10 @@ class AggregatedMortalityResult:
     births: int = 0  # 本回合新出生的个体数量
     final_population: int = 0  # 回合结束时的最终种群
     
+    # 【新增v4】AI修正后的参数（在种群更新阶段填充）
+    adjusted_death_rate: float = 0.0  # AI修正后的死亡率
+    adjusted_k: float = 0.0  # AI修正后的承载力
+    
     def get_distribution_status(self) -> str:
         """返回分布状态描述"""
         if self.total_tiles == 0:

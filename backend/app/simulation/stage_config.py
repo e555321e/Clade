@@ -818,10 +818,14 @@ def _register_default_stages() -> None:
         VegetationCoverStage,
         SavePopulationSnapshotStage,
         EmbeddingStage,
+        EmbeddingPluginsStage,
         SaveHistoryStage,
         ExportDataStage,
         FinalizeStage,
     )
+    
+    # 导入生态智能体阶段
+    from ..services.intelligence.stage import EcologicalIntelligenceStage
     
     # 核心阶段
     stage_registry.register("init", InitStage)
@@ -838,6 +842,7 @@ def _register_default_stages() -> None:
     stage_registry.register("hunger_migration", HungerMigrationStage)
     stage_registry.register("post_migration_niche", PostMigrationNicheStage)
     stage_registry.register("final_mortality", FinalMortalityStage)
+    stage_registry.register("ecological_intelligence", EcologicalIntelligenceStage)  # 生态智能体
     stage_registry.register("population_update", PopulationUpdateStage)
     
     # 遗传与演化阶段
@@ -862,6 +867,7 @@ def _register_default_stages() -> None:
     stage_registry.register("vegetation_cover", VegetationCoverStage)
     stage_registry.register("save_population_snapshot", SavePopulationSnapshotStage)
     stage_registry.register("embedding_hooks", EmbeddingStage)
+    stage_registry.register("embedding_plugins", EmbeddingPluginsStage)
     stage_registry.register("save_history", SaveHistoryStage)
     stage_registry.register("export_data", ExportDataStage)
     stage_registry.register("finalize", FinalizeStage)

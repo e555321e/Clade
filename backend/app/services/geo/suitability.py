@@ -314,22 +314,180 @@ def compute_batch_suitability_dict(
 
 # ============ 消费者感知的适宜度计算 ============
 
+from dataclasses import dataclass
+
+
+@dataclass
+class SuitabilityResult:
+    """宜居度计算结果（包含分解数据）"""
+    total: float
+    temp_score: float
+    humidity_score: float
+    food_score: float
+    biome_score: float
+    special_bonus: float
+    has_prey: bool | None = None
+    prey_abundance: float | None = None
+
+
+def compute_suitability_with_breakdown(
+    species: 'Species',
+    tile: 'MapTile',
+    prey_tile_population: float | None = None,
+    consumer_population: float = 0,
+    weights: dict[str, float] | None = None
+) -> SuitabilityResult:
+    """计算单个物种在单个地块的宜居度（含分解数据）
+    
+    【关键改进】消费者食物分基于猎物丰富度，而非简单的有/无
+    
+    Args:
+        species: 目标物种
+        tile: 目标地块
+        prey_tile_population: 该地块上猎物的总种群（仅消费者需要）
+        consumer_population: 该地块上消费者的种群（用于计算竞争）
+        weights: 权重配置
+        
+    Returns:
+        SuitabilityResult 包含总分和各因子分数
+    """
+    if weights is None:
+        weights = {"temp": 0.20, "humidity": 0.15, "food": 0.30, "biome": 0.25, "special": 0.10}
+    
+    # 物种属性
+    traits = getattr(species, 'abstract_traits', {}) or {}
+    trophic_level = getattr(species, 'trophic_level', 1.0) or 1.0
+    habitat_type = (getattr(species, 'habitat_type', 'terrestrial') or 'terrestrial').lower()
+    is_consumer = trophic_level >= 2.0
+    
+    heat_tolerance = traits.get("耐热性", 5)
+    cold_tolerance = traits.get("耐寒性", 5)
+    drought_tolerance = traits.get("耐旱性", 5)
+    
+    # ===== 温度适应性 =====
+    ideal_temp_min = -10 + (15 - cold_tolerance) * 2
+    ideal_temp_max = 10 + heat_tolerance * 2
+    
+    tile_temp = tile.temperature
+    if ideal_temp_min <= tile_temp <= ideal_temp_max:
+        temp_score = 1.0
+    elif tile_temp < ideal_temp_min:
+        diff = ideal_temp_min - tile_temp
+        temp_score = max(0.2, 1.0 - diff / 30)
+    else:
+        diff = tile_temp - ideal_temp_max
+        temp_score = max(0.2, 1.0 - diff / 30)
+    
+    # ===== 湿度适应性 =====
+    ideal_humidity = 0.7 - drought_tolerance * 0.04
+    humidity_diff = abs(tile.humidity - ideal_humidity)
+    humidity_score = max(0.3, 1.0 - humidity_diff * 1.5)
+    
+    # ===== 食物/资源适应性（关键改进） =====
+    has_prey = None
+    prey_abundance = None
+    
+    if is_consumer:
+        # 【改进】消费者的食物分基于猎物丰富度，而非简单的有/无
+        if prey_tile_population is not None and prey_tile_population > 0:
+            has_prey = True
+            # 猎物丰富度 = 猎物种群 / (消费者种群 + 100)
+            # 这样当消费者太多时，猎物就显得不够了
+            prey_abundance = prey_tile_population / (consumer_population + 100)
+            
+            # 基于丰富度计算食物分（使用对数曲线）
+            # 丰富度 0.1 → 食物分 0.3
+            # 丰富度 1.0 → 食物分 0.7
+            # 丰富度 10+ → 食物分 1.0
+            if prey_abundance >= 10:
+                food_score = 1.0
+            elif prey_abundance >= 1:
+                food_score = 0.7 + 0.3 * math.log10(prey_abundance)
+            elif prey_abundance >= 0.1:
+                food_score = 0.3 + 0.4 * (math.log10(prey_abundance) + 1)
+            else:
+                # 猎物太少，几乎等于没有
+                food_score = max(0.15, 0.3 * prey_abundance / 0.1)
+        else:
+            # 没有猎物
+            has_prey = False
+            prey_abundance = 0.0
+            food_score = 0.15  # 【改进】从0.2降到0.15，无猎物更难生存
+    else:
+        # 生产者：使用地块资源
+        if tile.resources > 0:
+            food_score = min(1.0, 0.3 + 0.7 * math.log(tile.resources + 1) / math.log(1001))
+        else:
+            food_score = 0.3
+    
+    # ===== 生物群系匹配 =====
+    biome_lower = (tile.biome or "").lower()
+    biome_score = 0.6  # 基础分
+    
+    if habitat_type == "marine" and "海" in biome_lower and "深海" not in biome_lower:
+        biome_score = 1.0
+    elif habitat_type == "deep_sea" and "深海" in biome_lower:
+        biome_score = 1.0
+    elif habitat_type == "terrestrial" and "海" not in biome_lower:
+        biome_score = 0.9
+    elif habitat_type == "coastal" and ("海岸" in biome_lower or "浅海" in biome_lower):
+        biome_score = 1.0
+    elif habitat_type == "freshwater" and getattr(tile, 'is_lake', False):
+        biome_score = 1.0
+    
+    # ===== 特殊栖息地加成 =====
+    special_bonus = 0.0
+    if habitat_type == "hydrothermal":
+        volcanic = getattr(tile, 'volcanic_potential', 0.0)
+        if volcanic > 0.3:
+            special_bonus = 0.3
+    elif habitat_type == "deep_sea":
+        if tile.elevation < -2000:
+            special_bonus = 0.2
+    
+    # ===== 综合评分 =====
+    total = (
+        temp_score * weights["temp"] +
+        humidity_score * weights["humidity"] +
+        food_score * weights["food"] +
+        biome_score * weights["biome"] +
+        special_bonus * weights["special"]
+    )
+    
+    # 保证最低适宜度
+    total = max(0.15, min(1.0, total))
+    
+    return SuitabilityResult(
+        total=total,
+        temp_score=temp_score,
+        humidity_score=humidity_score,
+        food_score=food_score,
+        biome_score=biome_score,
+        special_bonus=special_bonus,
+        has_prey=has_prey,
+        prey_abundance=prey_abundance,
+    )
+
+
 def compute_consumer_aware_suitability(
     species: 'Species',
     tiles: Sequence['MapTile'],
     prey_tile_ids: set[int] | None = None,
+    prey_tile_populations: dict[int, float] | None = None,
+    consumer_tile_populations: dict[int, float] | None = None,
     weights: dict[str, float] | None = None
 ) -> np.ndarray:
-    """计算消费者的适宜度（考虑猎物分布）
+    """计算消费者的适宜度（考虑猎物分布和丰富度）
     
-    对于消费者（T≥2），在有猎物的地块适宜度更高。
-    统一了 map_manager._suitability_score 的逻辑。
+    【改进】对于消费者，食物分不再是简单的有/无，而是基于猎物丰富度
     
     Args:
         species: 目标物种
         tiles: 地块列表
-        prey_tile_ids: 猎物所在的地块ID集合（仅对消费者有效）
-        weights: 权重配置，默认 {"temp": 0.20, "humidity": 0.15, "food": 0.30, "biome": 0.25, "special": 0.10}
+        prey_tile_ids: 猎物所在的地块ID集合（兼容旧版）
+        prey_tile_populations: {tile_id: prey_population} 猎物种群分布（新版）
+        consumer_tile_populations: {tile_id: consumer_population} 消费者种群分布
+        weights: 权重配置
         
     Returns:
         np.ndarray: shape (M,) 的适宜度数组
@@ -376,12 +534,31 @@ def compute_consumer_aware_suitability(
     humidity_score = np.maximum(0.3, 1.0 - humidity_diff * 1.5)
     
     # ===== 食物/资源适应性 =====
-    if is_consumer and prey_tile_ids is not None:
-        # 消费者：检查是否有猎物
-        food_score = np.full(n_tiles, 0.2)  # 默认无猎物
-        for i, tid in enumerate(tile_ids):
-            if tid in prey_tile_ids:
-                food_score[i] = 1.0  # 有猎物
+    if is_consumer:
+        food_score = np.full(n_tiles, 0.15)  # 【改进】默认无猎物分从0.2降到0.15
+        
+        if prey_tile_populations is not None:
+            # 【新版】基于猎物丰富度计算
+            consumer_pops = consumer_tile_populations or {}
+            for i, tid in enumerate(tile_ids):
+                prey_pop = prey_tile_populations.get(tid, 0)
+                if prey_pop > 0:
+                    consumer_pop = consumer_pops.get(tid, 0)
+                    prey_abundance = prey_pop / (consumer_pop + 100)
+                    
+                    if prey_abundance >= 10:
+                        food_score[i] = 1.0
+                    elif prey_abundance >= 1:
+                        food_score[i] = 0.7 + 0.3 * np.log10(prey_abundance)
+                    elif prey_abundance >= 0.1:
+                        food_score[i] = 0.3 + 0.4 * (np.log10(prey_abundance) + 1)
+                    else:
+                        food_score[i] = max(0.15, 0.3 * prey_abundance / 0.1)
+        elif prey_tile_ids is not None:
+            # 【兼容旧版】简单的有/无判断，但降低有猎物时的分数
+            for i, tid in enumerate(tile_ids):
+                if tid in prey_tile_ids:
+                    food_score[i] = 0.7  # 【改进】从1.0降到0.7
     else:
         # 生产者：使用地块资源
         food_score = np.where(

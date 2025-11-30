@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { HabitatEntry, MapTileInfo } from "../services/api.types";
+import type { HabitatEntry, MapTileInfo, SuitabilityBreakdown } from "../services/api.types";
 import { 
   Mountain, 
   Thermometer, 
@@ -32,6 +32,36 @@ interface Props {
   habitats: HabitatEntry[];
   selectedSpecies?: string | null;
   onSelectSpecies: (lineageCode: string) => void;
+}
+
+// 格式化宜居度分解为 tooltip 文本
+function formatBreakdownTooltip(breakdown: SuitabilityBreakdown, total: number): string {
+  const lines: string[] = [
+    `宜居度: ${(total * 100).toFixed(0)}%`,
+    `────────────────`,
+    `🌡️ 温度适应: ${(breakdown.temp_score * 100).toFixed(0)}% (×20%)`,
+    `💧 湿度适应: ${(breakdown.humidity_score * 100).toFixed(0)}% (×15%)`,
+    `🍖 食物/资源: ${(breakdown.food_score * 100).toFixed(0)}% (×30%)`,
+    `🌿 环境匹配: ${(breakdown.biome_score * 100).toFixed(0)}% (×25%)`,
+  ];
+  
+  if (breakdown.special_bonus > 0) {
+    lines.push(`✨ 特殊加成: ${(breakdown.special_bonus * 100).toFixed(0)}% (×10%)`);
+  }
+  
+  if (breakdown.has_prey !== undefined) {
+    lines.push(`────────────────`);
+    if (breakdown.has_prey) {
+      lines.push(`🎯 猎物丰富度: ${breakdown.prey_abundance?.toFixed(1) || '?'}`);
+      if ((breakdown.prey_abundance || 0) < 1) {
+        lines.push(`⚠️ 猎物不足！食物分降低`);
+      }
+    } else {
+      lines.push(`⚠️ 无猎物！食物分极低`);
+    }
+  }
+  
+  return lines.join('\n');
 }
 
 // 地形类型配置 - 与后端 map_coloring.py 35级分类协调
@@ -458,12 +488,18 @@ export function TileDetailPanel({ tile, habitats, selectedSpecies, onSelectSpeci
                     </div>
                   </div>
                   
-                  <div className={`suitability-meter ${
-                    entry.suitability > 0.7 ? 'high' : 
-                    entry.suitability > 0.4 ? 'mid' : 'low'
-                  }`}>
+                  <div 
+                    className={`suitability-meter ${
+                      entry.suitability > 0.7 ? 'high' : 
+                      entry.suitability > 0.4 ? 'mid' : 'low'
+                    }`}
+                    title={entry.breakdown ? formatBreakdownTooltip(entry.breakdown, entry.suitability) : `宜居度: ${fmt(entry.suitability, 2)}`}
+                  >
                     <div className="suitability-fill" style={{ height: `${entry.suitability * 100}%` }}></div>
                     <span className="suitability-text">{fmt(entry.suitability, 2)}</span>
+                    {entry.breakdown?.has_prey === false && (
+                      <span className="no-prey-indicator" title="无猎物">⚠</span>
+                    )}
                   </div>
                 </div>
               ))}

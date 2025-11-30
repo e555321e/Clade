@@ -1,157 +1,107 @@
-# API 接口指南（2025.11）
+# API 接口指南（2025-11 更新）
+面向需要与 Clade 后端交互的前后端工程师。API 前缀统一为 `/api/*`，管理接口在 `/api/admin/*`，健康探活为根路径 `/health`。
 
-本文面向需要和 Clade 后端交互的前后端开发者。更细分的模块说明请参考 `docs/api-guides/modules/*`。
-
-> **Base URL**：业务接口统一挂载在 `/api/*`；管理接口挂载在 `/api/admin/*`；根路径另暴露 `GET /health`。
-
----
+> **Schema 位置**：请求/响应模型定义在 `backend/app/schemas/requests.py` 与 `backend/app/schemas/responses.py`。修改后请同步前端的 `frontend/src/services/api.types.ts`。
 
 ## 0. 全局约定
+- 返回格式：除 `DELETE` 外均返回 JSON；错误时优先查看 `detail` 字段。
+- 认证：当前未启用，公网部署请在 API Gateway 层加鉴权。
+- 事件流：`GET /api/events/stream` 为 SSE，推送队列、能量、神迹等实时事件。
 
-- 所有请求/响应均为 `application/json`，除 `DELETE` 外均返回 JSON 体。
-- 未实现认证，若部署到公网请在 API Gateway 层添加鉴权。
-- 错误：校验失败返回 `422`；资源找不到返回 `404`；模拟/AI 失败多为 `500` 并包含 `detail`。
-- 数据模型位于 `backend/app/schemas/requests.py` 与 `backend/app/schemas/responses.py`，修改后务必同步 `frontend/src/services/api.types.ts`。
+## 1. 模拟核心（Simulation）
+- `POST /api/turns/run`：执行 1~100 回合，Body 为 `TurnCommand { rounds, pressures?, auto_reports? }`，返回 `TurnReport[]`。
+- 行动队列：
+  - `GET /api/queue` 返回 `ActionQueueStatus`（含预览）。
+  - `POST /api/queue/add` 追加批次 `QueueRequest { rounds, pressures[] }`。
+  - `POST /api/queue/clear` 清空队列。
+- 历史与导出：`GET /api/history?limit=10`，`GET /api/exports`。
+- 游戏状态：`GET /api/game/state` 返回当前回合计数、排队信息和最近报告指针。
 
----
+## 2. 压力与模板
+- `GET /api/pressures/templates`：静态 Pressure 模板。
+- `POST /api/config/test-api`：第三方模型连通性测试（chat/embedding）。
+- `POST /api/config/fetch-models`：从 Provider 拉取模型列表（OpenAI/Claude/Gemini 兼容）。
 
-## 1. 模拟循环（Simulation Core）
-
-### 1.1 `POST /api/turns/run`
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `rounds` | `int` | 1–100；如果回合队列存在排队批次且本次 `pressures` 为空，会自动消耗队首批次。 |
-| `pressures` | `PressureConfig[]` | 详见 [`PressureConfig`](docs/api-guides/modules/simulation/pressure-orchestration.md)。 |
-| `auto_reports` | `bool` | 当前固定 `true`；用于控制前端是否立即呈现战报。 |
-
-响应：`TurnReport[]`。每次调用都会刷新 Watchlist/SpeciesTiering，并写入 `data/reports` 与 `history_repository`。
-
-### 1.2 行动队列 `/api/queue*`
-
-详解参见 [`docs/api-guides/modules/simulation/action-queue.md`](docs/api-guides/modules/simulation/action-queue.md)。
-
-| 方法 | 路径 | 描述 |
-| --- | --- | --- |
-| `GET` | `/api/queue` | 返回 `ActionQueueStatus`（包含 `queue_preview`）。 |
-| `POST` | `/api/queue/add` | 接受 `QueueRequest`：将 `pressures` 复制 `rounds` 次推入内存队列。 |
-| `POST` | `/api/queue/clear` | 清空队列并将 `queued_rounds` 重置为 0。 |
-
----
-
-## 2. 压力模板与历史追踪
-
-| 方法 | 路径 | 描述 |
-| --- | --- | --- |
-| `GET` | `/api/pressures/templates` | 静态模板列表，供前端生成 UI。 |
-| `GET` | `/api/history?limit=10` | 最近 `limit` 条 `TurnReport`。 |
-| `GET` | `/api/exports` | 已导出的 Markdown/JSON 回合档案（`ExportRecord[]`）。 |
-
-历史模块的详细字段说明见 [`docs/api-guides/modules/simulation/history-reports.md`](docs/api-guides/modules/simulation/history-reports.md)。
-
----
-
-## 3. 物种系统（Species Services）
-
-| 方法 | 路径 | 描述 / 备注 |
-| --- | --- | --- |
-| `GET` | `/api/species/list` | 返回 `SpeciesList`，带有推断后的 `ecological_role`。 |
-| `GET` | `/api/species/{lineage_code}` | `SpeciesDetail`，包含 `organs`、`capabilities`、`dormant_genes` 等字段。 |
-| `POST` | `/api/species/edit` | `SpeciesEditRequest`：支持 `trait_overrides`（数值骨骼）与 `abstract_overrides`（软性特质），`open_new_lineage` 可标记分支。 |
-| `POST` | `/api/species/generate` | `GenerateSpeciesRequest`，通过 LLM 生成新物种并立刻写库。 |
-| `GET` | `/api/lineage` | 返回 `LineageTree`，节点包含 `current_population`、`peak_population`、`genetic_distances` 等扩展数据。 |
-| `GET` | `/api/species/{code1}/can_hybridize/{code2}` | 对应 `HybridizationService` 检查，可返回不育原因。 |
-| `GET` | `/api/genus/{code}/relationships` | 属级别的遗传图谱与可杂交配对。 |
-
-更多背景请参考 `docs/api-guides/modules/species/*`。
-
----
+## 3. 物种系统（Species）
+- 基础：
+  - `GET /api/species/list` → `SpeciesList`（含推断的 `ecological_role`）。
+  - `GET /api/species/{lineage_code}` → `SpeciesDetail`。
+  - `POST /api/species/edit` → `SpeciesDetail`，支持 trait/abstract 覆盖与 `open_new_lineage`。
+  - `POST /api/species/generate` / `POST /api/species/generate/advanced`：AI 生成新物种，返回 `{ success, species, energy_spent?... }`。
+  - `GET /api/lineage` → `LineageTree`。
+  - `GET /api/species/{code1}/can_hybridize/{code2}`：杂交可行性检测。
+  - `GET /api/genus/{code}/relationships`：属级关系与杂交配对。
+- Watchlist：`GET/POST /api/watchlist`。
 
 ## 4. 地图与环境（Environment）
+- `GET /api/map`：返回 `MapOverview`（地块/栖息地/河流/全球气候），支持 `limit_tiles`、`limit_habitats`、`view_mode`、`species_code`。
+- UI/模型配置：`GET/POST /api/config/ui` 读取/写入 `UIConfig`，会同时配置 `ModelRouter` 与 `EmbeddingService`。
 
-### 4.1 `GET /api/map`
+## 5. 存档与导出（Saves & Ops）
+- `GET /api/saves/list`
+- `POST /api/saves/create`：`CreateSaveRequest { save_name, scenario, species_prompts?, map_seed? }`，自动初始化世界。
+- `POST /api/saves/save`：序列化当前世界。
+- `POST /api/saves/load`：加载存档并重建状态。
+- `DELETE /api/saves/{save_name}`：删除存档目录。
 
-查询参数：
+## 6. 分析、生态与干预
+- 生态健康：`GET /api/ecosystem/health` → `EcosystemHealthResponse`（Shannon/Simpson/基因多样性/崩溃信号）。
+- 食物网：`GET /api/ecosystem/food-web`（完整网络），`/analysis`（得分与缺口），`/repair`（自动填补），`/ {lineage_code}`（单物种链路），`/api/ecosystem/extinction-impact/{lineage_code}`（灭绝影响评估）。
+- 干预：
+  - `POST /api/intervention/protect` / `/suppress`：保护/压制指定物种。
+  - `POST /api/intervention/cancel/{lineage_code}`：取消干预。
+  - `POST /api/intervention/introduce`：AI 生成并引入新物种。
+  - `POST /api/intervention/symbiosis`：指定共生/寄生关系。
+  - `GET /api/intervention/status`：当前所有干预。
+- 灾变/能量限制：以上操作均会校验 `DivineEnergyService` 的能量余额。
 
-- `limit_tiles`（默认 6000）与 `limit_habitats`（默认 500）用于控制返回量。
-- `view_mode`: `"terrain" | "elevation" | "bio"` 等；参数将直接传给 `MapStateManager.get_overview`。
-- `species_code`: 若提供，将仅返回该物种的栖息地条目并在地图上加色。
+## 7. 杂交（Hybridization）
+- `GET /api/hybridization/candidates`：可杂交物种对。
+- `POST /api/hybridization/execute`：常规杂交并生成新物种（消耗能量）。
+- `GET /api/hybridization/preview`：常规杂交预览。
+- `GET /api/hybridization/force/preview` & `POST /api/hybridization/force/execute`：强制杂交（高成本，允许跨营养级）。
 
-响应类型：`MapOverview`，包含地块、栖息地、河流、植被、全球温度/海平面。
+## 8. AI/Embedding 分析
+- 生态位：`POST /api/niche/compare` → `NicheCompareResult`（需要真实 Embedding）。
+- 嵌入扩展（独立路由 `backend/app/api/embedding_routes.py`，前缀 `/api/embedding`）：
+  - `POST /taxonomy/build`，`GET /taxonomy/species/{code}`：自动分类树。
+  - `GET /evolution/pressures`，`POST /evolution/predict`：演化预测。
+  - `POST /search` / `GET /search/quick`：多模搜索。
+  - `POST /qa`：问答。
+  - `POST /explain/species`，`POST /compare/species`。
+  - `POST /hints`：根据嵌入给出提示。
+  - `GET /stats`：Embedding 统计。
+  - `GET /narrative/turn/{n}`，`/narrative/eras`，`/narrative/species/{code}/biography`：叙事访问。
 
-### 4.2 UI 配置
+### 8.1 生态智能体（Ecological Intelligence）
+新架构将 AI 评估统一到 `EcologicalIntelligenceStage`，核心组件：
+- **EcologicalIntelligence**：物种评分（risk/impact/potential）与分档（A/B/C）
+- **LLMOrchestrator**：并行调用 A/B 档 LLM，解析 `BiologicalAssessment`
+- **ModifierApplicator**：统一数值修正入口，业务 Stage 通过 `ctx.modifier_applicator.apply(code, base, "mortality")` 获取修正值
+- **IntelligenceMonitor**：监控与降级策略
 
-| 方法 | 路径 | 描述 |
-| --- | --- | --- |
-| `GET` | `/api/config/ui` | 读取 `data/settings.json` 并通过 `apply_ui_config` 注入 ModelRouter / EmbeddingService。 |
-| `POST` | `/api/config/ui` | 写入 `UIConfig`。支持多 Provider、能力路由、并发限制、Embedding 指定等。 |
+详见 `docs/api-guides/modules/analytics-ai/ecological-intelligence.md`。
 
-详细 schema 见 [`docs/api-guides/modules/config-ui/ui-config.md`](docs/api-guides/modules/config-ui/ui-config.md)。
+## 9. 能量、神职与成就
+- 能量系统（DivineEnergy）：`GET /api/energy`、`/costs`、`/history`、`POST /energy/calculate`、`/toggle`、`/set`。
+- 神职与信仰：
+  - 进阶：`GET /api/divine/status`、`/paths`，`POST /divine/path/choose`。
+  - 技能：`GET /api/divine/skills`，`POST /divine/skill/use`。
+  - 信仰：`GET /api/divine/faith`，`POST /divine/faith/add`、`/bless`、`/sanctify`。
+  - 神迹：`GET /api/divine/miracles`，`POST /divine/miracle/charge`、`/cancel`、`/execute`。
+  - 预言下注：`GET /api/divine/wagers`，`POST /divine/wager/place`、`/check`。
+- 成就与提示：`GET /api/achievements`、`/unlocked`、`/pending`、`POST /achievements/exploration/{feature}`、`/reset`；`GET /api/hints`、`POST /api/hints/clear`。
 
----
+## 10. 系统任务与诊断
+- AI 任务控制：`POST /api/tasks/abort`（中断当前 AI 调用）、`POST /api/tasks/skip-ai-step`（跳过卡住的阶段）、`GET /api/tasks/diagnostics`（当前并发与排队）。
+- 日志与模型状态：`GET /api/system/logs`，`GET/POST /api/system/ai-diagnostics`。
 
-## 5. Watchlist、分析与 AI 调试
+## 11. 管理接口（Admin）
+- `GET /api/admin/health`：数据库、目录、初始物种自检。
+- `POST /api/admin/reset`：重置数据库并清理导出/存档目录（可配置保留项）。
+- `POST /api/admin/drop-database`：直接删除数据库文件（需重启后端重新建表）。
 
-| 方法 | 路径 | 描述 |
-| --- | --- | --- |
-| `GET` | `/api/watchlist` | 返回当前 watchlist：`{"watching": ["A1", ...]}`。 |
-| `POST` | `/api/watchlist` | `WatchlistRequest`，刷新 SimulationEngine 的关注列表。 |
-| `POST` | `/api/niche/compare` | `NicheCompareRequest`，需要真实 Embedding 服务；若禁用会返回 `503`。 |
-| `POST` | `/api/config/test-api` | AI/Embedding 连通性测试，用于 Settings Drawer 验证第三方服务。 |
-
-更多细节见 `docs/api-guides/modules/analytics-ai/*`。
-
----
-
-## 6. 存档与导入导出（Saves & Ops）
-
-| 方法 | 路径 | 描述 |
-| --- | --- | --- |
-| `GET` | `/api/saves/list` | `SaveMetadata[]`，从 `data/saves/*/metadata.json` 读取。 |
-| `POST` | `/api/saves/create` | `CreateSaveRequest`：字段包含 `save_name`, `scenario`, `species_prompts?`, `map_seed?`。根据剧本自动初始化地图、栖息地、人口快照和第 0 回合报告。 |
-| `POST` | `/api/saves/save` | `SaveGameRequest`，立即序列化当前数据库至对应存档目录。 |
-| `POST` | `/api/saves/load` | `LoadGameRequest`，加载并重建世界状态。 |
-| `DELETE` | `/api/saves/{save_name}` | 删除存档目录。 |
-
-脚本版操作位于 `scripts/reset_world.py`，与这些 API 共用同一服务层。
-
----
-
-## 7. 管理与运维（Admin Router）
-
-| 方法 | 路径 | 描述 |
-| --- | --- | --- |
-| `GET` | `/api/admin/health` | 检查数据库、关键目录以及初始物种是否存在。 |
-| `POST` | `/api/admin/reset` | `ResetRequest {keep_saves, keep_map}`；重置数据库、清理导出/存档目录。 |
-
-这些接口需要谨慎调用，生产环境建议加鉴权。
-
----
-
-## 8. 根级健康检查
-
-- `GET /health`：不在 `/api` 前缀下，用于部署探活。
-
----
-
-## 9. 前端集成指引
-
-- **Service 层**：业务接口封装在 `frontend/src/services/api.ts`，Admin 相关封装在 `frontend/src/services/api_admin.ts`。组件层禁止直接 `fetch`。
-- **错误处理**：捕获 `res.ok`，并优先展示 `detail` 字段。模拟失败日志在后端以 `[推演错误]` 打头。
-- **类型**：`frontend/src/services/api.types.ts` 同步 `SpeciesDetail`, `TurnReport`, `UIConfig` 等定义；`MapPanel`, `GlobalTrendsPanel`, `OrganismBlueprint`, `QueuePanel` 等组件依赖这些类型。
-- **参考**：更多前端接口用法见 `docs/api-guides/modules/frontend-integration/*`。
-
----
-
-## 10. 数据模型速查
-
-| 模型 | 位置 | 用途 |
-| --- | --- | --- |
-| `TurnCommand`, `PressureConfig`, `QueueRequest` | `backend/app/schemas/requests.py` | 模拟执行与行动队列。 |
-| `SpeciesEditRequest`, `GenerateSpeciesRequest` | 同上 | 物种干预与 AI 生成。 |
-| `CreateSaveRequest`, `SaveGameRequest`, `LoadGameRequest` | 同上 | 存档操作。 |
-| `UIConfig`, `ProviderConfig`, `CapabilityRouteConfig` | `backend/app/models/config.py` | 多 Provider/Embedding 配置。 |
-| `ActionQueueStatus`, `TurnReport`, `LineageTree`, `MapOverview` | `backend/app/schemas/responses.py` | 主要响应体。 |
-| `NicheCompareResult` | 同上 | 生态位分析结果。 |
-
-如需深入某个模块，请查看 `docs/api-guides/modules/<domain>/README.md` 获取设计背景与调试提示。
+## 12. 前端集成提示
+- Service 封装：业务接口在 `frontend/src/services/api.ts`，Admin 在 `api_admin.ts`。组件层勿直接 `fetch`。
+- 类型同步：`api.types.ts` 需跟随 schema 更新；`MapPanel`、`QueuePanel`、`OrganismBlueprint`、`GlobalTrendsPanel`、`FoodWebGraph` 等组件依赖这些类型。
+- 错误处理：优先展示 `detail`；LLM 阻塞时可调用 `/tasks/skip-ai-step`。

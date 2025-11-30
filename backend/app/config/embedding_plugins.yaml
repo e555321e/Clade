@@ -1,0 +1,134 @@
+# Embedding 插件配置文件
+# 
+# 此文件定义所有 embedding 插件的默认配置。
+# 可在 stage_config.yaml 中按模式覆盖这些配置。
+#
+# 配置项说明：
+#   enabled: bool - 是否启用该插件
+#   update_frequency: int - 每 N 回合更新一次索引（高值=低开销）
+#   cache_ttl: int - 缓存有效回合数
+#   fallback_on_error: bool - 出错时是否降级而非抛异常
+#   params: dict - 插件特定参数
+
+version: "1.0"
+
+# 全局默认值
+defaults:
+  enabled: true
+  update_frequency: 1
+  cache_ttl: 10
+  fallback_on_error: true
+
+# 各插件配置
+plugins:
+  # Phase 1 插件 - 核心功能
+  
+  behavior_strategy:
+    enabled: true
+    update_frequency: 2
+    description: "行为策略向量，用于行为相似性和冲突预测"
+    params:
+      similarity_threshold: 0.7
+      max_conflicts_to_report: 5
+      # 必需数据：all_species
+      # 降级条件：缺少 abstract_traits 时使用 trophic_level 推断
+  
+  food_web:
+    enabled: true
+    update_frequency: 3  # 食物网计算较重，降低频率
+    description: "生态网络向量，识别关键物种和生态稳定性"
+    params:
+      stability_threshold: 0.4
+      keystone_centrality_min: 0.6
+      max_replacement_candidates: 5
+      # 必需数据：all_species
+      # 优先数据：food_web_analysis, trophic_interactions
+      # 降级条件：无食物网分析时基于 prey_species 构建
+  
+  tile_biome:
+    enabled: true
+    update_frequency: 5  # 地块变化慢，可以较低频率
+    description: "区域地块向量，物种-地块匹配和生态热点"
+    params:
+      hotspot_top_k: 10
+      compatibility_threshold: 0.3
+      # 必需数据：all_tiles, all_species
+      # 可选数据：all_habitats, populations
+      # 降级条件：无 all_tiles 时跳过
+  
+  # Phase 2 插件 - 高级分析
+  
+  prompt_optimizer:
+    enabled: false  # 默认禁用，仅在 full/debug 模式启用
+    update_frequency: 1
+    description: "LLM Prompt 优化，筛选相关上下文减少 token"
+    params:
+      max_tokens: 1000
+      similarity_threshold: 0.6
+      max_events: 5
+      max_pressures: 3
+  
+  evolution_space:
+    enabled: false  # 默认禁用
+    update_frequency: 5
+    description: "演化向量空间，趋势分析和收敛演化检测"
+    params:
+      cluster_interval: 5
+      min_events_for_trend: 5
+      direction_templates_count: 10
+  
+  ancestry:
+    enabled: false  # 默认禁用
+    update_frequency: 3
+    description: "血统压缩向量，遗传惯性和分化评估"
+    params:
+      speciation_threshold: 0.6
+      max_history_length: 20
+
+# 模式预设（可被 stage_config.yaml 覆盖）
+mode_presets:
+  minimal:
+    # 极简模式：全部禁用
+    enabled_plugins: []
+  
+  standard:
+    # 标准模式：仅核心插件
+    enabled_plugins:
+      - behavior_strategy
+      - food_web
+      - tile_biome
+    overrides:
+      behavior_strategy:
+        update_frequency: 3
+      food_web:
+        update_frequency: 5
+      tile_biome:
+        update_frequency: 10
+  
+  full:
+    # 全功能模式：全部启用
+    enabled_plugins:
+      - behavior_strategy
+      - food_web
+      - tile_biome
+      - prompt_optimizer
+      - evolution_space
+      - ancestry
+  
+  debug:
+    # 调试模式：全部启用，高频更新
+    enabled_plugins:
+      - behavior_strategy
+      - food_web
+      - tile_biome
+      - prompt_optimizer
+      - evolution_space
+      - ancestry
+    overrides:
+      behavior_strategy:
+        update_frequency: 1
+      food_web:
+        update_frequency: 1
+      tile_biome:
+        update_frequency: 1
+

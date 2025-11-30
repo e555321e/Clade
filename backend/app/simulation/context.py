@@ -118,6 +118,9 @@ class SimulationContext:
         ecosystem_metrics: 生态系统指标
         report: 最终回合报告
         
+        # === 插件数据 ===
+        plugin_data: 插件间共享数据 {"plugin_name": {"key": value}}
+        
         # === 回调函数 ===
         event_callback: 事件回调函数（用于发送SSE事件）
     """
@@ -196,6 +199,16 @@ class SimulationContext:
     
     # === Embedding 集成 ===
     embedding_turn_data: dict = field(default_factory=dict)
+    
+    # === 插件数据共享 ===
+    # 用于插件之间的数据交换，避免动态属性
+    # 结构: {"plugin_name": {"key": value, ...}, ...}
+    plugin_data: dict[str, dict[str, Any]] = field(default_factory=dict)
+    
+    # === 生态智能体评估 ===
+    biological_assessment_results: dict = field(default_factory=dict)  # {lineage_code: BiologicalAssessment}
+    species_priority_partition: Any = None  # PartitionResult
+    modifier_applicator: Any = None  # ModifierApplicator 实例
     
     # === 回调函数 ===
     event_callback: Callable[[str, str, str], None] | None = None

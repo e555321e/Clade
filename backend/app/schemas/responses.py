@@ -104,6 +104,17 @@ class MapTileInfo(BaseModel):
     is_lake: bool = False  # 是否为湖泊
 
 
+class SuitabilityBreakdown(BaseModel):
+    """宜居度分解数据"""
+    temp_score: float = 0.0       # 温度适应分 (0-1)
+    humidity_score: float = 0.0   # 湿度适应分 (0-1)
+    food_score: float = 0.0       # 食物/资源分 (0-1)
+    biome_score: float = 0.0      # 环境匹配分 (0-1)
+    special_bonus: float = 0.0    # 特殊加成分 (0-1)
+    has_prey: bool | None = None  # 是否有猎物（仅消费者）
+    prey_abundance: float | None = None  # 猎物丰富度（仅消费者）
+
+
 class HabitatEntry(BaseModel):
     species_id: int
     lineage_code: str
@@ -112,6 +123,8 @@ class HabitatEntry(BaseModel):
     tile_id: int
     population: int
     suitability: float
+    # 【新增】宜居度分解
+    breakdown: SuitabilityBreakdown | None = None
 
 
 class RiverSegment(BaseModel):

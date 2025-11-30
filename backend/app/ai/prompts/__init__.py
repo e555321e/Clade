@@ -5,6 +5,7 @@ from .narrative import NARRATIVE_PROMPTS
 from .pressure_response import PRESSURE_RESPONSE_PROMPTS
 from .embedding import EMBEDDING_PROMPTS
 from .plant import PLANT_PROMPTS
+from .intelligence import INTELLIGENCE_PROMPTS
 
 # 合并所有 prompt 模板
 PROMPT_TEMPLATES: dict[str, str] = {}
@@ -13,6 +14,7 @@ PROMPT_TEMPLATES.update(NARRATIVE_PROMPTS)
 PROMPT_TEMPLATES.update(PRESSURE_RESPONSE_PROMPTS)
 PROMPT_TEMPLATES.update(EMBEDDING_PROMPTS)
 PROMPT_TEMPLATES.update(PLANT_PROMPTS)  # 植物演化专用Prompt
+PROMPT_TEMPLATES.update(INTELLIGENCE_PROMPTS)  # 生态智能体Prompt
 
 __all__ = [
     "PROMPT_TEMPLATES", 
@@ -21,5 +23,6 @@ __all__ = [
     "PRESSURE_RESPONSE_PROMPTS",
     "EMBEDDING_PROMPTS",
     "PLANT_PROMPTS",
+    "INTELLIGENCE_PROMPTS",
 ]
 

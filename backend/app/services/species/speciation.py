@@ -123,16 +123,25 @@ class SpeciationService:
         turn_index: int,
         map_changes: list = None,
         major_events: list = None,
-        pressures: Sequence = None,  # 新增：ParsedPressure 列表
-        trophic_interactions: dict[str, float] = None,  # 新增：营养级互动信息
+        pressures: Sequence = None,  # ParsedPressure 列表
+        trophic_interactions: dict[str, float] = None,  # 营养级互动信息
         stream_callback: Callable[[str], Awaitable[None] | None] | None = None,
+        speciation_candidates: set[str] | None = None,  # AI 识别的高分化信号物种
     ) -> list[BranchingEvent]:
-        """处理物种分化 (异步并发版)"""
+        """处理物种分化 (异步并发版)
+        
+        Args:
+            speciation_candidates: AI 通过 ModifierApplicator 识别的高分化信号物种代码集合
+                                   这些物种会获得分化概率加成
+        """
         import random
         import math
         
         # 保存营养级互动信息，供后续使用
         self._current_trophic_interactions = trophic_interactions or {}
+        
+        # 保存 AI 分化候选
+        self._ai_speciation_candidates = speciation_candidates or set()
         
         # 提取压力描述摘要
         pressure_summary = "无显著环境压力"
@@ -409,10 +418,21 @@ class SpeciationService:
             # 每回合满足条件但未分化的物种，下回合分化概率+10%
             speciation_chance = base_chance + speciation_bonus + speciation_pressure
             
+            # 【新增】AI 分化信号加成
+            # 如果物种被 ModifierApplicator 识别为高分化信号候选，增加概率
+            ai_boost = 0.0
+            if lineage_code in self._ai_speciation_candidates:
+                ai_boost = 0.15  # AI 识别的候选获得 15% 加成
+                speciation_chance += ai_boost
+                if speciation_type == "自然辐射" or speciation_type == "生态隔离":
+                    speciation_type = "AI辅助" + speciation_type
+                logger.info(f"[AI分化] {species.common_name}: AI 分化信号加成 +{ai_boost:.0%}")
+            
             # 记录分化概率计算详情
+            ai_info = f" + AI={ai_boost:.1%}" if ai_boost > 0 else ""
             logger.info(
                 f"[分化概率] {species.common_name}: "
-                f"基础={base_chance:.1%} + 加成={speciation_bonus:.1%} + 累积={speciation_pressure:.1%} "
+                f"基础={base_chance:.1%} + 加成={speciation_bonus:.1%} + 累积={speciation_pressure:.1%}{ai_info} "
                 f"= 总概率{speciation_chance:.1%} (类型:{speciation_type})"
             )
             
@@ -1020,6 +1040,19 @@ class SpeciationService:
   - 登陆条件(阶段2→3): 保水能力>=5.0, 耐旱性>=4.0
   - 成为树木条件: 木质化程度>=7.0, 阶段>=5"""
             
+            # 【新增】获取 AI 演化提示（来自生态智能体）
+            parent_code = payload.get('parent_lineage')
+            evolution_hint = self.get_evolution_hint(parent_code)
+            ai_evolution_context = ""
+            if evolution_hint:
+                ai_directions = evolution_hint.get("ai_directions", [])
+                if ai_directions:
+                    ai_evolution_context = f"""
+- 【🧠AI演化建议】（来自生态智能体评估）:
+  - 建议方向: {', '.join(ai_directions[:5])}
+  - 请参考这些方向设计子代的特质变化！"""
+                    logger.debug(f"[分化] {parent_code} 使用AI演化提示: {ai_directions}")
+            
             species_info = f"""
 【物种 {idx + 1}】{'🌱植物' if is_plant else '🦎动物'}
 - request_id: {idx}
@@ -1037,7 +1070,7 @@ class SpeciationService:
 - 子代编号: 第{payload.get('offspring_index', 1)}个（共{payload.get('total_offspring', 1)}个）
 - 【属性预算】: {trait_budget}
 - 【器官约束⚠️必须遵守current_stage】:
-{organ_constraints}{plant_context}
+{organ_constraints}{plant_context}{ai_evolution_context}
 - 【地块背景】: {tile_context[:150]}
 - 区域死亡率: {region_mortality:.1%}（{region_pressure_level}）
 - 死亡率梯度: {mortality_gradient:.1%}

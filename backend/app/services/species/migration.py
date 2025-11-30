@@ -177,6 +177,7 @@ class MigrationAdvisor:
         map_changes: Sequence[MapChange],
         current_turn: int = 0,
         cooldown_species: set[str] | None = None,
+        migration_bias_overrides: dict[str, float] | None = None,
     ) -> list[MigrationEvent]:
         """基于规则生成迁徙建议。
         
@@ -195,12 +196,16 @@ class MigrationAdvisor:
             map_changes: 地图变化列表
             current_turn: 当前回合（用于日志）
             cooldown_species: 处于冷却期的物种代码集合（跳过这些物种）
+            migration_bias_overrides: AI 修正的迁徙阈值（lineage_code -> 调整后阈值）
         """
         if not species:
             return []
         
         if cooldown_species is None:
             cooldown_species = set()
+        
+        # 缓存 AI 迁徙偏向修正
+        self._migration_bias_overrides = migration_bias_overrides or {}
         
         events: list[MigrationEvent] = []
         # 【修复】不再强制要求major_events，任何压力都可以触发迁徙

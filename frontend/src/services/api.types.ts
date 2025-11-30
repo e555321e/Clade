@@ -174,6 +174,17 @@ export interface MapTileInfo {
   };
 }
 
+// 宜居度分解数据
+export interface SuitabilityBreakdown {
+  temp_score: number;       // 温度适应分 (0-1)
+  humidity_score: number;   // 湿度适应分 (0-1)
+  food_score: number;       // 食物/资源分 (0-1)
+  biome_score: number;      // 环境匹配分 (0-1)
+  special_bonus: number;    // 特殊加成分 (0-1)
+  has_prey?: boolean;       // 是否有猎物（仅消费者）
+  prey_abundance?: number;  // 猎物丰富度（仅消费者）
+}
+
 export interface HabitatEntry {
   species_id: number;
   lineage_code: string;
@@ -182,6 +193,7 @@ export interface HabitatEntry {
   tile_id: number;
   population: number;
   suitability: number;
+  breakdown?: SuitabilityBreakdown;  // 【新增】宜居度分解
 }
 
 export interface RiverSegment {

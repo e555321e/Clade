@@ -638,3 +638,557 @@ async def get_species_biography(species_code: str) -> dict[str, Any]:
         logger.error(f"生成传记失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ==================== 插件 API ====================
+
+_plugin_manager = None
+
+def _get_plugin_manager():
+    """获取插件管理器（延迟初始化）"""
+    global _plugin_manager
+    
+    if _plugin_manager is not None:
+        return _plugin_manager
+    
+    try:
+        from . import routes
+        from pathlib import Path
+        
+        embedding_service = getattr(routes, 'embedding_service', None)
+        
+        if embedding_service is None:
+            logger.warning("[PluginAPI] EmbeddingService 不可用，插件功能已禁用")
+            return None
+        
+        from ..services.embedding_plugins import (
+            EmbeddingPluginManager,
+            load_all_plugins
+        )
+        
+        load_all_plugins()
+        
+        # 获取当前模式（从 simulation_engine）
+        simulation_engine = getattr(routes, 'simulation_engine', None)
+        mode = "full"  # 默认值
+        if simulation_engine:
+            mode = getattr(simulation_engine, '_pipeline_mode', None) or \
+                   getattr(simulation_engine, '_stage_mode', None) or 'full'
+        
+        # 获取配置文件路径
+        config_path = Path(__file__).parent.parent / "simulation" / "stage_config.yaml"
+        
+        _plugin_manager = EmbeddingPluginManager(
+            embedding_service, 
+            mode=mode,
+            config_path=config_path
+        )
+        count = _plugin_manager.load_plugins()
+        
+        if count == 0:
+            logger.info(f"[PluginAPI] 模式 {mode} 无启用的插件")
+        else:
+            logger.info(f"[PluginAPI] 模式 {mode} 已加载 {count} 个插件")
+        
+        return _plugin_manager
+    except Exception as e:
+        logger.error(f"[PluginAPI] 初始化插件管理器失败: {e}")
+        return None
+
+
+def _check_plugin_available(plugin_name: str):
+    """检查插件是否可用，返回错误响应或 None"""
+    manager = _get_plugin_manager()
+    if not manager:
+        raise HTTPException(
+            status_code=503, 
+            detail={
+                "error": "插件管理器不可用",
+                "reason": "EmbeddingService 未初始化或配置错误",
+                "suggestion": "请确保 embedding 功能已启用"
+            }
+        )
+    
+    plugin = manager.get_plugin(plugin_name)
+    if not plugin:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": f"插件 {plugin_name} 不可用",
+                "reason": "该插件未启用或加载失败",
+                "enabled_plugins": manager.list_plugins()
+            }
+        )
+    
+    return plugin
+
+
+def _check_index_not_empty(plugin, plugin_name: str):
+    """检查插件索引是否为空"""
+    store = plugin._get_vector_store(create=False)
+    if not store or store.size == 0:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "索引为空",
+                "plugin": plugin_name,
+                "reason": "索引尚未构建或无数据",
+                "suggestion": "请等待至少一个回合结束后重试",
+                "last_update_turn": plugin._last_update_turn
+            }
+        )
+
+
+@router.get("/plugins/status")
+async def get_plugins_status() -> dict[str, Any]:
+    """获取所有插件状态"""
+    manager = _get_plugin_manager()
+    if not manager:
+        return {
+            "success": False, 
+            "error": "插件管理器不可用",
+            "reason": "EmbeddingService 未初始化",
+            "plugins": []
+        }
+    
+    return {
+        "success": True,
+        "plugins": manager.list_plugins(),
+        "stats": manager.get_all_stats(),
+    }
+
+
+# ==================== 行为策略插件 API ====================
+
+@router.get("/behavior/profile/{species_code}")
+async def get_behavior_profile(species_code: str) -> dict[str, Any]:
+    """获取物种行为档案"""
+    plugin = _check_plugin_available("behavior_strategy")
+    
+    species = _get_species_by_code(species_code)
+    if not species:
+        raise HTTPException(status_code=404, detail=f"物种 {species_code} 不存在")
+    
+    try:
+        profile = plugin.infer_behavior_profile(species)
+        stats = plugin.get_stats()
+        
+        return {
+            "success": True,
+            "species_code": species_code,
+            "profile": {
+                "predation_strategy": profile.predation_strategy,
+                "defense_strategy": profile.defense_strategy,
+                "reproduction_strategy": profile.reproduction_strategy,
+                "activity_pattern": profile.activity_pattern,
+                "social_behavior": profile.social_behavior,
+            },
+            "text": profile.to_text(),
+            "degraded_mode": stats.get("degraded_mode", False),
+        }
+    except Exception as e:
+        logger.error(f"获取行为档案失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/behavior/similar/{species_code}")
+async def get_similar_behaviors(species_code: str, top_k: int = 5) -> dict[str, Any]:
+    """查找行为相似的物种"""
+    plugin = _check_plugin_available("behavior_strategy")
+    _check_index_not_empty(plugin, "behavior_strategy")
+    
+    species = _get_species_by_code(species_code)
+    if not species:
+        raise HTTPException(status_code=404, detail=f"物种 {species_code} 不存在")
+    
+    try:
+        similar = plugin.find_similar_species(species, top_k=top_k)
+        return {"success": True, "species_code": species_code, "similar": similar}
+    except Exception as e:
+        logger.error(f"查找相似物种失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class BehaviorConflictRequest(BaseModel):
+    """行为冲突检测请求"""
+    species_code_a: str
+    species_code_b: str
+
+
+@router.post("/behavior/conflicts")
+async def check_behavior_conflicts(request: BehaviorConflictRequest) -> dict[str, Any]:
+    """检测两个物种的行为冲突"""
+    plugin = _check_plugin_available("behavior_strategy")
+    
+    species_a = _get_species_by_code(request.species_code_a)
+    species_b = _get_species_by_code(request.species_code_b)
+    
+    if not species_a:
+        raise HTTPException(status_code=404, detail=f"物种 {request.species_code_a} 不存在")
+    if not species_b:
+        raise HTTPException(status_code=404, detail=f"物种 {request.species_code_b} 不存在")
+    
+    try:
+        conflicts = plugin.find_behavior_conflicts(species_a, species_b)
+        return {
+            "success": True,
+            "species_a": request.species_code_a,
+            "species_b": request.species_code_b,
+            "conflicts": conflicts,
+            "has_conflicts": len(conflicts) > 0,
+        }
+    except Exception as e:
+        logger.error(f"检测行为冲突失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/behavior/summary")
+async def get_behavior_summary() -> dict[str, Any]:
+    """获取行为分布摘要"""
+    plugin = _check_plugin_available("behavior_strategy")
+    
+    try:
+        summary = plugin.get_behavior_summary()
+        stats = plugin.get_stats()
+        return {
+            "success": True, 
+            "degraded_mode": stats.get("degraded_mode", False),
+            **summary
+        }
+    except Exception as e:
+        logger.error(f"获取行为摘要失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 生态网络插件 API ====================
+
+@router.get("/food-web/keystone")
+async def get_keystone_species(top_k: int = 5) -> dict[str, Any]:
+    """获取关键物种"""
+    plugin = _check_plugin_available("food_web")
+    
+    try:
+        keystones = plugin.find_keystone_species(top_k=top_k)
+        stats = plugin.get_stats()
+        return {
+            "success": True, 
+            "keystones": keystones,
+            "index_size": stats.get("index_size", 0),
+            "degraded_mode": stats.get("degraded_mode", False),
+        }
+    except Exception as e:
+        logger.error(f"获取关键物种失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/food-web/stability")
+async def get_ecosystem_stability() -> dict[str, Any]:
+    """获取生态稳定性指标"""
+    plugin = _check_plugin_available("food_web")
+    
+    try:
+        stability = plugin.calculate_ecosystem_stability()
+        return {"success": True, **stability}
+    except Exception as e:
+        logger.error(f"获取稳定性失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ReplacementRequest(BaseModel):
+    """补位物种请求"""
+    extinct_code: str
+    top_k: int = 3
+
+
+@router.post("/food-web/replacement")
+async def find_replacement_candidates(request: ReplacementRequest) -> dict[str, Any]:
+    """为灭绝物种寻找补位候选"""
+    plugin = _check_plugin_available("food_web")
+    _check_index_not_empty(plugin, "food_web")
+    
+    try:
+        candidates = plugin.find_replacement_candidates(request.extinct_code, request.top_k)
+        return {
+            "success": True,
+            "extinct_code": request.extinct_code,
+            "candidates": candidates,
+        }
+    except Exception as e:
+        logger.error(f"查找补位候选失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/food-web/summary")
+async def get_food_web_summary() -> dict[str, Any]:
+    """获取食物网摘要"""
+    plugin = _check_plugin_available("food_web")
+    
+    try:
+        summary = plugin.get_network_summary()
+        stats = plugin.get_stats()
+        return {
+            "success": True, 
+            "degraded_mode": stats.get("degraded_mode", False),
+            **summary
+        }
+    except Exception as e:
+        logger.error(f"获取食物网摘要失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 地块向量插件 API ====================
+
+@router.get("/tiles/hotspots")
+async def get_ecological_hotspots(top_k: int = 10) -> dict[str, Any]:
+    """获取生态热点区域"""
+    plugin = _check_plugin_available("tile_biome")
+    
+    try:
+        hotspots = plugin.find_ecological_hotspots(top_k=top_k)
+        stats = plugin.get_stats()
+        return {
+            "success": True, 
+            "hotspots": hotspots,
+            "index_size": stats.get("index_size", 0),
+        }
+    except Exception as e:
+        logger.error(f"获取热点区域失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SpeciesTileMatchRequest(BaseModel):
+    """物种地块匹配请求"""
+    species_code: str
+    top_k: int = 5
+
+
+@router.post("/tiles/species-match")
+async def match_species_to_tiles(request: SpeciesTileMatchRequest) -> dict[str, Any]:
+    """为物种找最佳地块"""
+    plugin = _check_plugin_available("tile_biome")
+    
+    species = _get_species_by_code(request.species_code)
+    if not species:
+        raise HTTPException(status_code=404, detail=f"物种 {request.species_code} 不存在")
+    
+    try:
+        matches = plugin.find_best_tiles_for_species(species, top_k=request.top_k)
+        return {
+            "success": True,
+            "species_code": request.species_code,
+            "matches": matches,
+        }
+    except Exception as e:
+        logger.error(f"匹配地块失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tiles/summary")
+async def get_tile_summary() -> dict[str, Any]:
+    """获取地块摘要"""
+    plugin = _check_plugin_available("tile_biome")
+    
+    try:
+        summary = plugin.get_tile_summary()
+        if not summary:
+            return {
+                "success": True, 
+                "message": "地块索引为空，请等待回合结束后重试",
+                "total_tiles": 0
+            }
+        return {"success": True, **summary}
+    except Exception as e:
+        logger.error(f"获取地块摘要失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 演化空间插件 API ====================
+
+@router.get("/evolution/trends")
+async def get_evolution_trends(top_k: int = 5) -> dict[str, Any]:
+    """获取演化趋势"""
+    plugin = _check_plugin_available("evolution_space")
+    
+    try:
+        trends = plugin.get_current_trends(top_k=top_k)
+        stats = plugin.get_stats()
+        return {
+            "success": True, 
+            "trends": trends,
+            "total_events": stats.get("index_size", 0),
+        }
+    except Exception as e:
+        logger.error(f"获取演化趋势失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/evolution/convergent")
+async def detect_convergent_evolution(min_species: int = 3) -> dict[str, Any]:
+    """检测收敛演化"""
+    plugin = _check_plugin_available("evolution_space")
+    
+    try:
+        convergences = plugin.detect_convergent_evolution(min_species=min_species)
+        return {"success": True, "convergent_evolutions": convergences}
+    except Exception as e:
+        logger.error(f"检测收敛演化失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/evolution/trajectory/{species_code}")
+async def predict_species_trajectory(species_code: str) -> dict[str, Any]:
+    """预测物种演化轨迹"""
+    plugin = _check_plugin_available("evolution_space")
+    
+    species = _get_species_by_code(species_code)
+    if not species:
+        raise HTTPException(status_code=404, detail=f"物种 {species_code} 不存在")
+    
+    try:
+        predictions = plugin.predict_species_trajectory(species)
+        return {
+            "success": True,
+            "species_code": species_code,
+            "predictions": predictions if predictions else [],
+            "message": "无历史演化数据" if not predictions else None,
+        }
+    except Exception as e:
+        logger.error(f"预测演化轨迹失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/evolution/summary")
+async def get_evolution_summary() -> dict[str, Any]:
+    """获取演化空间摘要"""
+    plugin = _check_plugin_available("evolution_space")
+    
+    try:
+        summary = plugin.get_evolution_summary()
+        return {"success": True, **summary}
+    except Exception as e:
+        logger.error(f"获取演化摘要失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 血统向量插件 API ====================
+
+@router.get("/ancestry/{species_code}")
+async def get_ancestry_info(species_code: str) -> dict[str, Any]:
+    """获取物种血统信息"""
+    plugin = _check_plugin_available("ancestry")
+    
+    species = _get_species_by_code(species_code)
+    if not species:
+        raise HTTPException(status_code=404, detail=f"物种 {species_code} 不存在")
+    
+    try:
+        ancestry = plugin._ancestry_cache.get(species_code)
+        if not ancestry:
+            return {
+                "success": True,
+                "species_code": species_code,
+                "ancestry": None,
+                "message": "血统信息尚未计算，请等待回合结束后重试",
+            }
+        
+        return {
+            "success": True,
+            "species_code": species_code,
+            "ancestry": {
+                "generation": ancestry.generation,
+                "ancestor_codes": ancestry.ancestor_codes,
+                "has_trait_history": len(ancestry.trait_history) > 0,
+            },
+        }
+    except Exception as e:
+        logger.error(f"获取血统信息失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ancestry/inertia/{species_code}/{trait}")
+async def get_genetic_inertia(species_code: str, trait: str) -> dict[str, Any]:
+    """获取遗传惯性"""
+    plugin = _check_plugin_available("ancestry")
+    
+    species = _get_species_by_code(species_code)
+    if not species:
+        raise HTTPException(status_code=404, detail=f"物种 {species_code} 不存在")
+    
+    try:
+        inertia = plugin.predict_genetic_inertia(species, trait)
+        return {
+            "success": True,
+            "species_code": species_code,
+            "trait": trait,
+            **inertia,
+        }
+    except Exception as e:
+        logger.error(f"获取遗传惯性失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ancestry/speciation/{species_code}")
+async def should_species_speciate(species_code: str, threshold: float = 0.6) -> dict[str, Any]:
+    """判断是否应该分化"""
+    plugin = _check_plugin_available("ancestry")
+    
+    species = _get_species_by_code(species_code)
+    if not species:
+        raise HTTPException(status_code=404, detail=f"物种 {species_code} 不存在")
+    
+    try:
+        result = plugin.should_speciate(species, threshold=threshold)
+        return {"success": True, "species_code": species_code, **result}
+    except Exception as e:
+        logger.error(f"判断分化失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class DivergenceRequest(BaseModel):
+    """分化程度请求"""
+    species_code_a: str
+    species_code_b: str
+
+
+@router.post("/ancestry/divergence")
+async def calculate_divergence(request: DivergenceRequest) -> dict[str, Any]:
+    """计算两个物种的分化程度"""
+    plugin = _check_plugin_available("ancestry")
+    
+    species_a = _get_species_by_code(request.species_code_a)
+    species_b = _get_species_by_code(request.species_code_b)
+    
+    if not species_a:
+        raise HTTPException(status_code=404, detail=f"物种 {request.species_code_a} 不存在")
+    if not species_b:
+        raise HTTPException(status_code=404, detail=f"物种 {request.species_code_b} 不存在")
+    
+    try:
+        result = plugin.calculate_divergence_score(species_a, species_b)
+        return {
+            "success": True,
+            "species_a": request.species_code_a,
+            "species_b": request.species_code_b,
+            **result,
+        }
+    except Exception as e:
+        logger.error(f"计算分化程度失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ancestry/summary")
+async def get_ancestry_summary() -> dict[str, Any]:
+    """获取血统摘要"""
+    plugin = _check_plugin_available("ancestry")
+    
+    try:
+        summary = plugin.get_ancestry_summary()
+        if not summary:
+            return {
+                "success": True,
+                "message": "血统索引为空，请等待回合结束后重试",
+                "total_species": 0
+            }
+        return {"success": True, **summary}
+    except Exception as e:
+        logger.error(f"获取血统摘要失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

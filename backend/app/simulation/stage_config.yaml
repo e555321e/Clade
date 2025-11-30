@@ -52,6 +52,9 @@ modes:
       - name: final_mortality
         enabled: true
         order: 80
+      - name: ecological_intelligence
+        enabled: false  # 极简模式禁用
+        order: 52  # 在初步死亡率(50)后、迁徙(60)前，使AI能影响迁徙决策
       - name: ai_status_eval
         enabled: false
         order: 85
@@ -97,6 +100,9 @@ modes:
       - name: embedding_hooks
         enabled: false
         order: 165
+      - name: embedding_plugins
+        enabled: false  # 极简模式禁用
+        order: 166
       - name: save_history
         enabled: true
         order: 170
@@ -118,10 +124,10 @@ modes:
         enabled: true
         order: 10
       - name: map_evolution
-        enabled: true
+        enabled: true  # 海平面、气候变化
         order: 20
       - name: tectonic_movement
-        enabled: true
+        enabled: false  # 禁用板块运动（地形不变）
         order: 25
       - name: fetch_species
         enabled: true
@@ -153,8 +159,11 @@ modes:
       - name: final_mortality
         enabled: true
         order: 80
+      - name: ecological_intelligence
+        enabled: true  # 生态智能体评估
+        order: 52  # 在初步死亡率(50)后、迁徙(60)前，使AI能影响迁徙决策
       - name: ai_status_eval
-        enabled: false  # 禁用AI状态评估
+        enabled: false  # 禁用旧版AI状态评估（已被生态智能体替代）
         order: 85
       - name: speciation_data_transfer
         enabled: true
@@ -202,8 +211,27 @@ modes:
         enabled: true
         order: 160
       - name: embedding_hooks
-        enabled: false  # 禁用Embedding
+        enabled: true  # 标准模式启用 Embedding
         order: 165
+      - name: embedding_plugins
+        enabled: true  # 标准模式启用插件
+        order: 166
+        plugins:
+          behavior_strategy:
+            enabled: true
+            update_frequency: 2
+          food_web:
+            enabled: true
+            update_frequency: 1
+          tile_biome:
+            enabled: true
+            update_frequency: 3
+          prompt_optimizer:
+            enabled: false  # 标准模式禁用，减少开销
+          evolution_space:
+            enabled: false
+          ancestry:
+            enabled: false
       - name: save_history
         enabled: true
         order: 170
@@ -214,9 +242,9 @@ modes:
         enabled: true
         order: 180
 
-  # 全功能模式 - 所有功能启用
+  # 全功能模式 - 使用新生态智能体架构
   full:
-    description: "全功能模式：所有Stage启用"
+    description: "全功能模式：使用生态智能体统一修正，禁用旧AI数值Stage"
     stages:
       - name: init
         enabled: true
@@ -260,8 +288,11 @@ modes:
       - name: final_mortality
         enabled: true
         order: 80
+      - name: ecological_intelligence
+        enabled: true  # 生态智能体评估（新架构唯一数值修正来源）
+        order: 52  # 在初步死亡率(50)后、迁徙(60)前，使AI能影响迁徙决策
       - name: ai_status_eval
-        enabled: true
+        enabled: false  # [已废弃] 被 ecological_intelligence 替代
         order: 85
       - name: speciation_data_transfer
         enabled: true
@@ -285,8 +316,14 @@ modes:
         enabled: true
         order: 115
       - name: ai_parallel_tasks
-        enabled: true
+        enabled: false  # [已废弃] 叙事由 ecological_intelligence 生成
         order: 120
+      - name: adaptation
+        enabled: false  # [已废弃] 数值修改迁移到 ModifierApplicator
+        order: 121
+      - name: speciation
+        enabled: false  # [已废弃] 分化信号由 ModifierApplicator 提供
+        order: 122
       - name: background_management
         enabled: true
         order: 130
@@ -305,6 +342,36 @@ modes:
       - name: embedding_hooks
         enabled: true
         order: 165
+      - name: embedding_plugins
+        enabled: true  # 全功能模式启用插件
+        order: 166
+        plugins:
+          behavior_strategy:
+            enabled: true
+            update_frequency: 1
+            params:
+              similarity_threshold: 0.7
+          food_web:
+            enabled: true
+            update_frequency: 1
+            params:
+              stability_threshold: 0.4
+          tile_biome:
+            enabled: true
+            update_frequency: 2
+          prompt_optimizer:
+            enabled: true
+            update_frequency: 1
+            params:
+              max_tokens: 1000
+          evolution_space:
+            enabled: true
+            update_frequency: 5
+            params:
+              cluster_interval: 5
+          ancestry:
+            enabled: true
+            update_frequency: 2
       - name: save_history
         enabled: true
         order: 170
@@ -366,8 +433,11 @@ modes:
       - name: final_mortality
         enabled: true
         order: 80
+      - name: ecological_intelligence
+        enabled: true  # 生态智能体评估（调试模式启用完整输出）
+        order: 52  # 在初步死亡率(50)后、迁徙(60)前，使AI能影响迁徙决策
       - name: ai_status_eval
-        enabled: true
+        enabled: false  # [已废弃] 被 ecological_intelligence 替代
         order: 85
       - name: speciation_data_transfer
         enabled: true
@@ -391,8 +461,14 @@ modes:
         enabled: true
         order: 115
       - name: ai_parallel_tasks
-        enabled: true
+        enabled: false  # [已废弃] 叙事由 ecological_intelligence 生成
         order: 120
+      - name: adaptation
+        enabled: false  # [已废弃] 数值修改迁移到 ModifierApplicator
+        order: 121
+      - name: speciation
+        enabled: false  # [已废弃] 分化信号由 ModifierApplicator 提供
+        order: 122
       - name: background_management
         enabled: true
         order: 130
@@ -411,6 +487,28 @@ modes:
       - name: embedding_hooks
         enabled: true
         order: 165
+      - name: embedding_plugins
+        enabled: true  # 调试模式启用全部插件
+        order: 166
+        plugins:
+          behavior_strategy:
+            enabled: true
+            update_frequency: 1
+          food_web:
+            enabled: true
+            update_frequency: 1
+          tile_biome:
+            enabled: true
+            update_frequency: 1
+          prompt_optimizer:
+            enabled: true
+            update_frequency: 1
+          evolution_space:
+            enabled: true
+            update_frequency: 1
+          ancestry:
+            enabled: true
+            update_frequency: 1
       - name: save_history
         enabled: true
         order: 170

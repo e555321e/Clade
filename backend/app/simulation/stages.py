@@ -113,6 +113,9 @@ class StageDependencyValidator:
         "reproduction_results",
         "ai_status_evals",
         "activation_events",
+        # 插件数据共享
+        "plugin_data",
+        "embedding_turn_data",
         "gene_flow_count",
         "drift_count",
         "auto_hybrids",
@@ -249,6 +252,7 @@ class StageOrder(Enum):
     VEGETATION_COVER = 155
     SAVE_POPULATION_SNAPSHOT = 160
     EMBEDDING_HOOKS = 165
+    EMBEDDING_PLUGINS = 166
     SAVE_HISTORY = 170
     EXPORT_DATA = 175
     FINALIZE = 180
@@ -337,6 +341,8 @@ class InitStage(BaseStage):
     
     def __init__(self):
         super().__init__(StageOrder.INIT.value, "回合初始化")
+        self._plugin_manager = None
+        self._plugin_init_attempted = False
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
@@ -345,11 +351,46 @@ class InitStage(BaseStage):
             writes_fields=set(),  # 只做清理，不写入字段
         )
     
+    def _get_plugin_manager(self, engine: 'SimulationEngine'):
+        """延迟获取插件管理器"""
+        if self._plugin_init_attempted:
+            return self._plugin_manager
+        
+        self._plugin_init_attempted = True
+        
+        embedding_service = getattr(engine, 'embedding_service', None)
+        if not embedding_service:
+            return None
+        
+        try:
+            from ..services.embedding_plugins import (
+                EmbeddingPluginManager,
+                load_all_plugins
+            )
+            
+            load_all_plugins()
+            self._plugin_manager = EmbeddingPluginManager(embedding_service)
+            self._plugin_manager.load_plugins()
+            return self._plugin_manager
+        except Exception as e:
+            logger.debug(f"[InitStage] 无法加载 embedding 插件: {e}")
+            return None
+    
     async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
         """清理各服务缓存"""
         engine.speciation.clear_tile_cache()
         engine.migration_advisor.clear_tile_mortality_cache()
         engine.tile_mortality.clear_accumulated_data()
+        
+        # 触发插件 on_turn_start
+        if engine._use_embedding_integration:
+            manager = self._get_plugin_manager(engine)
+            if manager:
+                try:
+                    manager.on_turn_start(ctx)
+                    logger.debug(f"[InitStage] 插件 on_turn_start 已触发")
+                except Exception as e:
+                    logger.warning(f"[InitStage] 插件 on_turn_start 失败: {e}")
 
 
 class ParsePressuresStage(BaseStage):
@@ -711,10 +752,23 @@ class PreliminaryMortalityStage(BaseStage):
 
 
 class MigrationStage(BaseStage):
-    """迁徙执行阶段"""
+    """迁徙执行阶段
+    
+    使用 ModifierApplicator 应用迁徙偏向修正：
+    - migration_bias > 0: 增加迁徙倾向
+    - migration_bias < 0: 减少迁徙倾向
+    """
     
     def __init__(self):
         super().__init__(StageOrder.MIGRATION.value, "迁徙执行")
+    
+    def get_dependency(self) -> StageDependency:
+        return StageDependency(
+            requires_stages={"初步死亡率评估"},
+            optional_stages={"生态智能体评估"},  # 使用 ModifierApplicator
+            requires_fields={"preliminary_mortality", "species_batch"},
+            writes_fields={"migration_events", "migration_count"},
+        )
     
     async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
         from ..repositories.environment_repository import environment_repository
@@ -722,6 +776,13 @@ class MigrationStage(BaseStage):
         
         logger.info("【阶段2】迁徙建议与执行...")
         ctx.emit_event("stage", "🦅 【阶段2】迁徙建议与执行", "生态")
+        
+        # 获取 ModifierApplicator（如果可用）
+        modifier = getattr(ctx, 'modifier_applicator', None)
+        use_modifier = modifier is not None and len(modifier._assessments) > 0
+        
+        if use_modifier:
+            logger.debug("[迁徙] 使用 ModifierApplicator 应用迁徙偏向修正")
         
         # 更新猎物分布缓存
         ctx.all_habitats = environment_repository.latest_habitats()
@@ -757,12 +818,27 @@ class MigrationStage(BaseStage):
         if ctx.cooldown_species:
             logger.debug(f"[迁徙冷却] {len(ctx.cooldown_species)} 个物种处于冷却期，跳过")
         
+        # 【关键】应用迁徙偏向修正
+        # 如果 ModifierApplicator 可用，调整每个物种的迁徙阈值
+        migration_bias_overrides = {}
+        if use_modifier:
+            for sp in ctx.species_batch:
+                code = sp.lineage_code
+                # 基础迁徙概率阈值
+                base_threshold = 0.3
+                # 通过 ModifierApplicator 调整
+                adjusted_threshold = modifier.apply(code, base_threshold, "migration")
+                if abs(adjusted_threshold - base_threshold) > 0.01:
+                    migration_bias_overrides[code] = adjusted_threshold
+                    logger.debug(f"[迁徙偏向] {sp.common_name}: 阈值 {base_threshold:.2f} → {adjusted_threshold:.2f}")
+        
         # 规划迁徙
         ctx.migration_events = engine.migration_advisor.plan(
             ctx.preliminary_mortality,
             ctx.modifiers, ctx.major_events, ctx.map_changes,
             current_turn=ctx.turn_index,
-            cooldown_species=ctx.cooldown_species
+            cooldown_species=ctx.cooldown_species,
+            migration_bias_overrides=migration_bias_overrides if migration_bias_overrides else None,
         )
         
         # 执行迁徙
@@ -879,10 +955,24 @@ class FinalMortalityStage(BaseStage):
 
 
 class PopulationUpdateStage(BaseStage):
-    """种群更新阶段"""
+    """种群更新阶段
+    
+    使用 ModifierApplicator 统一应用 AI 修正：
+    - mortality: 死亡率修正
+    - reproduction_r: 繁殖率修正 (r)
+    - carrying_capacity: 承载力修正 (K)
+    """
     
     def __init__(self):
         super().__init__(StageOrder.POPULATION_UPDATE.value, "种群更新")
+    
+    def get_dependency(self) -> StageDependency:
+        return StageDependency(
+            requires_stages={"最终死亡率评估"},
+            optional_stages={"生态智能体评估"},  # 使用 ModifierApplicator
+            requires_fields={"combined_results", "species_batch"},
+            writes_fields={"new_populations", "reproduction_results"},
+        )
     
     async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
         from ..repositories.species_repository import species_repository
@@ -890,6 +980,15 @@ class PopulationUpdateStage(BaseStage):
         
         logger.info("计算种群变化（死亡+繁殖并行）...")
         ctx.emit_event("stage", "💀🐣 计算种群变化", "物种")
+        
+        # 获取 ModifierApplicator（如果可用）
+        modifier = getattr(ctx, 'modifier_applicator', None)
+        use_modifier = modifier is not None and len(modifier._assessments) > 0
+        
+        if use_modifier:
+            logger.info("[种群更新] 使用 ModifierApplicator 应用 AI 修正 (mortality/r/K)")
+            stats = modifier.get_stats()
+            logger.debug(f"[种群更新] ModifierApplicator 统计: {stats}")
         
         # 更新环境动态修正系数
         temp_change = ctx.modifiers.get("temperature", 0.0) if ctx.modifiers else 0.0
@@ -923,10 +1022,24 @@ class PopulationUpdateStage(BaseStage):
         for item in ctx.combined_results:
             code = item.species.lineage_code
             initial = item.initial_population
-            death_rate = item.death_rate
+            base_death_rate = item.death_rate
+            
+            # 【关键】通过 ModifierApplicator 应用 AI 死亡率修正
+            if use_modifier:
+                adjusted_death_rate = modifier.apply(code, base_death_rate, "mortality")
+            else:
+                adjusted_death_rate = base_death_rate
+            
+            # 确保死亡率在有效范围内
+            death_rate = max(0.0, min(0.99, adjusted_death_rate))
             
             repro_pop = ctx.reproduction_results.get(code, initial)
             repro_gain = max(0, repro_pop - initial)
+            
+            # 【关键】通过 ModifierApplicator 应用繁殖率 r 修正
+            if use_modifier:
+                r_factor = modifier.apply(code, 1.0, "reproduction_r")
+                repro_gain = int(repro_gain * r_factor)
             
             survivors = int(initial * (1.0 - death_rate))
             survivor_ratio = survivors / initial if initial > 0 else 0
@@ -934,18 +1047,46 @@ class PopulationUpdateStage(BaseStage):
             offspring_survival = 0.8 + 0.2 * (1.0 - death_rate)
             effective_gain = int(repro_gain * survivor_ratio * offspring_survival)
             
+            # 【关键】通过 ModifierApplicator 应用承载力 K 修正
+            # 承载力限制最终种群上限
+            base_carrying_capacity = item.species.morphology_stats.get("carrying_capacity", 1000000)
+            if use_modifier:
+                adjusted_k = modifier.apply(code, base_carrying_capacity, "carrying_capacity")
+            else:
+                adjusted_k = base_carrying_capacity
+            
             final_pop = survivors + effective_gain
+            
+            # 应用 K 限制：如果超过承载力，多余个体死亡
+            if final_pop > adjusted_k:
+                excess = final_pop - adjusted_k
+                final_pop = int(adjusted_k)
+                if excess > 100:
+                    logger.debug(f"[承载力限制] {item.species.common_name}: 超出 K={adjusted_k:,.0f}，减少 {excess:,}")
+            
             ctx.new_populations[code] = max(0, final_pop)
             
             item.births = effective_gain
             item.final_population = final_pop
             item.survivors = survivors
+            # 记录 AI 修正后的实际死亡率
+            item.adjusted_death_rate = death_rate
+            item.adjusted_k = adjusted_k
             
             if abs(final_pop - initial) > initial * 0.3:
+                mod_info = ""
+                if use_modifier:
+                    parts = []
+                    if abs(base_death_rate - death_rate) > 0.01:
+                        parts.append(f"mort:{base_death_rate:.0%}→{death_rate:.0%}")
+                    if abs(adjusted_k - base_carrying_capacity) > 100:
+                        parts.append(f"K:{base_carrying_capacity:,.0f}→{adjusted_k:,.0f}")
+                    if parts:
+                        mod_info = f" [AI: {', '.join(parts)}]"
                 logger.debug(
                     f"[种群变化] {item.species.common_name}: "
                     f"{initial:,} → {final_pop:,} "
-                    f"(死亡{death_rate:.1%}, 存活{survivors:,}, 繁殖+{effective_gain:,})"
+                    f"(死亡{death_rate:.1%}, 存活{survivors:,}, 繁殖+{effective_gain:,}){mod_info}"
                 )
         
         # 应用最终种群
@@ -1561,6 +1702,10 @@ class SpeciationStage(BaseStage):
     """物种分化阶段
     
     处理物种分化事件，创建新物种。
+    
+    使用 ModifierApplicator 应用分化信号修正：
+    - speciation_signal > 0.7: 高概率触发分化
+    - speciation_signal < 0.3: 低概率分化
     """
     
     def __init__(self):
@@ -1569,6 +1714,7 @@ class SpeciationStage(BaseStage):
     def get_dependency(self) -> StageDependency:
         return StageDependency(
             requires_stages={"适应性演化"},
+            optional_stages={"生态智能体评估"},  # 使用 ModifierApplicator
             requires_fields={"species_batch", "critical_results", "focus_results", "modifiers"},
             writes_fields={"branching_events"},
         )
@@ -1577,7 +1723,39 @@ class SpeciationStage(BaseStage):
         logger.info("开始物种分化...")
         ctx.emit_event("stage", "🌱 物种分化", "分化")
         
+        # 获取 ModifierApplicator（如果可用）
+        modifier = getattr(ctx, 'modifier_applicator', None)
+        use_modifier = modifier is not None and len(modifier._assessments) > 0
+        
         try:
+            # 【关键】通过 ModifierApplicator 识别高分化信号物种
+            speciation_candidates = set()
+            evolution_directions = {}
+            
+            if use_modifier:
+                for result in ctx.critical_results + ctx.focus_results:
+                    code = result.species.lineage_code
+                    # 检查分化信号（阈值从0.6降到0.5，更容易触发分化）
+                    if modifier.should_speciate(code, threshold=0.5):
+                        speciation_candidates.add(code)
+                        # 获取演化方向
+                        directions = modifier.get_evolution_direction(code)
+                        if directions:
+                            evolution_directions[code] = directions
+                        logger.info(
+                            f"[分化候选] {result.species.common_name}: "
+                            f"信号={modifier.get_speciation_signal(code):.2f}, "
+                            f"方向={directions[:2] if directions else '无'}"
+                        )
+                
+                if speciation_candidates:
+                    logger.info(f"[分化] AI 识别 {len(speciation_candidates)} 个高分化信号物种")
+                    ctx.emit_event(
+                        "info",
+                        f"🧬 AI 识别 {len(speciation_candidates)} 个分化候选",
+                        "分化"
+                    )
+            
             # Embedding 集成：获取演化提示
             if engine._use_embedding_integration and hasattr(engine, 'embedding_integration'):
                 try:
@@ -1587,10 +1765,18 @@ class SpeciationStage(BaseStage):
                     for result in ctx.critical_results + ctx.focus_results:
                         sp = result.species
                         pop = sp.morphology_stats.get("population", 0)
-                        if pop > 5000 and 0.05 < result.death_rate < 0.5:
+                        # 对高分化信号物种降低种群要求
+                        min_pop = 3000 if sp.lineage_code in speciation_candidates else 5000
+                        if pop > min_pop and 0.05 < result.death_rate < 0.5:
                             hint = engine.embedding_integration.get_evolution_hints(sp, pressure_vectors)
                             if hint:
                                 evolution_hints[sp.lineage_code] = hint
+                    
+                    # 合并 AI 演化方向
+                    for code, directions in evolution_directions.items():
+                        if code not in evolution_hints:
+                            evolution_hints[code] = {}
+                        evolution_hints[code]["ai_directions"] = directions
                     
                     if evolution_hints:
                         engine.speciation.set_evolution_hints(evolution_hints)
@@ -1598,7 +1784,7 @@ class SpeciationStage(BaseStage):
                 except Exception as e:
                     logger.warning(f"[Embedding] 获取演化提示失败: {e}")
             
-            # 执行分化
+            # 执行分化（传入高分化信号候选集合）
             ctx.branching_events = await asyncio.wait_for(
                 engine.speciation.process_async(
                     mortality_results=ctx.critical_results + ctx.focus_results,
@@ -1609,6 +1795,7 @@ class SpeciationStage(BaseStage):
                     major_events=ctx.major_events,
                     pressures=ctx.pressures,
                     trophic_interactions=ctx.trophic_interactions,
+                    speciation_candidates=speciation_candidates if speciation_candidates else None,
                 ),
                 timeout=600
             )
@@ -1898,6 +2085,107 @@ class EmbeddingStage(BaseStage):
         except Exception as e:
             logger.warning(f"[Embedding] 失败: {e}")
             ctx.embedding_turn_data = {}
+
+
+class EmbeddingPluginsStage(BaseStage):
+    """Embedding 扩展插件阶段
+    
+    加载并执行所有启用的 Embedding 扩展插件：
+    - behavior_strategy: 行为策略向量
+    - food_web: 生态网络向量
+    - tile_biome: 区域地块向量
+    - prompt_optimizer: Prompt 优化
+    - evolution_space: 演化空间
+    - ancestry: 血统压缩
+    
+    每个插件在回合结束时更新其向量索引。
+    配置从 stage_config.yaml 加载。
+    """
+    
+    def __init__(self):
+        super().__init__(StageOrder.EMBEDDING_PLUGINS.value, "Embedding扩展插件")
+        self._manager = None
+        self._initialized = False
+    
+    def get_dependency(self) -> StageDependency:
+        return StageDependency(
+            requires_stages={"Embedding集成"},  # 在 Embedding 集成之后
+            optional_stages=set(),
+            requires_fields={"all_species"},  # 所有插件都需要物种列表
+            writes_fields=set(),  # 插件数据存储在各自的索引中
+        )
+    
+    def _ensure_manager(self, engine: 'SimulationEngine') -> bool:
+        """确保插件管理器已初始化"""
+        if self._initialized:
+            return self._manager is not None
+        
+        self._initialized = True
+        
+        # 检查是否有 embedding_service
+        embedding_service = getattr(engine, 'embedding_service', None)
+        if not embedding_service:
+            logger.debug("[EmbeddingPlugins] EmbeddingService 不可用，跳过")
+            return False
+        
+        try:
+            from ..services.embedding_plugins import (
+                EmbeddingPluginManager,
+                load_all_plugins
+            )
+            from pathlib import Path
+            
+            # 加载所有内置插件
+            loaded = load_all_plugins()
+            if loaded:
+                logger.info(f"[EmbeddingPlugins] 已注册插件: {loaded}")
+            
+            # 获取当前模式（优先使用 _pipeline_mode）
+            mode = getattr(engine, '_pipeline_mode', None) or \
+                   getattr(engine, '_stage_mode', None) or 'full'
+            
+            # 获取配置文件路径
+            config_path = Path(__file__).parent / "stage_config.yaml"
+            
+            # 创建管理器并加载启用的插件
+            self._manager = EmbeddingPluginManager(
+                embedding_service, 
+                mode=mode,
+                config_path=config_path
+            )
+            count = self._manager.load_plugins()
+            
+            if count > 0:
+                logger.info(f"[EmbeddingPlugins] 已加载 {count} 个插件 (模式: {mode})")
+                return True
+            else:
+                logger.debug(f"[EmbeddingPlugins] 模式 {mode} 没有启用的插件")
+                return False
+                
+        except Exception as e:
+            logger.warning(f"[EmbeddingPlugins] 初始化失败: {e}")
+            return False
+    
+    async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
+        if not self._ensure_manager(engine):
+            return
+        
+        logger.debug("[EmbeddingPlugins] 执行插件回合结束钩子...")
+        ctx.emit_event("stage", "🔌 Embedding 扩展插件", "AI")
+        
+        try:
+            # 调用所有插件的 on_turn_end
+            self._manager.on_turn_end(ctx)
+            
+            # 获取统计信息
+            stats = self._manager.get_all_stats()
+            plugin_count = stats.get("manager", {}).get("plugin_count", 0)
+            
+            if plugin_count > 0:
+                logger.info(f"[EmbeddingPlugins] {plugin_count} 个插件已更新")
+                
+        except Exception as e:
+            logger.warning(f"[EmbeddingPlugins] 执行失败: {e}")
 
 
 class SaveHistoryStage(BaseStage):

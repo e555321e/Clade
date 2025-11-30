@@ -212,6 +212,17 @@ model_router = ModelRouter(
             model=settings.speciation_model,
             extra_body={"response_format": {"type": "json_object"}}
         ),
+        # 【新增】生态智能体评估
+        "biological_assessment_a": ModelConfig(
+            provider="openai", 
+            model=settings.speciation_model,  # A档使用与分化相同的模型
+            extra_body={"response_format": {"type": "json_object"}}
+        ),
+        "biological_assessment_b": ModelConfig(
+            provider="openai", 
+            model=settings.speciation_model,  # B档使用相同模型，可配置为更轻量的
+            extra_body={"response_format": {"type": "json_object"}}
+        ),
     },
     base_url=settings.ai_base_url,
     api_key=settings.ai_api_key,
