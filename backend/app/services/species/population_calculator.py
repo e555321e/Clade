@@ -54,15 +54,18 @@ class PopulationCalculator:
         import math
         
         # 使用对数缩放替代幂律，更平滑
-        # log10(1e-6) = -6, log10(1) = 0, log10(100) = 2
-        log_weight = math.log10(max(1e-9, body_weight_kg))  # -9 到 3 范围
+        # 【修复】允许更小的体重值（纳克级），区分不同微生物
+        # log10(1e-15) = -15 (皮克), log10(1e-12) = -12 (纳克), log10(1e-9) = -9 (微克)
+        log_weight = math.log10(max(1e-15, body_weight_kg))  # -15 到 3 范围
         
         # 缩放系数：体重越小，系数越大，但增长更平缓
-        # log_weight = -6 -> scale = 4
-        # log_weight = 0 -> scale = 1
-        # log_weight = 2 -> scale = 0.5
-        scale_factor = max(0.1, 1.0 - log_weight * 0.5)
-        scale_factor = min(scale_factor, 10.0)  # 上限10倍
+        # 使用更温和的斜率，避免极端值
+        # log_weight = -12 (纳克) -> scale = 1.0 + 12*0.3 = 4.6
+        # log_weight = -9 (微克) -> scale = 1.0 + 9*0.3 = 3.7
+        # log_weight = 0 (1kg) -> scale = 1.0
+        # log_weight = 2 (100kg) -> scale = 0.4
+        scale_factor = max(0.1, 1.0 - log_weight * 0.3)  # 斜率从0.5降到0.3
+        scale_factor = min(scale_factor, 8.0)  # 上限8倍（避免过大）
         
         # 基准生物量（更保守的值）
         base_biomass = 1e7  # 1000万 kg
