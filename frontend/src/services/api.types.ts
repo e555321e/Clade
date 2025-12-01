@@ -505,6 +505,61 @@ export interface GameplayConfig {
   show_advanced_metrics?: boolean;         // 显示高级指标
 }
 
+/**
+ * 地图环境配置 - 控制地块、气候和地理参数
+ */
+export interface MapEnvironmentConfig {
+  // 气候偏移
+  global_temperature_offset?: number;      // 全局温度偏移
+  global_humidity_offset?: number;         // 全局湿度偏移
+  extreme_climate_frequency?: number;      // 极端气候频率
+  extreme_climate_amplitude?: number;      // 极端气候幅度
+  
+  // 海平面与地形
+  sea_level_offset?: number;               // 海平面偏移
+  sea_level_change_rate?: number;          // 海平面变化速率
+  terrain_erosion_rate?: number;           // 地形侵蚀速率
+  
+  // 栖息地适宜度阈值
+  coastal_temp_tolerance?: number;         // 海岸温度容差
+  shallow_sea_salinity_tolerance?: number; // 浅海盐度容差
+  freshwater_min_humidity?: number;        // 淡水湿度要求
+  terrestrial_min_temp?: number;           // 陆生最低温度
+  terrestrial_max_temp?: number;           // 陆生最高温度
+  
+  // 生物群系承载力倍数
+  biome_capacity_rainforest?: number;      // 热带雨林
+  biome_capacity_temperate?: number;       // 温带森林
+  biome_capacity_grassland?: number;       // 草原
+  biome_capacity_desert?: number;          // 沙漠
+  biome_capacity_tundra?: number;          // 苔原
+  biome_capacity_deep_sea?: number;        // 深海
+  biome_capacity_shallow_sea?: number;     // 浅海
+  
+  // 地质/灾害事件
+  volcano_frequency?: number;              // 火山频率
+  volcano_impact_radius?: number;          // 火山影响半径
+  volcano_damage_intensity?: number;       // 火山破坏强度
+  flood_frequency?: number;                // 洪水频率
+  flood_impact_radius?: number;            // 洪水影响范围
+  drought_frequency?: number;              // 干旱频率
+  drought_duration?: number;               // 干旱持续时间
+  earthquake_frequency?: number;           // 地震频率
+  
+  // 密度与拥挤惩罚
+  same_tile_density_penalty?: number;      // 同地块密度惩罚
+  overcrowding_threshold?: number;         // 过度拥挤阈值
+  overcrowding_max_penalty?: number;       // 拥挤惩罚上限
+  
+  // 地图视图叠加层
+  show_resource_overlay?: boolean;         // 资源热力图
+  show_prey_overlay?: boolean;             // 猎物丰度热力图
+  show_suitability_overlay?: boolean;      // 宜居度热力图
+  show_competition_overlay?: boolean;      // 竞争压力热力图
+  show_temperature_overlay?: boolean;      // 温度分布
+  show_humidity_overlay?: boolean;         // 湿度分布
+}
+
 export interface UIConfig {
   // 1. 服务商库
   providers: Record<string, ProviderConfig>;
@@ -557,6 +612,9 @@ export interface UIConfig {
   
   // 14. 游戏模式配置
   gameplay?: GameplayConfig;
+  
+  // 15. 地图环境配置
+  map_environment?: MapEnvironmentConfig;
 
   // --- Legacy Fields (For backward compatibility types) ---
   ai_provider?: string | null;

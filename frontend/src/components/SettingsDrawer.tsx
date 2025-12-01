@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useReducer, useMemo } from "react";
-import type { UIConfig, ProviderConfig, CapabilityRouteConfig, ProviderType, SpeciationConfig, ReproductionConfig, MortalityConfig, EcologyBalanceConfig, GameplayConfig } from "../services/api.types";
+import type { UIConfig, ProviderConfig, CapabilityRouteConfig, ProviderType, SpeciationConfig, ReproductionConfig, MortalityConfig, EcologyBalanceConfig, GameplayConfig, MapEnvironmentConfig } from "../services/api.types";
 import { testApiConnection, fetchProviderModels, type ModelInfo } from "../services/api";
 import { GamePanel } from "./common/GamePanel";
 import { ConfirmDialog } from "./common/ConfirmDialog";
@@ -12,7 +12,7 @@ interface Props {
   onSave: (config: UIConfig) => Promise<void>;
 }
 
-type Tab = "connection" | "models" | "memory" | "autosave" | "performance" | "speciation" | "reproduction" | "mortality" | "ecology";
+type Tab = "connection" | "models" | "memory" | "autosave" | "performance" | "speciation" | "reproduction" | "mortality" | "ecology" | "map";
 
 // ========== 常量定义 ==========
 
@@ -240,7 +240,9 @@ type Action =
   // 生态平衡配置
   | { type: 'UPDATE_ECOLOGY'; updates: Partial<EcologyBalanceConfig> }
   // 游戏模式配置
-  | { type: 'UPDATE_GAMEPLAY'; updates: Partial<GameplayConfig> };
+  | { type: 'UPDATE_GAMEPLAY'; updates: Partial<GameplayConfig> }
+  // 地图环境配置
+  | { type: 'UPDATE_MAP_ENV'; updates: Partial<MapEnvironmentConfig> };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -469,6 +471,18 @@ function reducer(state: State, action: Action): State {
           ...state.form,
           gameplay: {
             ...(state.form.gameplay || {}),
+            ...action.updates
+          }
+        }
+      };
+    }
+    case 'UPDATE_MAP_ENV': {
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          map_environment: {
+            ...(state.form.map_environment || {}),
             ...action.updates
           }
         }
@@ -1035,6 +1049,13 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
               icon="🌍" 
               label="生态平衡" 
               desc="动态平衡参数"
+            />
+            <NavButton 
+              active={tab === "map"} 
+              onClick={() => dispatch({ type: 'SET_TAB', tab: 'map' })} 
+              icon="🗺️" 
+              label="地图环境" 
+              desc="气候与地形参数"
             />
           </div>
           
@@ -4290,6 +4311,690 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                           <li>环境变化 → 适应者存活 → 新平衡</li>
                         </ul>
                         <p className="info-note">💡 参数设置影响平衡达成的速度和稳定性</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 10: 地图环境设置 */}
+          {tab === "map" && (
+            <div className="tab-content fade-in">
+              <div className="section-header">
+                <h3>🗺️ 地图环境参数</h3>
+                <p>控制气候、地形、灾害等地图级别的环境因素。</p>
+              </div>
+              
+              <div className="memory-layout">
+                <div className="memory-main">
+                  {/* 快速预设 */}
+                  <div className="preset-section">
+                    <h4>🎮 环境预设</h4>
+                    <div className="preset-buttons autosave-presets">
+                      <button
+                        type="button"
+                        className="preset-btn"
+                        onClick={() => {
+                          dispatch({ type: 'UPDATE_MAP_ENV', updates: {
+                            global_temperature_offset: 5,
+                            global_humidity_offset: 10,
+                            extreme_climate_frequency: 0.02,
+                            biome_capacity_rainforest: 2.0,
+                            biome_capacity_temperate: 1.5,
+                          }});
+                        }}
+                      >
+                        🌴 温暖湿润
+                        <span className="preset-desc">气候温和，资源丰富</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="preset-btn"
+                        onClick={() => {
+                          dispatch({ type: 'UPDATE_MAP_ENV', updates: {
+                            global_temperature_offset: 0,
+                            global_humidity_offset: 0,
+                            extreme_climate_frequency: 0.05,
+                            biome_capacity_rainforest: 1.5,
+                            biome_capacity_temperate: 1.2,
+                          }});
+                        }}
+                      >
+                        🌍 标准地球
+                        <span className="preset-desc">模拟当代地球条件</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="preset-btn"
+                        onClick={() => {
+                          dispatch({ type: 'UPDATE_MAP_ENV', updates: {
+                            global_temperature_offset: -10,
+                            global_humidity_offset: -15,
+                            extreme_climate_frequency: 0.10,
+                            biome_capacity_rainforest: 0.8,
+                            biome_capacity_tundra: 1.5,
+                          }});
+                        }}
+                      >
+                        🧊 冰河时期
+                        <span className="preset-desc">寒冷干燥，极端事件频繁</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 气候设置 */}
+                  <div className="speciation-section">
+                    <h4>🌡️ 气候参数</h4>
+                    <div className="form-grid two-column">
+                      <label className="form-field">
+                        <span className="field-label">全局温度偏移</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="-30"
+                            max="30"
+                            step="1"
+                            value={form.map_environment?.global_temperature_offset ?? 0}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { global_temperature_offset: parseFloat(e.target.value) || 0 } })}
+                          />
+                          <span className="unit-label">℃</span>
+                        </div>
+                        <span className="field-hint">正值全球升温，负值全球降温</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">全局湿度偏移</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="-50"
+                            max="50"
+                            step="5"
+                            value={form.map_environment?.global_humidity_offset ?? 0}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { global_humidity_offset: parseFloat(e.target.value) || 0 } })}
+                          />
+                          <span className="unit-label">%</span>
+                        </div>
+                        <span className="field-hint">正值增加降水，负值干旱化</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">极端气候频率</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="0.3"
+                            step="0.01"
+                            value={form.map_environment?.extreme_climate_frequency ?? 0.05}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { extreme_climate_frequency: parseFloat(e.target.value) || 0.05 } })}
+                          />
+                        </div>
+                        <span className="field-hint">每回合发生极端天气的概率</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">极端气候幅度</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0.1"
+                            max="1"
+                            step="0.1"
+                            value={form.map_environment?.extreme_climate_amplitude ?? 0.3}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { extreme_climate_amplitude: parseFloat(e.target.value) || 0.3 } })}
+                          />
+                        </div>
+                        <span className="field-hint">极端天气对宜居度的影响强度</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* 海平面与地形 */}
+                  <div className="speciation-section">
+                    <h4>🌊 海平面与地形</h4>
+                    <div className="form-grid two-column">
+                      <label className="form-field">
+                        <span className="field-label">海平面偏移</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="-100"
+                            max="100"
+                            step="10"
+                            value={form.map_environment?.sea_level_offset ?? 0}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { sea_level_offset: parseFloat(e.target.value) || 0 } })}
+                          />
+                          <span className="unit-label">米</span>
+                        </div>
+                        <span className="field-hint">正值海进淹没陆地，负值海退露出陆地</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">海平面变化速率</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="-5"
+                            max="5"
+                            step="0.5"
+                            value={form.map_environment?.sea_level_change_rate ?? 0}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { sea_level_change_rate: parseFloat(e.target.value) || 0 } })}
+                          />
+                          <span className="unit-label">米/回合</span>
+                        </div>
+                        <span className="field-hint">每回合海平面自动升降的幅度</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">地形侵蚀速率</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="0.1"
+                            step="0.01"
+                            value={form.map_environment?.terrain_erosion_rate ?? 0.01}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { terrain_erosion_rate: parseFloat(e.target.value) || 0.01 } })}
+                          />
+                        </div>
+                        <span className="field-hint">地形逐渐平缓化的速率</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* 生物群系承载力 */}
+                  <div className="speciation-section">
+                    <h4>🌲 生物群系承载力</h4>
+                    <p className="section-desc">不同环境类型支持的生物量倍数（1.0=标准）</p>
+                    <div className="form-grid three-column">
+                      <label className="form-field">
+                        <span className="field-label">🌴 热带雨林</span>
+                        <input
+                          className="field-input"
+                          type="number"
+                          min="0.3"
+                          max="3"
+                          step="0.1"
+                          value={form.map_environment?.biome_capacity_rainforest ?? 1.5}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { biome_capacity_rainforest: parseFloat(e.target.value) || 1.5 } })}
+                        />
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">🌳 温带森林</span>
+                        <input
+                          className="field-input"
+                          type="number"
+                          min="0.3"
+                          max="3"
+                          step="0.1"
+                          value={form.map_environment?.biome_capacity_temperate ?? 1.2}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { biome_capacity_temperate: parseFloat(e.target.value) || 1.2 } })}
+                        />
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">🌾 草原</span>
+                        <input
+                          className="field-input"
+                          type="number"
+                          min="0.3"
+                          max="3"
+                          step="0.1"
+                          value={form.map_environment?.biome_capacity_grassland ?? 1.0}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { biome_capacity_grassland: parseFloat(e.target.value) || 1.0 } })}
+                        />
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">🏜️ 沙漠</span>
+                        <input
+                          className="field-input"
+                          type="number"
+                          min="0.1"
+                          max="1"
+                          step="0.1"
+                          value={form.map_environment?.biome_capacity_desert ?? 0.3}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { biome_capacity_desert: parseFloat(e.target.value) || 0.3 } })}
+                        />
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">❄️ 苔原</span>
+                        <input
+                          className="field-input"
+                          type="number"
+                          min="0.1"
+                          max="1"
+                          step="0.1"
+                          value={form.map_environment?.biome_capacity_tundra ?? 0.4}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { biome_capacity_tundra: parseFloat(e.target.value) || 0.4 } })}
+                        />
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">🌊 浅海</span>
+                        <input
+                          className="field-input"
+                          type="number"
+                          min="0.3"
+                          max="3"
+                          step="0.1"
+                          value={form.map_environment?.biome_capacity_shallow_sea ?? 1.3}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { biome_capacity_shallow_sea: parseFloat(e.target.value) || 1.3 } })}
+                        />
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">🌑 深海</span>
+                        <input
+                          className="field-input"
+                          type="number"
+                          min="0.1"
+                          max="1"
+                          step="0.1"
+                          value={form.map_environment?.biome_capacity_deep_sea ?? 0.5}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { biome_capacity_deep_sea: parseFloat(e.target.value) || 0.5 } })}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* 灾害事件 */}
+                  <div className="speciation-section">
+                    <h4>🌋 灾害事件</h4>
+                    <p className="section-desc">各类地质灾害的发生频率和影响范围</p>
+                    <div className="form-grid two-column">
+                      <label className="form-field">
+                        <span className="field-label">🌋 火山爆发频率</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="0.2"
+                            step="0.01"
+                            value={form.map_environment?.volcano_frequency ?? 0.02}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { volcano_frequency: parseFloat(e.target.value) || 0.02 } })}
+                          />
+                        </div>
+                        <span className="field-hint">每回合火山爆发概率</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">火山影响半径</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="1"
+                            max="10"
+                            step="1"
+                            value={form.map_environment?.volcano_impact_radius ?? 3}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { volcano_impact_radius: parseInt(e.target.value) || 3 } })}
+                          />
+                          <span className="unit-label">地块</span>
+                        </div>
+                        <span className="field-hint">火山爆发影响周围的地块数</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">🌊 洪水频率</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="0.2"
+                            step="0.01"
+                            value={form.map_environment?.flood_frequency ?? 0.03}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { flood_frequency: parseFloat(e.target.value) || 0.03 } })}
+                          />
+                        </div>
+                        <span className="field-hint">每回合洪水发生概率</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">🏜️ 干旱频率</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="0.2"
+                            step="0.01"
+                            value={form.map_environment?.drought_frequency ?? 0.04}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { drought_frequency: parseFloat(e.target.value) || 0.04 } })}
+                          />
+                        </div>
+                        <span className="field-hint">每回合干旱发生概率</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">干旱持续时间</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="1"
+                            max="10"
+                            step="1"
+                            value={form.map_environment?.drought_duration ?? 2}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { drought_duration: parseInt(e.target.value) || 2 } })}
+                          />
+                          <span className="unit-label">回合</span>
+                        </div>
+                        <span className="field-hint">干旱事件持续的回合数</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">🌍 地震频率</span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="0.1"
+                            step="0.01"
+                            value={form.map_environment?.earthquake_frequency ?? 0.01}
+                            onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { earthquake_frequency: parseFloat(e.target.value) || 0.01 } })}
+                          />
+                        </div>
+                        <span className="field-hint">每回合地震发生概率</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* 高级参数折叠区 */}
+                  <details className="advanced-section">
+                    <summary className="advanced-header">
+                      🔧 高级参数（适宜度与密度）
+                    </summary>
+                    <div className="advanced-content">
+                      <h5 style={{ marginBottom: '1rem', color: 'var(--sd-text-muted)' }}>栖息地适宜度阈值</h5>
+                      <div className="form-grid two-column">
+                        <label className="form-field">
+                          <span className="field-label">海岸温度容差</span>
+                          <div className="input-with-unit">
+                            <input
+                              className="field-input"
+                              type="number"
+                              min="5"
+                              max="30"
+                              step="1"
+                              value={form.map_environment?.coastal_temp_tolerance ?? 15}
+                              onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { coastal_temp_tolerance: parseFloat(e.target.value) || 15 } })}
+                            />
+                            <span className="unit-label">±℃</span>
+                          </div>
+                          <span className="field-hint">海岸生物可适应的温度范围</span>
+                        </label>
+
+                        <label className="form-field">
+                          <span className="field-label">浅海盐度容差</span>
+                          <div className="input-with-unit">
+                            <input
+                              className="field-input"
+                              type="number"
+                              min="0.3"
+                              max="1"
+                              step="0.1"
+                              value={form.map_environment?.shallow_sea_salinity_tolerance ?? 0.8}
+                              onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { shallow_sea_salinity_tolerance: parseFloat(e.target.value) || 0.8 } })}
+                            />
+                          </div>
+                          <span className="field-hint">浅海生物对盐度变化的容忍度</span>
+                        </label>
+
+                        <label className="form-field">
+                          <span className="field-label">淡水最低湿度</span>
+                          <div className="input-with-unit">
+                            <input
+                              className="field-input"
+                              type="number"
+                              min="0.3"
+                              max="0.8"
+                              step="0.1"
+                              value={form.map_environment?.freshwater_min_humidity ?? 0.5}
+                              onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { freshwater_min_humidity: parseFloat(e.target.value) || 0.5 } })}
+                            />
+                          </div>
+                          <span className="field-hint">淡水生物需要的最低湿度</span>
+                        </label>
+
+                        <label className="form-field">
+                          <span className="field-label">陆生温度范围</span>
+                          <div className="input-with-unit" style={{ display: 'flex', gap: '0.5rem' }}>
+                            <input
+                              className="field-input"
+                              type="number"
+                              min="-50"
+                              max="0"
+                              step="5"
+                              value={form.map_environment?.terrestrial_min_temp ?? -20}
+                              onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { terrestrial_min_temp: parseFloat(e.target.value) || -20 } })}
+                              style={{ width: '60px' }}
+                            />
+                            <span>~</span>
+                            <input
+                              className="field-input"
+                              type="number"
+                              min="20"
+                              max="70"
+                              step="5"
+                              value={form.map_environment?.terrestrial_max_temp ?? 50}
+                              onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { terrestrial_max_temp: parseFloat(e.target.value) || 50 } })}
+                              style={{ width: '60px' }}
+                            />
+                            <span className="unit-label">℃</span>
+                          </div>
+                          <span className="field-hint">陆生生物可存活的温度范围</span>
+                        </label>
+                      </div>
+
+                      <h5 style={{ margin: '1.5rem 0 1rem', color: 'var(--sd-text-muted)' }}>密度与拥挤惩罚</h5>
+                      <div className="form-grid two-column">
+                        <label className="form-field">
+                          <span className="field-label">同地块密度惩罚</span>
+                          <div className="input-with-unit">
+                            <input
+                              className="field-input"
+                              type="number"
+                              min="0"
+                              max="0.5"
+                              step="0.05"
+                              value={form.map_environment?.same_tile_density_penalty ?? 0.15}
+                              onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { same_tile_density_penalty: parseFloat(e.target.value) || 0.15 } })}
+                            />
+                          </div>
+                          <span className="field-hint">同一地块内同营养级物种的竞争惩罚</span>
+                        </label>
+
+                        <label className="form-field">
+                          <span className="field-label">过度拥挤阈值</span>
+                          <div className="input-with-unit">
+                            <input
+                              className="field-input"
+                              type="number"
+                              min="0.3"
+                              max="1"
+                              step="0.1"
+                              value={form.map_environment?.overcrowding_threshold ?? 0.7}
+                              onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { overcrowding_threshold: parseFloat(e.target.value) || 0.7 } })}
+                            />
+                          </div>
+                          <span className="field-hint">超过此密度比例开始惩罚</span>
+                        </label>
+
+                        <label className="form-field">
+                          <span className="field-label">拥挤惩罚上限</span>
+                          <div className="input-with-unit">
+                            <input
+                              className="field-input"
+                              type="number"
+                              min="0.1"
+                              max="0.8"
+                              step="0.1"
+                              value={form.map_environment?.overcrowding_max_penalty ?? 0.4}
+                              onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { overcrowding_max_penalty: parseFloat(e.target.value) || 0.4 } })}
+                            />
+                          </div>
+                          <span className="field-hint">过度拥挤造成的最大死亡率惩罚</span>
+                        </label>
+                      </div>
+                    </div>
+                  </details>
+
+                  {/* 地图视图叠加层 */}
+                  <div className="speciation-section">
+                    <h4>👁️ 地图视图叠加层</h4>
+                    <p className="section-desc">在地图上显示各类环境数据的热力图（调试用）</p>
+                    <div className="form-grid two-column">
+                      <label className="form-field toggle-field">
+                        <span className="field-label">🍖 资源分布</span>
+                        <input
+                          type="checkbox"
+                          checked={form.map_environment?.show_resource_overlay ?? false}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { show_resource_overlay: e.target.checked } })}
+                        />
+                        <span className="field-hint">显示各地块的资源丰富度</span>
+                      </label>
+
+                      <label className="form-field toggle-field">
+                        <span className="field-label">🦌 猎物丰度</span>
+                        <input
+                          type="checkbox"
+                          checked={form.map_environment?.show_prey_overlay ?? false}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { show_prey_overlay: e.target.checked } })}
+                        />
+                        <span className="field-hint">显示各地块的猎物数量分布</span>
+                      </label>
+
+                      <label className="form-field toggle-field">
+                        <span className="field-label">📍 宜居度</span>
+                        <input
+                          type="checkbox"
+                          checked={form.map_environment?.show_suitability_overlay ?? false}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { show_suitability_overlay: e.target.checked } })}
+                        />
+                        <span className="field-hint">显示当前物种的宜居度分布</span>
+                      </label>
+
+                      <label className="form-field toggle-field">
+                        <span className="field-label">⚔️ 竞争压力</span>
+                        <input
+                          type="checkbox"
+                          checked={form.map_environment?.show_competition_overlay ?? false}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { show_competition_overlay: e.target.checked } })}
+                        />
+                        <span className="field-hint">显示各地块的竞争压力强度</span>
+                      </label>
+
+                      <label className="form-field toggle-field">
+                        <span className="field-label">🌡️ 温度分布</span>
+                        <input
+                          type="checkbox"
+                          checked={form.map_environment?.show_temperature_overlay ?? false}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { show_temperature_overlay: e.target.checked } })}
+                        />
+                        <span className="field-hint">显示全球温度分布热力图</span>
+                      </label>
+
+                      <label className="form-field toggle-field">
+                        <span className="field-label">💧 湿度分布</span>
+                        <input
+                          type="checkbox"
+                          checked={form.map_environment?.show_humidity_overlay ?? false}
+                          onChange={(e) => dispatch({ type: 'UPDATE_MAP_ENV', updates: { show_humidity_overlay: e.target.checked } })}
+                        />
+                        <span className="field-hint">显示全球湿度分布热力图</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 说明面板 */}
+                <div className="memory-sidebar">
+                  <div className="info-panel">
+                    <h4>💡 地图环境机制详解</h4>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">🌡️</span>
+                      <div>
+                        <strong>气候影响</strong>
+                        <p>气候参数影响所有物种的宜居度：</p>
+                        <ul className="info-list">
+                          <li>温度偏移改变全球气温，影响热带/极地物种分布</li>
+                          <li>湿度偏移影响降水，改变沙漠/森林覆盖</li>
+                          <li>极端气候会临时大幅改变局部条件</li>
+                        </ul>
+                        <p className="info-note">💡 气候变化是推动物种演化的重要因素</p>
+                      </div>
+                    </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">🌊</span>
+                      <div>
+                        <strong>海平面变化</strong>
+                        <p>海平面影响可用的栖息地面积：</p>
+                        <ul className="info-list">
+                          <li>海进：陆地减少，海洋物种受益</li>
+                          <li>海退：陆地增加，可能连接岛屿形成陆桥</li>
+                          <li>冰河时期海平面可下降100米以上</li>
+                        </ul>
+                        <p className="info-note">💡 海平面变化可以打开或关闭迁徙通道</p>
+                      </div>
+                    </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">🌲</span>
+                      <div>
+                        <strong>生物群系承载力</strong>
+                        <p>不同环境支持不同的生物量：</p>
+                        <ul className="info-list">
+                          <li>热带雨林：生产力最高，物种最多</li>
+                          <li>沙漠/苔原：资源匮乏，承载力低</li>
+                          <li>浅海：光合作用区，生产力高</li>
+                          <li>深海：依赖沉降物质，承载力有限</li>
+                        </ul>
+                      </div>
+                    </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">🌋</span>
+                      <div>
+                        <strong>灾害与扰动</strong>
+                        <p>灾害打破生态平衡，创造演化机会：</p>
+                        <ul className="info-list">
+                          <li><strong>火山：</strong>摧毁局部生态，但提供矿物质</li>
+                          <li><strong>洪水：</strong>重塑河流生态，促进物种交流</li>
+                          <li><strong>干旱：</strong>淘汰不耐旱物种，促进适应演化</li>
+                          <li><strong>地震：</strong>改变地形，可能形成新栖息地</li>
+                        </ul>
+                        <p className="info-note">💡 适度的扰动有助于维持生物多样性</p>
+                      </div>
+                    </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">⚙️</span>
+                      <div>
+                        <strong>参数调整建议</strong>
+                        <ul className="info-list">
+                          <li><strong>物种分布太集中？</strong>提高各群系承载力</li>
+                          <li><strong>灾害太频繁？</strong>降低各事件频率</li>
+                          <li><strong>生态太稳定？</strong>增加气候变化和灾害</li>
+                          <li><strong>测试恢复能力？</strong>触发一次大灾害后观察</li>
+                        </ul>
                       </div>
                     </div>
                   </div>

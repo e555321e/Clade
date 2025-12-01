@@ -346,6 +346,102 @@ class EcologyBalanceConfig(BaseModel):
     size_advantage_factor: float = 0.1
 
 
+class MapEnvironmentConfig(BaseModel):
+    """地图环境配置 - 控制地块、气候和地理参数
+    
+    【设计理念】
+    提供地图级别的环境调整，影响物种分布和生态平衡。
+    包括气候、资源、事件等全局设置。
+    """
+    model_config = ConfigDict(extra="ignore")
+    
+    # ========== 气候偏移 ==========
+    # 全局温度偏移（℃）：正值升温，负值降温
+    global_temperature_offset: float = 0.0
+    # 全局湿度偏移（%）：正值增湿，负值干旱
+    global_humidity_offset: float = 0.0
+    # 极端气候事件频率（每回合概率）
+    extreme_climate_frequency: float = 0.05
+    # 极端气候影响幅度
+    extreme_climate_amplitude: float = 0.3
+    
+    # ========== 海平面与地形 ==========
+    # 海平面偏移（米）：正值海进，负值海退
+    sea_level_offset: float = 0.0
+    # 海平面变化速率（米/回合）
+    sea_level_change_rate: float = 0.0
+    # 地形侵蚀速率
+    terrain_erosion_rate: float = 0.01
+    
+    # ========== 栖息地适宜度阈值 ==========
+    # 海岸生物温度容差范围（±℃）
+    coastal_temp_tolerance: float = 15.0
+    # 浅海生物盐度容差
+    shallow_sea_salinity_tolerance: float = 0.8
+    # 淡水生物对湿度的要求下限
+    freshwater_min_humidity: float = 0.5
+    # 陆生生物最低温度（℃）
+    terrestrial_min_temp: float = -20.0
+    # 陆生生物最高温度（℃）
+    terrestrial_max_temp: float = 50.0
+    
+    # ========== 生物群系承载力倍数 ==========
+    # 热带雨林承载力倍数
+    biome_capacity_rainforest: float = 1.5
+    # 温带森林承载力倍数
+    biome_capacity_temperate: float = 1.2
+    # 草原承载力倍数
+    biome_capacity_grassland: float = 1.0
+    # 沙漠承载力倍数
+    biome_capacity_desert: float = 0.3
+    # 苔原承载力倍数
+    biome_capacity_tundra: float = 0.4
+    # 深海承载力倍数
+    biome_capacity_deep_sea: float = 0.5
+    # 浅海承载力倍数
+    biome_capacity_shallow_sea: float = 1.3
+    
+    # ========== 地质/灾害事件 ==========
+    # 火山爆发频率（每回合概率）
+    volcano_frequency: float = 0.02
+    # 火山影响半径（地块数）
+    volcano_impact_radius: int = 3
+    # 火山破坏强度
+    volcano_damage_intensity: float = 0.8
+    # 洪水频率
+    flood_frequency: float = 0.03
+    # 洪水影响范围
+    flood_impact_radius: int = 2
+    # 干旱频率
+    drought_frequency: float = 0.04
+    # 干旱持续回合数
+    drought_duration: int = 2
+    # 地震频率
+    earthquake_frequency: float = 0.01
+    
+    # ========== 密度与拥挤惩罚 ==========
+    # 同地块同营养级密度惩罚系数
+    same_tile_density_penalty: float = 0.15
+    # 过度拥挤阈值（超过此密度开始惩罚）
+    overcrowding_threshold: float = 0.7
+    # 拥挤惩罚最大值
+    overcrowding_max_penalty: float = 0.4
+    
+    # ========== 地图视图叠加层 ==========
+    # 显示资源分布热力图
+    show_resource_overlay: bool = False
+    # 显示猎物丰度热力图
+    show_prey_overlay: bool = False
+    # 显示宜居度热力图
+    show_suitability_overlay: bool = False
+    # 显示竞争压力热力图
+    show_competition_overlay: bool = False
+    # 显示温度分布
+    show_temperature_overlay: bool = False
+    # 显示湿度分布
+    show_humidity_overlay: bool = False
+
+
 class GameplayConfig(BaseModel):
     """游戏模式配置 - 控制整体游戏难度和风格
     
@@ -436,6 +532,9 @@ class UIConfig(BaseModel):
     
     # 14. 游戏模式配置
     gameplay: GameplayConfig = Field(default_factory=GameplayConfig)
+    
+    # 15. 地图环境配置
+    map_environment: MapEnvironmentConfig = Field(default_factory=MapEnvironmentConfig)
     
     # --- Legacy Fields (Keep for migration) ---
     ai_provider: str | None = None
