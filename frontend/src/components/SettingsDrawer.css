@@ -1854,6 +1854,64 @@
   line-height: 1.4;
 }
 
+/* Info Item 内的列表样式 */
+.info-item ul.info-list {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+  list-style-type: disc;
+}
+
+.info-item ul.info-list li {
+  font-size: 0.72rem;
+  color: var(--sd-text-muted);
+  line-height: 1.5;
+  margin-bottom: 0.25rem;
+}
+
+.info-item ul.info-list li strong {
+  display: inline;
+  font-size: inherit;
+  color: var(--sd-text);
+  margin-bottom: 0;
+}
+
+/* 提示注释样式 */
+.info-note {
+  display: block;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(59, 130, 246, 0.1);
+  border-left: 2px solid rgba(59, 130, 246, 0.5);
+  border-radius: 0 4px 4px 0;
+  font-size: 0.7rem;
+  color: var(--sd-text-accent);
+}
+
+/* 说明面板更宽 - 支持更多内容 */
+.memory-sidebar .info-panel {
+  max-height: calc(100vh - 300px);
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+/* 滚动条样式 */
+.memory-sidebar .info-panel::-webkit-scrollbar {
+  width: 4px;
+}
+
+.memory-sidebar .info-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.memory-sidebar .info-panel::-webkit-scrollbar-thumb {
+  background: var(--sd-border);
+  border-radius: 2px;
+}
+
+.memory-sidebar .info-panel::-webkit-scrollbar-thumb:hover {
+  background: var(--sd-text-muted);
+}
+
 /* Preset Section */
 .preset-section {
   margin-top: 1.5rem;

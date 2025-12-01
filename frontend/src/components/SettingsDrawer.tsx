@@ -2946,26 +2946,74 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                 {/* 说明面板 */}
                 <div className="memory-sidebar">
                   <div className="info-panel">
-                    <h4>💡 繁殖机制说明</h4>
+                    <h4>💡 繁殖机制详解</h4>
+                    
                     <div className="info-item">
                       <span className="info-icon">📈</span>
                       <div>
-                        <strong>逻辑斯谛增长</strong>
-                        <p>种群增长遵循S型曲线，接近承载力时增长减缓。</p>
+                        <strong>逻辑斯谛增长模型</strong>
+                        <p>种群增长遵循自然界的S型曲线：</p>
+                        <ul className="info-list">
+                          <li>种群小时：资源充足，增长快速</li>
+                          <li>接近承载力：竞争加剧，增长减缓</li>
+                          <li>超过承载力：资源不足，种群下降</li>
+                        </ul>
+                        <p className="info-note">💡 这就是为什么物种不会无限增长</p>
                       </div>
                     </div>
+                    
                     <div className="info-item">
                       <span className="info-icon">🔺</span>
                       <div>
-                        <strong>能量金字塔</strong>
-                        <p>每升一个营养级，可用能量约减少85%，限制高营养级种群。</p>
+                        <strong>能量金字塔原理</strong>
+                        <p>食物链中能量逐级递减：</p>
+                        <ul className="info-list">
+                          <li>🌱 T1 生产者：光合作用获得能量</li>
+                          <li>🐛 T2 食草动物：只获得植物10-15%的能量</li>
+                          <li>🦎 T3 小型捕食者：再减少85%</li>
+                          <li>🦁 T4 顶级捕食者：能量极少</li>
+                        </ul>
+                        <p className="info-note">💡 这就是为什么顶级捕食者数量稀少</p>
                       </div>
                     </div>
+                    
                     <div className="info-item">
                       <span className="info-icon">🦠</span>
                       <div>
-                        <strong>r/K 策略</strong>
-                        <p>小型快繁殖物种（r策略）增长快但受环境波动影响大。</p>
+                        <strong>r/K 繁殖策略</strong>
+                        <p>不同物种采用不同的生存策略：</p>
+                        <ul className="info-list">
+                          <li><strong>r策略（微生物、昆虫）：</strong>快速繁殖、大量后代、短寿命，适应不稳定环境</li>
+                          <li><strong>K策略（大型动物）：</strong>缓慢繁殖、少量后代、长寿命，适应稳定环境</li>
+                        </ul>
+                        <p className="info-note">💡 体型加成模拟了r策略物种的快速繁殖</p>
+                      </div>
+                    </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">💪</span>
+                      <div>
+                        <strong>生存本能机制</strong>
+                        <p>当物种面临高死亡率（如灾难、疾病）时：</p>
+                        <ul className="info-list">
+                          <li>繁殖效率自动提升</li>
+                          <li>模拟"危机时刻加速繁殖"的自然现象</li>
+                          <li>帮助濒危物种有机会恢复</li>
+                        </ul>
+                        <p className="info-note">💡 阈值0.5表示死亡率超过50%时激活</p>
+                      </div>
+                    </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">⚙️</span>
+                      <div>
+                        <strong>参数调整建议</strong>
+                        <ul className="info-list">
+                          <li><strong>增长太慢？</strong>提高增长倍数上限、体型加成</li>
+                          <li><strong>物种爆炸？</strong>降低增长倍数上限、提高衰减率</li>
+                          <li><strong>消费者太多？</strong>降低T2/T3/T4繁殖效率</li>
+                          <li><strong>灭绝太快？</strong>提高增长下限、生存本能加成</li>
+                        </ul>
                       </div>
                     </div>
                   </div>
@@ -3298,26 +3346,90 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                 {/* 说明面板 */}
                 <div className="memory-sidebar">
                   <div className="info-panel">
-                    <h4>💡 死亡率计算说明</h4>
+                    <h4>💡 死亡率计算详解</h4>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">🌡️</span>
+                      <div>
+                        <strong>六种压力来源</strong>
+                        <p>物种面临多种生存压力：</p>
+                        <ul className="info-list">
+                          <li><strong>🌡️ 环境压力：</strong>温度、气候、辐射等与物种适应范围的偏差</li>
+                          <li><strong>⚔️ 竞争压力：</strong>相似生态位物种争夺相同资源</li>
+                          <li><strong>🔺 营养级压力：</strong>食物链位置带来的限制（捕食/被捕食）</li>
+                          <li><strong>🍖 资源压力：</strong>食物、栖息地等资源不足</li>
+                          <li><strong>🦈 捕食压力：</strong>被天敌捕食的风险</li>
+                          <li><strong>🌿 植物竞争：</strong>植物间争夺阳光、水分、养分</li>
+                        </ul>
+                      </div>
+                    </div>
+                    
                     <div className="info-item">
                       <span className="info-icon">📊</span>
                       <div>
-                        <strong>混合模型</strong>
-                        <p>死亡率由加权和模型与乘法模型混合计算，兼顾稳定性和真实性。</p>
+                        <strong>压力上限的作用</strong>
+                        <p>每种压力都有最大值限制：</p>
+                        <ul className="info-list">
+                          <li>防止单一因素导致极端死亡率</li>
+                          <li>例如：环境压力上限0.5 = 即使环境极端恶劣，环境因素最多贡献50%压力</li>
+                          <li>让多种因素共同决定死亡率更真实</li>
+                        </ul>
+                        <p className="info-note">💡 上限越低，该压力影响越小</p>
                       </div>
                     </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">⚖️</span>
+                      <div>
+                        <strong>压力权重的含义</strong>
+                        <p>决定各压力在综合计算中的重要性：</p>
+                        <ul className="info-list">
+                          <li>权重越高，该压力对死亡率影响越大</li>
+                          <li>例如：环境权重0.4 vs 竞争权重0.3，表示环境影响略大于竞争</li>
+                          <li>所有权重不需要加起来等于1</li>
+                        </ul>
+                        <p className="info-note">💡 可以根据游戏风格调整各压力的重要性</p>
+                      </div>
+                    </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">🔢</span>
+                      <div>
+                        <strong>混合计算模型</strong>
+                        <p>死亡率通过两种方式计算并混合：</p>
+                        <ul className="info-list">
+                          <li><strong>加权和模型（稳定）：</strong>各压力×权重相加，结果可预测</li>
+                          <li><strong>乘法模型（真实）：</strong>多压力叠加效果更显著</li>
+                          <li>默认70%加权和 + 30%乘法，平衡稳定性和真实性</li>
+                        </ul>
+                        <p className="info-note">💡 加权和占比越高越稳定，乘法占比越高压力叠加效果越明显</p>
+                      </div>
+                    </div>
+                    
                     <div className="info-item">
                       <span className="info-icon">🛡️</span>
                       <div>
                         <strong>抗性机制</strong>
-                        <p>体型越大、世代越长的物种对环境压力抗性越强。</p>
+                        <p>物种可以抵抗部分压力：</p>
+                        <ul className="info-list">
+                          <li><strong>体型抗性：</strong>大型物种更能抵抗环境变化</li>
+                          <li><strong>世代抗性：</strong>快速繁殖物种更易适应压力</li>
+                          <li>抗性上限防止某些物种"无敌"</li>
+                        </ul>
+                        <p className="info-note">💡 微生物抗性最高（约25-30%），大型动物约8-15%</p>
                       </div>
                     </div>
+                    
                     <div className="info-item">
-                      <span className="info-icon">⚖️</span>
+                      <span className="info-icon">⚙️</span>
                       <div>
-                        <strong>压力平衡</strong>
-                        <p>多种压力叠加但有上限，避免单一极端压力导致物种快速灭绝。</p>
+                        <strong>参数调整建议</strong>
+                        <ul className="info-list">
+                          <li><strong>死亡率太高？</strong>降低压力上限、提高抗性上限</li>
+                          <li><strong>物种难以淘汰？</strong>提高压力权重、降低抗性</li>
+                          <li><strong>环境灾难影响太小？</strong>提高环境压力上限和权重</li>
+                          <li><strong>竞争不够激烈？</strong>提高竞争压力上限和权重</li>
+                        </ul>
                       </div>
                     </div>
                   </div>
@@ -3623,33 +3735,103 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                 {/* 说明面板 */}
                 <div className="memory-sidebar">
                   <div className="info-panel">
-                    <h4>💡 生态平衡机制说明</h4>
-                    <div className="info-item">
-                      <span className="info-icon">🔺</span>
-                      <div>
-                        <strong>能量金字塔</strong>
-                        <p>每升一个营养级，可用能量约减少85%（默认15%效率）。</p>
-                      </div>
-                    </div>
-                    <div className="info-item">
-                      <span className="info-icon">📍</span>
-                      <div>
-                        <strong>分布集中</strong>
-                        <p>物种倾向于集中在高宜居度地块，减少"铺满地图"现象。</p>
-                      </div>
-                    </div>
+                    <h4>💡 生态平衡机制详解</h4>
+                    
                     <div className="info-item">
                       <span className="info-icon">⚔️</span>
                       <div>
-                        <strong>竞争排斥</strong>
-                        <p>相似生态位的物种会激烈竞争，促进生态位分化。</p>
+                        <strong>竞争排斥原理</strong>
+                        <p>两个物种不能长期占据同一生态位：</p>
+                        <ul className="info-list">
+                          <li><strong>生态位重叠：</strong>食物、栖息地需求相似的物种会竞争</li>
+                          <li><strong>竞争系数：</strong>越相似竞争越激烈（基于AI嵌入向量计算）</li>
+                          <li><strong>结果：</strong>弱势物种被淘汰或被迫分化到新生态位</li>
+                        </ul>
+                        <p className="info-note">💡 这是推动物种多样性的重要机制</p>
                       </div>
                     </div>
+                    
                     <div className="info-item">
                       <span className="info-icon">🍖</span>
                       <div>
-                        <strong>食物链平衡</strong>
-                        <p>消费者数量受猎物丰富度限制，形成动态平衡。</p>
+                        <strong>食物匮乏惩罚</strong>
+                        <p>消费者依赖猎物生存：</p>
+                        <ul className="info-list">
+                          <li><strong>匮乏阈值：</strong>猎物丰富度低于此值时开始惩罚</li>
+                          <li><strong>惩罚系数：</strong>决定饥饿导致的死亡率增加程度</li>
+                          <li><strong>稀缺权重：</strong>食物匮乏在总死亡率中的占比</li>
+                        </ul>
+                        <p className="info-note">💡 这让消费者数量自动跟随猎物数量波动</p>
+                      </div>
+                    </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">🗺️</span>
+                      <div>
+                        <strong>扩散与分布</strong>
+                        <p>控制物种的地理分布范围：</p>
+                        <ul className="info-list">
+                          <li><strong>分布地块数：</strong>物种最多分布在多少个地块</li>
+                          <li><strong>宜居度截断：</strong>低于此值的地块不分配种群</li>
+                          <li><strong>宜居度指数：</strong>&gt;1时种群更集中在高宜居度地块</li>
+                        </ul>
+                        <p className="info-note">💡 减少地块数可以让物种更加聚集，避免"铺满地图"</p>
+                      </div>
+                    </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">🔺</span>
+                      <div>
+                        <strong>高营养级局域化</strong>
+                        <p>顶级捕食者分布更集中：</p>
+                        <ul className="info-list">
+                          <li><strong>扩散阻尼：</strong>T3+物种的分布范围倍率</li>
+                          <li>例如：阻尼0.7表示T3物种分布范围是正常的70%</li>
+                          <li>T4+物种会更集中（约50-60%）</li>
+                        </ul>
+                        <p className="info-note">💡 这符合现实中顶级捕食者领地行为</p>
+                      </div>
+                    </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">⚡</span>
+                      <div>
+                        <strong>能量传递效率</strong>
+                        <p>食物链中的能量流动：</p>
+                        <ul className="info-list">
+                          <li>默认15%：符合生态学"10%规则"的修正版</li>
+                          <li>决定高营养级的承载力上限</li>
+                          <li>效率越低，顶级捕食者越稀少</li>
+                        </ul>
+                        <p className="info-note">💡 这是生态金字塔的数学基础</p>
+                      </div>
+                    </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">⚙️</span>
+                      <div>
+                        <strong>参数调整建议</strong>
+                        <ul className="info-list">
+                          <li><strong>竞争不够激烈？</strong>提高竞争系数和上限</li>
+                          <li><strong>消费者太多？</strong>提高食物匮乏惩罚和稀缺权重</li>
+                          <li><strong>物种分布太散？</strong>减少分布地块数、提高宜居度指数</li>
+                          <li><strong>顶级捕食者太多？</strong>降低扩散阻尼、降低能量效率</li>
+                          <li><strong>生态系统不稳定？</strong>降低竞争强度、提高分布地块</li>
+                        </ul>
+                      </div>
+                    </div>
+                    
+                    <div className="info-item">
+                      <span className="info-icon">🌐</span>
+                      <div>
+                        <strong>动态平衡原理</strong>
+                        <p>健康的生态系统会自动调节：</p>
+                        <ul className="info-list">
+                          <li>猎物↑ → 捕食者↑ → 猎物↓ → 捕食者↓ → 循环</li>
+                          <li>竞争激烈 → 弱势淘汰/分化 → 竞争缓解</li>
+                          <li>环境变化 → 适应者存活 → 新平衡</li>
+                        </ul>
+                        <p className="info-note">💡 参数设置影响平衡达成的速度和稳定性</p>
                       </div>
                     </div>
                   </div>
