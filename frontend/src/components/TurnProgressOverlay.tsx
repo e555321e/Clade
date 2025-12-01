@@ -9,21 +9,51 @@ interface Props {
 // 连接状态类型
 type ConnectionStatus = "connecting" | "connected" | "receiving" | "warning" | "error" | "disconnected";
 
-// 演化阶段定义 - 与后端新流程完全匹配
-const EVOLUTION_STAGES = [
-  { id: "pressure", icon: "🌡️", label: "环境压力", color: "#fb923c", estimatedSeconds: 2 },
-  { id: "geology", icon: "🗺️", label: "地图演化", color: "#8b5cf6", estimatedSeconds: 3 },
-  { id: "ecology", icon: "📊", label: "生态分析", color: "#fbbf24", estimatedSeconds: 5 },
-  { id: "phase1", icon: "⚔️", label: "阶段1:死亡率", color: "#f43f5e", estimatedSeconds: 8 },
-  { id: "phase2", icon: "🦅", label: "阶段2:迁徙", color: "#06b6d4", estimatedSeconds: 5 },
-  { id: "phase3", icon: "💀", label: "阶段3:再评估", color: "#ef4444", estimatedSeconds: 8 },
-  { id: "ai_eval", icon: "🤖", label: "AI评估", color: "#a855f7", estimatedSeconds: 30, isAI: true },
-  { id: "population", icon: "🐣", label: "种群变化", color: "#4ade80", estimatedSeconds: 3 },
-  { id: "evolution", icon: "🧬", label: "演化事件", color: "#2dd4bf", estimatedSeconds: 5 },
-  { id: "ai_parallel", icon: "🔀", label: "AI处理", color: "#c084fc", estimatedSeconds: 120, isAI: true },
-  { id: "report", icon: "📝", label: "生成报告", color: "#38bdf8", estimatedSeconds: 45, isAI: true },
-  { id: "save", icon: "💾", label: "保存数据", color: "#64748b", estimatedSeconds: 3 },
+// 演化阶段定义 - 按分类组织，与后端管线匹配
+// 后端通过 emit_event("stage", "图标 阶段名", "分类") 发送阶段信息
+interface StageCategory {
+  id: string;
+  label: string;
+  color: string;
+  icon: string;
+  isAI?: boolean;
+}
+
+// 阶段分类定义（用于颜色和图标映射）
+const STAGE_CATEGORIES: Record<string, StageCategory> = {
+  "环境": { id: "env", label: "环境系统", color: "#fb923c", icon: "🌡️" },
+  "地质": { id: "geo", label: "地质演化", color: "#8b5cf6", icon: "🗺️" },
+  "物种": { id: "species", label: "物种管理", color: "#22c55e", icon: "🧬" },
+  "生态": { id: "ecology", label: "生态分析", color: "#06b6d4", icon: "📊" },
+  "进化": { id: "evolution", label: "演化事件", color: "#2dd4bf", icon: "🧬" },
+  "分化": { id: "speciation", label: "物种分化", color: "#10b981", icon: "🌱" },
+  "AI": { id: "ai", label: "AI处理", color: "#a855f7", icon: "🤖", isAI: true },
+  "报告": { id: "report", label: "报告生成", color: "#38bdf8", icon: "📝", isAI: true },
+  "系统": { id: "system", label: "系统保存", color: "#64748b", icon: "💾" },
+};
+
+// 默认阶段顺序（用于进度条预估）
+const STAGE_ORDER = [
+  { category: "环境", estimatedSeconds: 2 },
+  { category: "地质", estimatedSeconds: 5 },
+  { category: "物种", estimatedSeconds: 2 },
+  { category: "生态", estimatedSeconds: 15 },
+  { category: "进化", estimatedSeconds: 5 },
+  { category: "AI", estimatedSeconds: 60 },
+  { category: "分化", estimatedSeconds: 10 },
+  { category: "报告", estimatedSeconds: 45 },
+  { category: "系统", estimatedSeconds: 5 },
 ];
+
+// 解析后端发送的阶段信息
+function parseStageMessage(message: string): { icon: string; label: string } {
+  // 后端格式: "图标 阶段名"，例如 "🌡️ 解析环境压力"
+  const match = message.match(/^(\S+)\s+(.+)$/);
+  if (match) {
+    return { icon: match[1], label: match[2] };
+  }
+  return { icon: "⏳", label: message };
+}
 
 // AI并发处理进度状态
 interface AIProgress {
@@ -39,11 +69,22 @@ interface StageTimer {
   stageIndex: number;
 }
 
+// 已完成阶段记录
+interface CompletedStage {
+  icon: string;
+  label: string;
+  category: string;
+  duration: number;
+  timestamp: number;
+}
+
 export function TurnProgressOverlay({ message = "推演进行中...", showDetails = true }: Props) {
   // 状态管理
   const [displayedLogs, setDisplayedLogs] = useState<Array<{ icon: string; text: string; category: string; timestamp: number }>>([]);
   const [currentStage, setCurrentStage] = useState<string>("等待推演开始...");
-  const [currentStageIndex, setCurrentStageIndex] = useState<number>(-1);
+  const [currentStageCategory, setCurrentStageCategory] = useState<string>("");
+  const [currentStageIcon, setCurrentStageIcon] = useState<string>("⏳");
+  const [completedStages, setCompletedStages] = useState<CompletedStage[]>([]);
   const [streamingText, setStreamingText] = useState<string>("");
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
   const [tokenCount, setTokenCount] = useState<number>(0);
@@ -59,6 +100,7 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
   // 阶段时间追踪
   const [stageTimer, setStageTimer] = useState<StageTimer | null>(null);
   const [stageElapsedSeconds, setStageElapsedSeconds] = useState<number>(0);
+  const stageStartTimeRef = useRef<number>(Date.now());
   
   // 任务中断状态
   const [isAborting, setIsAborting] = useState<boolean>(false);
@@ -78,21 +120,35 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
 
   // 当前阶段是否为AI步骤
   const isCurrentStageAI = useMemo(() => {
-    if (currentStageIndex < 0 || currentStageIndex >= EVOLUTION_STAGES.length) return false;
-    return EVOLUTION_STAGES[currentStageIndex].isAI === true;
-  }, [currentStageIndex]);
+    const category = STAGE_CATEGORIES[currentStageCategory];
+    return category?.isAI === true;
+  }, [currentStageCategory]);
 
-  // 计算预估剩余时间
+  // 获取当前阶段的颜色
+  const currentStageColor = useMemo(() => {
+    const category = STAGE_CATEGORIES[currentStageCategory];
+    return category?.color || "#64748b";
+  }, [currentStageCategory]);
+
+  // 计算预估剩余时间（基于已完成阶段的比例）
   const estimatedRemainingSeconds = useMemo(() => {
-    if (currentStageIndex < 0) return 0;
-    let remaining = 0;
-    for (let i = currentStageIndex; i < EVOLUTION_STAGES.length; i++) {
-      remaining += EVOLUTION_STAGES[i].estimatedSeconds;
+    const totalEstimated = STAGE_ORDER.reduce((sum, s) => sum + s.estimatedSeconds, 0);
+    const completedCategories = new Set(completedStages.map(s => s.category));
+    let completedTime = 0;
+    for (const stage of STAGE_ORDER) {
+      if (completedCategories.has(stage.category)) {
+        completedTime += stage.estimatedSeconds;
+      }
     }
-    // 减去当前阶段已经花费的时间
-    remaining -= stageElapsedSeconds;
-    return Math.max(0, remaining);
-  }, [currentStageIndex, stageElapsedSeconds]);
+    return Math.max(0, totalEstimated - completedTime - stageElapsedSeconds);
+  }, [completedStages, stageElapsedSeconds]);
+
+  // 计算进度百分比
+  const progressPercent = useMemo(() => {
+    const total = STAGE_ORDER.length;
+    const completed = completedStages.length;
+    return Math.min(100, ((completed + 0.5) / total) * 100);
+  }, [completedStages]);
 
   // 自动滚动流式文本到底部
   const scrollStreamingToBottom = useCallback(() => {
@@ -185,37 +241,6 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
     return () => clearInterval(timer);
   }, [aiProgress, lastAIActivity]);
 
-  // 根据阶段文本判断当前阶段索引 - 与后端流程完全匹配
-  const detectStageIndex = useCallback((stageText: string): number => {
-    const lowerText = stageText.toLowerCase();
-    
-    // 0. 环境压力
-    if (lowerText.includes("压力") || lowerText.includes("pressure")) return 0;
-    // 1. 地质演化
-    if (lowerText.includes("地图演化") || lowerText.includes("地质") || lowerText.includes("geology") || lowerText.includes("海平面")) return 1;
-    // 2. 生态分析（物种列表、分层、生态位）
-    if (lowerText.includes("物种列表") || lowerText.includes("分层") || lowerText.includes("生态位") || lowerText.includes("ecology") || lowerText.includes("物种分层")) return 2;
-    // 3. 阶段1：死亡率计算
-    if (lowerText.includes("阶段1") || lowerText.includes("营养级") || (lowerText.includes("死亡率") && !lowerText.includes("阶段3"))) return 3;
-    // 4. 阶段2：迁徙
-    if (lowerText.includes("阶段2") || lowerText.includes("迁徙")) return 4;
-    // 5. 阶段3：重新评估
-    if (lowerText.includes("阶段3") && !lowerText.includes("阶段3.5")) return 5;
-    // 6. AI综合评估
-    if ((lowerText.includes("ai") && lowerText.includes("评估")) || lowerText.includes("阶段3.5")) return 6;
-    // 7. 种群变化
-    if (lowerText.includes("种群") || lowerText.includes("繁殖") || lowerText.includes("reproduction")) return 7;
-    // 8. 演化事件（基因激活、基因流动、亚种晋升）
-    if (lowerText.includes("基因") || lowerText.includes("激活") || lowerText.includes("流动") || lowerText.includes("亚种") || lowerText.includes("晋升")) return 8;
-    // 9. AI并行处理（叙事、适应、分化）
-    if (lowerText.includes("ai并行") || lowerText.includes("ai任务") || lowerText.includes("分化") || lowerText.includes("适应") || lowerText.includes("叙事")) return 9;
-    // 10. 生成报告
-    if (lowerText.includes("报告") || lowerText.includes("report")) return 10;
-    // 11. 保存数据
-    if (lowerText.includes("保存") || lowerText.includes("save") || lowerText.includes("导出") || lowerText.includes("快照")) return 11;
-    
-    return -1;
-  }, []);
 
   useEffect(() => {
     if (!showDetails) return;
@@ -395,23 +420,37 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
       
       // 更新当前阶段
       if (event.type === 'stage') {
-        const newStageIndex = detectStageIndex(cleanMessage);
-        const stageText = cleanMessage.length > 50 ? cleanMessage.substring(0, 50) + '...' : cleanMessage;
-        setCurrentStage(stageText);
+        // 解析阶段信息
+        const parsed = parseStageMessage(eventMessage);
+        const stageText = parsed.label.length > 40 ? parsed.label.substring(0, 40) + '...' : parsed.label;
         
-        if (newStageIndex !== currentStageIndex && newStageIndex >= 0) {
-          setCurrentStageIndex(newStageIndex);
-          setStageTimer({ startTime: Date.now(), stageIndex: newStageIndex });
+        // 记录上一个阶段的完成时间
+        if (currentStage !== "等待推演开始..." && currentStage !== "已连接，等待推演开始...") {
+          const duration = Date.now() - stageStartTimeRef.current;
+          setCompletedStages(prev => [...prev, {
+            icon: currentStageIcon,
+            label: currentStage,
+            category: currentStageCategory,
+            duration,
+            timestamp: stageStartTimeRef.current
+          }]);
         }
         
-        // 如果进入AI并发处理阶段，初始化AI进度
-        if (cleanMessage.includes("AI并行") || cleanMessage.includes("AI任务")) {
+        // 更新当前阶段
+        setCurrentStage(stageText);
+        setCurrentStageIcon(parsed.icon);
+        setCurrentStageCategory(category);
+        stageStartTimeRef.current = Date.now();
+        setStageElapsedSeconds(0);
+        
+        // 如果进入AI相关阶段，初始化AI进度
+        if (category === "AI" || cleanMessage.includes("AI")) {
           setAIProgress({ total: 2, completed: 0, current_task: "初始化...", last_activity: Date.now() });
           setLastAIActivity(Date.now());
         }
         
-        // 如果进入报告阶段，清空之前的流式文本和AI进度
-        if (cleanMessage.includes("报告") && !cleanMessage.includes("完成")) {
+        // 如果进入报告阶段，清空之前的流式文本
+        if (category === "报告" && !cleanMessage.includes("完成")) {
           setStreamingText("");
           setTokenCount(0);
           setIsStreamingActive(false);
@@ -426,7 +465,8 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
         setConnectionStatus("connected");
         setAIProgress(null);
         setCurrentStage("推演完成！");
-        setCurrentStageIndex(EVOLUTION_STAGES.length - 1);
+        setCurrentStageIcon("✅");
+        setCurrentStageCategory("系统");
         setStageTimer(null);
       }
 
@@ -456,9 +496,13 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
       isProcessingRef.current = false;
       setStreamingText("");
       setTokenCount(0);
-      setCurrentStageIndex(-1);
+      setCurrentStage("等待推演开始...");
+      setCurrentStageCategory("");
+      setCurrentStageIcon("⏳");
+      setCompletedStages([]);
       setIsStreamingActive(false);
       setStartTime(Date.now());
+      stageStartTimeRef.current = Date.now();
       setAIProgress(null);
       setLastAIActivity(0);
       setAIElapsedSeconds(0);
@@ -584,7 +628,7 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
               <span className="time-icon">⏱️</span>
               <span className="time-value">{elapsedMinutes > 0 ? `${elapsedMinutes}分` : ""}{elapsedSeconds}秒</span>
             </div>
-            {estimatedRemainingSeconds > 0 && currentStageIndex >= 0 && (
+            {estimatedRemainingSeconds > 0 && completedStages.length > 0 && (
               <div className="remaining-time">
                 <span>约剩 {formatTime(estimatedRemainingSeconds)}</span>
               </div>
@@ -620,57 +664,53 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
 
           {showDetails && (
             <>
-              {/* 进度阶段可视化 */}
+              {/* 进度阶段可视化 - 动态显示已完成和当前阶段 */}
               <div className="stages-container">
-                <div className="stages-track">
-                  {EVOLUTION_STAGES.map((stage, idx) => {
-                    const isCompleted = idx < currentStageIndex;
-                    const isCurrent = idx === currentStageIndex;
-                    const isPending = idx > currentStageIndex;
-                    
-                    return (
-                      <div 
-                        key={stage.id}
-                        className={`stage-item ${isCompleted ? 'completed' : ''} ${isCurrent ? 'current' : ''} ${isPending ? 'pending' : ''} ${stage.isAI ? 'is-ai' : ''}`}
-                        style={{ '--stage-color': stage.color } as React.CSSProperties}
-                      >
-                        <div className="stage-icon-wrapper">
-                          <span className="stage-icon">{stage.icon}</span>
-                          {isCurrent && <div className="stage-pulse" />}
-                          {isCompleted && <div className="stage-check">✓</div>}
-                        </div>
-                        <span className="stage-label">{stage.label}</span>
-                        {isCurrent && stage.isAI && (
-                          <span className="ai-badge">AI</span>
-                        )}
-                      </div>
-                    );
-                  })}
+                {/* 已完成阶段列表 */}
+                <div className="completed-stages">
+                  {completedStages.slice(-6).map((stage, idx) => (
+                    <div 
+                      key={idx}
+                      className="completed-stage-item"
+                      style={{ '--stage-color': STAGE_CATEGORIES[stage.category]?.color || '#64748b' } as React.CSSProperties}
+                    >
+                      <span className="completed-icon">{stage.icon}</span>
+                      <span className="completed-label">{stage.label}</span>
+                      <span className="completed-time">{formatTime(Math.floor(stage.duration / 1000))}</span>
+                    </div>
+                  ))}
                 </div>
-                <div 
-                  className="stages-progress-bar"
-                  style={{ 
-                    width: `${Math.max(0, ((currentStageIndex + 0.5) / EVOLUTION_STAGES.length) * 100)}%`
-                  }}
-                />
+                
+                {/* 总进度条 */}
+                <div className="main-progress-container">
+                  <div className="main-progress-bar">
+                    <div 
+                      className="main-progress-fill"
+                      style={{ 
+                        width: `${progressPercent}%`,
+                        background: `linear-gradient(90deg, ${currentStageColor}, ${currentStageColor}88)`
+                      }}
+                    />
+                  </div>
+                  <span className="progress-text">{Math.round(progressPercent)}%</span>
+                </div>
               </div>
 
               {/* 当前阶段详情卡片 */}
-              <div className={`current-stage-card ${isCurrentStageAI ? 'ai-stage' : ''} ${isLikelyStuck ? 'stuck-warning' : ''}`}>
+              <div 
+                className={`current-stage-card ${isCurrentStageAI ? 'ai-stage' : ''} ${isLikelyStuck ? 'stuck-warning' : ''}`}
+                style={{ '--stage-color': currentStageColor } as React.CSSProperties}
+              >
                 <div className="stage-card-left">
-                  <span className="stage-emoji">
-                    {currentStageIndex >= 0 ? EVOLUTION_STAGES[currentStageIndex]?.icon : "📖"}
-                  </span>
+                  <span className="stage-emoji">{currentStageIcon}</span>
                   <div className="stage-info">
                     <span className="stage-name">{currentStage}</span>
+                    <span className="stage-category-tag" style={{ background: currentStageColor + '30', color: currentStageColor }}>
+                      {STAGE_CATEGORIES[currentStageCategory]?.label || currentStageCategory || "进行中"}
+                    </span>
                     {stageElapsedSeconds > 0 && (
                       <span className="stage-time">
                         已耗时 {formatTime(stageElapsedSeconds)}
-                        {currentStageIndex >= 0 && EVOLUTION_STAGES[currentStageIndex]?.estimatedSeconds && (
-                          <span className="estimated">
-                            {" "}/ 预计 {formatTime(EVOLUTION_STAGES[currentStageIndex].estimatedSeconds)}
-                          </span>
-                        )}
                       </span>
                     )}
                   </div>
@@ -1086,127 +1126,101 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
           font-size: 0.9rem;
         }
 
-        /* 阶段进度条 */
+        /* 阶段进度区域 */
         .stages-container {
-          position: relative;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
           background: rgba(0, 0, 0, 0.25);
           border-radius: 16px;
-          padding: 16px;
+          padding: 14px 16px;
           border: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        .stages-track {
+        /* 已完成阶段列表 */
+        .completed-stages {
           display: flex;
           flex-wrap: wrap;
-          gap: 6px 4px;
-          justify-content: center;
-          position: relative;
-          z-index: 1;
+          gap: 6px;
         }
 
-        .stage-item {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 4px;
-          width: 62px;
-          padding: 6px 4px;
-          border-radius: 10px;
-          transition: all 0.3s ease;
-          opacity: 0.35;
-        }
-
-        .stage-item.completed {
-          opacity: 1;
-        }
-
-        .stage-item.current {
-          opacity: 1;
-          background: rgba(var(--stage-color-rgb, 45, 212, 191), 0.15);
-          transform: scale(1.05);
-        }
-
-        .stage-item.is-ai {
-          border: 1px dashed rgba(168, 85, 247, 0.3);
-        }
-
-        .stage-icon-wrapper {
-          position: relative;
-          width: 32px;
-          height: 32px;
+        .completed-stage-item {
           display: flex;
           align-items: center;
-          justify-content: center;
+          gap: 6px;
+          padding: 4px 10px;
+          background: rgba(var(--stage-color-rgb, 45, 212, 191), 0.12);
+          border-radius: 20px;
+          border: 1px solid rgba(var(--stage-color-rgb, 45, 212, 191), 0.2);
+          font-size: 0.72rem;
+          color: rgba(255, 255, 255, 0.85);
+          animation: stage-appear 0.3s ease-out;
         }
 
-        .stage-icon {
-          font-size: 1.2rem;
-          z-index: 1;
+        @keyframes stage-appear {
+          from { opacity: 0; transform: translateY(-5px) scale(0.95); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
         }
 
-        .stage-pulse {
-          position: absolute;
-          inset: -4px;
-          border-radius: 50%;
-          background: var(--stage-color);
-          opacity: 0.3;
-          animation: stage-pulse 1.5s ease-out infinite;
+        .completed-icon {
+          font-size: 0.9rem;
         }
 
-        @keyframes stage-pulse {
-          0% { transform: scale(0.8); opacity: 0.4; }
-          100% { transform: scale(1.5); opacity: 0; }
-        }
-
-        .stage-check {
-          position: absolute;
-          bottom: -2px;
-          right: -2px;
-          width: 14px;
-          height: 14px;
-          background: #4ade80;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 0.55rem;
-          color: #000;
-          font-weight: bold;
-        }
-
-        .stage-label {
-          font-size: 0.6rem;
-          color: rgba(255, 255, 255, 0.6);
-          text-align: center;
-          line-height: 1.2;
-          max-width: 100%;
+        .completed-label {
+          max-width: 120px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
 
-        .stage-item.completed .stage-label,
-        .stage-item.current .stage-label {
-          color: rgba(255, 255, 255, 0.9);
-        }
-
-        .ai-badge {
-          font-size: 0.5rem;
-          background: rgba(168, 85, 247, 0.4);
-          color: #c084fc;
-          padding: 1px 4px;
+        .completed-time {
+          color: rgba(255, 255, 255, 0.45);
+          font-family: var(--font-mono, monospace);
+          font-size: 0.65rem;
+          background: rgba(0, 0, 0, 0.25);
+          padding: 1px 5px;
           border-radius: 4px;
-          font-weight: 600;
         }
 
-        .stages-progress-bar {
-          position: absolute;
-          bottom: 0;
-          left: 0;
-          height: 3px;
-          background: linear-gradient(90deg, #2dd4bf, #4ade80);
-          border-radius: 0 0 16px 16px;
+        /* 主进度条 */
+        .main-progress-container {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .main-progress-bar {
+          flex: 1;
+          height: 6px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 3px;
+          overflow: hidden;
+        }
+
+        .main-progress-fill {
+          height: 100%;
+          border-radius: 3px;
           transition: width 0.5s ease;
+          box-shadow: 0 0 10px currentColor;
+        }
+
+        .progress-text {
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: rgba(255, 255, 255, 0.7);
+          font-family: var(--font-mono, monospace);
+          min-width: 36px;
+          text-align: right;
+        }
+
+        /* 阶段分类标签 */
+        .stage-category-tag {
+          font-size: 0.65rem;
+          padding: 2px 8px;
+          border-radius: 10px;
+          font-weight: 500;
+          display: inline-block;
+          margin-top: 2px;
         }
 
         /* 当前阶段卡片 */
