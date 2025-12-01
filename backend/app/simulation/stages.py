@@ -1306,13 +1306,23 @@ class SpeciationDataTransferStage(BaseStage):
         logger.debug("传递数据给分化服务...")
         
         if hasattr(engine, 'speciation') and ctx.combined_results:
-            # 构建分化候选数据
-            candidates = {}
-            for result in ctx.combined_results:
-                candidates[result.species.lineage_code] = {
-                    "death_rate": result.death_rate,
-                    "population": result.species.morphology_stats.get("population", 0),
-                }
+            # 【关键修复】使用 TileBasedMortalityEngine 获取完整的地块级分化候选数据
+            # 原代码只传递了 death_rate 和 population，但 speciation.py 期望完整的地块级数据
+            if engine._use_tile_based_mortality and hasattr(engine, 'tile_mortality'):
+                # 调用正确的方法获取完整的候选数据（包含 candidate_tiles, tile_populations, 
+                # tile_mortality, is_isolated, clusters, mortality_gradient 等字段）
+                candidates = engine.tile_mortality.get_speciation_candidates()
+                logger.info(f"[分化数据传递] 从 TileBasedMortalityEngine 获取 {len(candidates)} 个候选物种")
+            else:
+                # 回退到简单数据（兼容旧逻辑，但分化效果会大打折扣）
+                candidates = {}
+                for result in ctx.combined_results:
+                    candidates[result.species.lineage_code] = {
+                        "death_rate": result.death_rate,
+                        "population": result.species.morphology_stats.get("population", 0),
+                    }
+                logger.warning("[分化数据传递] 未使用地块级死亡率引擎，分化数据不完整")
+            
             engine.speciation.set_speciation_candidates(candidates)
 
 
@@ -1448,7 +1458,22 @@ class GeneticDriftStage(BaseStage):
 
 
 class AutoHybridizationStage(BaseStage):
-    """自动杂交阶段"""
+    """自动杂交阶段
+    
+    【实现】检测同域、近缘物种，触发自动杂交。
+    
+    杂交条件：
+    - 两个物种分布在相同地块（同域）
+    - 遗传距离在杂交阈值内（近缘）
+    - 种群规模足够大
+    - 随机概率检查
+    """
+    
+    # 【参数配置】可在此调整杂交行为
+    MIN_POPULATION_FOR_HYBRIDIZATION = 500  # 最小种群才能参与杂交
+    BASE_HYBRIDIZATION_CHANCE = 0.05  # 基础杂交概率（每回合）
+    MAX_HYBRIDS_PER_TURN = 3  # 每回合最多产生的杂交种数量
+    SYMPATRIC_BONUS = 0.10  # 完全同域时的概率加成
     
     def __init__(self):
         super().__init__(StageOrder.AUTO_HYBRIDIZATION.value, "自动杂交")
@@ -1461,19 +1486,148 @@ class AutoHybridizationStage(BaseStage):
         )
     
     async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
+        import random
         from ..repositories.species_repository import species_repository
+        from ..services.species.hybridization import HybridizationService
+        from ..services.species.genetic_distance import GeneticDistanceCalculator
         
-        logger.debug("自动杂交检查...")
+        logger.info("自动杂交检查...")
+        ctx.emit_event("stage", "🧬 自动杂交检查", "进化")
         
         ctx.auto_hybrids = []
         
-        # 检查同域物种是否可以杂交
-        # 实际逻辑需要根据物种亲缘关系和地理分布
-        # 这里只是占位实现
+        # 获取所有存活物种
+        alive_species = [sp for sp in ctx.species_batch if sp.status == "alive"]
+        if len(alive_species) < 2:
+            logger.debug("[自动杂交] 物种数量不足，跳过")
+            return
+        
+        # 筛选种群足够大的物种
+        candidate_species = [
+            sp for sp in alive_species
+            if (sp.morphology_stats.get("population", 0) or 0) >= self.MIN_POPULATION_FOR_HYBRIDIZATION
+        ]
+        
+        if len(candidate_species) < 2:
+            logger.debug("[自动杂交] 候选物种不足，跳过")
+            return
+        
+        # 初始化杂交服务
+        genetic_calculator = GeneticDistanceCalculator()
+        hybridization_service = HybridizationService(genetic_calculator, engine.router)
+        
+        # 构建 species_id -> lineage_code 映射
+        id_to_code: dict[int, str] = {}
+        for sp in ctx.species_batch:
+            if sp.id is not None:
+                id_to_code[sp.id] = sp.lineage_code
+        
+        # 构建物种的栖息地映射 {lineage_code: set(tile_ids)}
+        species_tiles: dict[str, set[int]] = {}
+        if ctx.all_habitats:
+            for hab in ctx.all_habitats:
+                # HabitatPopulation 只有 species_id，需要通过映射获取 lineage_code
+                code = id_to_code.get(hab.species_id)
+                if not code:
+                    continue
+                if code not in species_tiles:
+                    species_tiles[code] = set()
+                species_tiles[code].add(hab.tile_id)
+        
+        existing_codes = {sp.lineage_code for sp in ctx.species_batch}
+        hybrids_created = 0
+        checked_pairs = set()
+        
+        # 遍历所有物种对
+        for i, sp1 in enumerate(candidate_species):
+            if hybrids_created >= self.MAX_HYBRIDS_PER_TURN:
+                break
+                
+            for sp2 in candidate_species[i+1:]:
+                if hybrids_created >= self.MAX_HYBRIDS_PER_TURN:
+                    break
+                
+                # 避免重复检查
+                pair_key = tuple(sorted([sp1.lineage_code, sp2.lineage_code]))
+                if pair_key in checked_pairs:
+                    continue
+                checked_pairs.add(pair_key)
+                
+                # 检查是否同域（至少有一个共同地块）
+                tiles1 = species_tiles.get(sp1.lineage_code, set())
+                tiles2 = species_tiles.get(sp2.lineage_code, set())
+                shared_tiles = tiles1 & tiles2
+                
+                if not shared_tiles:
+                    continue  # 无共同分布区域，跳过
+                
+                # 计算遗传距离，判断是否可杂交
+                can_hybrid, fertility = hybridization_service.can_hybridize(sp1, sp2)
+                if not can_hybrid:
+                    continue
+                
+                # 计算杂交概率
+                # 基础概率 + 同域程度加成 + 可育性加成
+                sympatry_ratio = len(shared_tiles) / max(1, min(len(tiles1), len(tiles2)))
+                hybrid_chance = (
+                    self.BASE_HYBRIDIZATION_CHANCE 
+                    + self.SYMPATRIC_BONUS * sympatry_ratio
+                    + 0.05 * fertility  # 可育性越高，概率越高
+                )
+                
+                # 随机检查
+                if random.random() > hybrid_chance:
+                    continue
+                
+                # 创建杂交种
+                logger.info(
+                    f"[自动杂交] 尝试杂交: {sp1.common_name} × {sp2.common_name} "
+                    f"(可育性={fertility:.1%}, 共享地块={len(shared_tiles)})"
+                )
+                
+                hybrid = hybridization_service.create_hybrid(
+                    sp1, sp2, ctx.turn_index, 
+                    existing_codes=existing_codes
+                )
+                
+                if hybrid:
+                    # 设置初始种群（从两个亲本中分出一部分）
+                    pop1 = sp1.morphology_stats.get("population", 0) or 0
+                    pop2 = sp2.morphology_stats.get("population", 0) or 0
+                    
+                    # 杂交种初始种群 = 两亲本各贡献 5% × 可育性
+                    hybrid_pop = int((pop1 * 0.05 + pop2 * 0.05) * fertility)
+                    hybrid_pop = max(10, min(hybrid_pop, 5000))  # 限制范围
+                    
+                    hybrid.morphology_stats["population"] = hybrid_pop
+                    
+                    # 从亲本中减少种群
+                    sp1.morphology_stats["population"] = max(100, pop1 - int(pop1 * 0.03 * fertility))
+                    sp2.morphology_stats["population"] = max(100, pop2 - int(pop2 * 0.03 * fertility))
+                    
+                    # 保存杂交种
+                    species_repository.upsert(hybrid)
+                    species_repository.upsert(sp1)
+                    species_repository.upsert(sp2)
+                    
+                    ctx.auto_hybrids.append(hybrid)
+                    existing_codes.add(hybrid.lineage_code)
+                    hybrids_created += 1
+                    
+                    logger.info(
+                        f"[自动杂交] 成功: {hybrid.common_name} "
+                        f"(种群={hybrid_pop:,}, 可育性={fertility:.1%})"
+                    )
+                    ctx.emit_event(
+                        "speciation", 
+                        f"🧬 杂交诞生: {hybrid.common_name}", 
+                        "进化"
+                    )
         
         if ctx.auto_hybrids:
-            logger.info(f"[自动杂交] 产生了 {len(ctx.auto_hybrids)} 个杂交种")
-            ctx.emit_event("speciation", f"🧬 杂交: {len(ctx.auto_hybrids)} 个新杂交种", "进化")
+            logger.info(f"[自动杂交] 本回合产生了 {len(ctx.auto_hybrids)} 个杂交种")
+            # 将杂交种加入物种列表
+            ctx.species_batch.extend(ctx.auto_hybrids)
 
 
 class SubspeciesPromotionStage(BaseStage):
@@ -1740,9 +1894,9 @@ class SpeciationStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"适应性演化"},
-            optional_stages={"生态智能体评估"},  # 使用 ModifierApplicator
-            requires_fields={"species_batch", "critical_results", "focus_results", "modifiers"},
+            requires_stages={"种群更新"},  # 【修复】改为依赖种群更新，而非适应性演化（后者可能被禁用）
+            optional_stages={"生态智能体评估", "适应性演化"},  # 适应性演化改为可选
+            requires_fields={"species_batch", "combined_results", "critical_results", "focus_results", "modifiers"},
             writes_fields={"branching_events"},
         )
     
@@ -1811,10 +1965,12 @@ class SpeciationStage(BaseStage):
                 except Exception as e:
                     logger.warning(f"[Embedding] 获取演化提示失败: {e}")
             
-            # 执行分化（传入高分化信号候选集合）
+            # 【关键修复】执行分化时使用 combined_results 而不是只用 critical + focus
+            # 原代码只处理 critical_results + focus_results，导致大量 background 物种无法分化
+            # 物种分化不需要 AI 做筛选决策，只需要 AI 生成新物种描述，所以处理全部物种是安全的
             ctx.branching_events = await asyncio.wait_for(
                 engine.speciation.process_async(
-                    mortality_results=ctx.critical_results + ctx.focus_results,
+                    mortality_results=ctx.combined_results,  # 【修复】使用所有物种
                     existing_codes={s.lineage_code for s in ctx.species_batch},
                     average_pressure=sum(ctx.modifiers.values()) / (len(ctx.modifiers) or 1),
                     turn_index=ctx.turn_index,
@@ -2330,6 +2486,7 @@ def get_default_stages() -> list[BaseStage]:
         FinalMortalityStage(),
         PopulationUpdateStage(),
         AIStatusEvalStage(),
+        SpeciationDataTransferStage(),  # 【关键修复】分化数据传递阶段
         AINarrativeStage(),
         AdaptationStage(),
         SpeciationStage(),

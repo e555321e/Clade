@@ -45,10 +45,9 @@ SPECIES_PROMPTS = {
 
 === 演化规则（50万年时间尺度）===
 1. **强制属性权衡**：增强某属性时，必须有其他属性下降作为代价
-2. **能量守恒**：变化总和应在 [-2.0, +3.0] 之间
-3. **适度变化**：单次变化幅度在 ±0.5 到 ±1.5 之间（50万年足够发生明显变化）
-4. **压力响应**：变化应直接回应当前环境压力
-5. **禁止纯升级**：不存在没有代价的进化
+2. **适度变化**：单次变化幅度在 ±0.5 到 ±1.5 之间，总变化量有增有减
+3. **压力响应**：变化应直接回应当前环境压力
+4. **禁止纯升级**：不存在没有代价的进化
 
 === ⚠️ 极端环境特殊规则 ===
 【识别极端条件】（从压力上下文推断）
@@ -496,133 +495,78 @@ SPECIES_PROMPTS = {
 }}
 
 === 关键规则 ===
-1. 属性权衡：增加必有减少，总和在[-3.0, +5.0]之间
+1. 属性权衡：增加必有减少，必须有增有减
 2. 形态稳定：体长变化0.8-1.3倍
 3. 器官演化：每次最多提升2阶段，新器官从阶段1开始
 4. 营养级：通常与父代相近(±0.5)
 
 只返回JSON对象。
 """,
-    "speciation_batch": """你是演化生物学家，负责批量推演多个物种的分化事件。
+    "speciation_batch": """你是演化生物学家，批量推演动物物种的分化事件。
 
-**关键要求：必须严格返回JSON格式，包含所有请求物种的分化结果。**
+**必须返回JSON格式，包含所有请求物种的分化结果。**
 
-=== 全局环境背景 ===
-环境压力强度：{average_pressure:.2f}/10
-压力来源：{pressure_summary}
-地形变化：{map_changes_summary}
-重大事件：{major_events_summary}
+=== 环境背景 ===
+压力强度：{average_pressure:.2f}/10 | 压力：{pressure_summary}
+地形：{map_changes_summary} | 事件：{major_events_summary}
 
-=== 待分化物种列表 ===
+=== 待分化物种 ===
 {species_list}
 
-=== ⚠️ 硬性约束（必须遵守，违规会被系统强制修正）===
+=== ⚠️ 硬性约束 ===
 
-【1. 属性权衡预算】
-- 增加总和上限: +5.0，减少总和下限: -3.0，单项变化上限: ±3.0
+【属性权衡】每个物种条目中给出了【属性预算】，必须严格遵守：
 - 必须有增有减！纯增加会被系统强制添加减少项
-- ❌ 违规: {{"耐寒性": "+8.0"}} → 会被缩减
-- ✅ 正确: {{"耐寒性": "+2.0", "繁殖速度": "-1.5"}}
+- ✅ 正确: {{"耐寒性": "+1.5", "繁殖速度": "-1.0"}}
 
-【2. 营养级限制】
-- 只能变化±0.5（父代营养级在每个物种条目中给出）
-- ❌ 违规: 父代T2.0，返回T3.5 → 会被修正为T2.5
-- ✅ 正确: 父代T2.0，返回T2.0~T2.5
+【营养级】只能变化±0.5（见每个物种条目的允许范围）
 
-【3. 器官演化约束】⚠️ 最常见错误！
-- current_stage 必须与父系实际阶段一致（在每个物种条目的器官约束中给出）
-- 每次最多涉及2个器官系统
-- 新器官从阶段0开始，只能发展到阶段1：current_stage=0, target_stage=1
-- 已有器官每次最多提升2阶段：target_stage ≤ current_stage + 2
-- ❌ 违规: 父系locomotion阶段=0，返回current_stage=4 → 会被修正为0
-- ✅ 正确: 父系locomotion阶段=0，返回current_stage=0, target_stage=1
+【器官演化】⚠️ 最常见错误！
+- current_stage 必须与【器官约束】中给出的当前阶段一致
+- 新器官只能：current_stage=0 → target_stage=1
+- 已有器官：target_stage ≤ current_stage + 2
+- ✅ 父系sensory=1 → {{"current_stage": 1, "target_stage": 2}}
+- ❌ 父系sensory=1 → {{"current_stage": 4}} 会被修正
 
-=== 地块级分化规则 ===
-每个物种条目中包含器官约束信息，请严格按照给出的当前阶段填写：
-- **高压区域**（死亡率>50%）：优先演化抗逆性
-- **低压区域**（死亡率<30%）：可演化竞争性
-- **地理隔离**：不同区域应有性状分歧
-
-=== 🌱 植物演化专用规则（仅对标记为🌱植物的物种生效）===
-【植物阶段升级】
-- 阶段0（原核）→1（真核）：多细胞程度 >= 1.5
-- 阶段1→2（群体化）：多细胞程度 >= 3.0
-- 阶段2→3（登陆）⚠️关键：保水能力 >= 5.0 且 耐旱性 >= 4.0
-- 阶段3→4（真根）：根系发达度 >= 5.0
-- 阶段4→5（种子）：种子化程度 >= 5.0
-- 阶段5→6（开花）：种子化程度 >= 8.0 且 散布能力 >= 7.0
-- 成为树木：木质化程度 >= 7.0 且 阶段 >= 5
-
-【植物专用字段】（植物物种必须返回）
-- "life_form_stage": 当前阶段或+1（不可跳级）
-- "growth_form": "aquatic/moss/herb/shrub/tree"（必须符合阶段）
-- "milestone_triggered": 里程碑ID或null
-
-【植物器官类别】
-- photosynthetic: 光合器官（叶绿体→类囊体膜→真叶→阔叶）
-- root_system: 根系（假根→原始根→须根系→直根系）
-- stem: 茎（匍匐茎→草本茎→木质茎→乔木干）
-- reproductive: 繁殖（孢子囊→胚珠→球果→花→果实）
-- protection: 保护（粘液层→角质层→蜡质表皮→树皮）
-- vascular: 维管（原始维管束→维管束→次生木质部）
-
-【植物权衡代价】
-- 增强光合效率 → 降低耐旱性（需更多水）
-- 增加木质化 → 降低繁殖速度
-- 发展根系 → 降低散布能力
-
-=== 渐进式演化原则 ===
-器官进化阶段：0(无)→1(原基)→2(初级)→3(功能化)→4(完善)
-- 单次分化只能提升1-2个阶段
-- 新器官只能从原基(阶段1)开始，即 current_stage=0 → target_stage=1
-
-=== 栖息地类型 ===
-marine | deep_sea | coastal | freshwater | amphibious | terrestrial | aerial
+【分化策略】
+- 高压区域（死亡率>50%）：演化抗逆性
+- 低压区域（死亡率<30%）：演化竞争性
+- 地理隔离：不同区域应有性状分歧
 
 === 输出格式 ===
 {{
     "results": [
         {{
-            "request_id": "请求ID（与输入对应）",
+            "request_id": "请求ID",
             "latin_name": "拉丁学名",
             "common_name": "中文俗名",
-            "description": "120-180字生物学描述，含食性和栖息环境",
-            "habitat_type": "栖息地类型",
-            "trophic_level": 父代±0.5范围内,
-            "key_innovations": ["关键演化创新"],
-            "trait_changes": {{"增强属性": "+数值", "减弱属性": "-数值"}},
+            "description": "100-150字描述",
+            "habitat_type": "marine/coastal/freshwater/terrestrial/aerial",
+            "trophic_level": 父代±0.5,
+            "key_innovations": ["创新点"],
+            "trait_changes": {{"增强": "+值", "减弱": "-值"}},
             "morphology_changes": {{"body_length_cm": 0.8-1.3倍}},
-            "event_description": "30-50字分化摘要",
-            "reason": "分化机制解释",
+            "event_description": "30字分化摘要",
+            "reason": "分化原因",
             "organ_evolution": [
-                {{
-                    "category": "locomotion/sensory/metabolic/digestive/defense/reproduction（动物）或 photosynthetic/root_system/stem/reproductive/protection/vascular（植物）",
-                    "action": "enhance/initiate",
-                    "current_stage": 与该物种器官约束中的当前阶段一致,
-                    "target_stage": current_stage+1或+2,
-                    "structure_name": "结构名",
-                    "description": "渐进式变化描述"
-                }}
-            ],
-            "life_form_stage": "🌱植物专用：当前阶段或+1（0-6整数）",
-            "growth_form": "🌱植物专用：aquatic/moss/herb/shrub/tree",
-            "milestone_triggered": "🌱植物专用：里程碑ID或null"
+                {{"category": "器官类别", "action": "enhance/initiate", "current_stage": 当前阶段, "target_stage": 目标阶段, "structure_name": "结构名", "description": "变化"}}
+            ]
         }}
     ]
 }}
 
-=== 正确示例1：动物分化（父系locomotion阶段=0, sensory阶段=1）===
+=== 示例（父系sensory=1, locomotion=0）===
 {{
     "results": [
         {{
-            "request_id": "req_001",
+            "request_id": "0",
             "latin_name": "Protoflagella ocularis",
             "common_name": "眼点鞭毛虫",
-            "description": "浅海环境促使感光点内陷形成眼凹结构。繁殖速度下降以维持复杂感觉结构。主要滤食蓝藻，栖息于阳光充足的浅海。",
+            "description": "浅海光照促使感光点内陷形成眼凹结构，繁殖速度下降以维持感觉器官。",
             "habitat_type": "marine",
             "trophic_level": 2.0,
             "key_innovations": ["眼凹结构"],
-            "trait_changes": {{"光照需求": "+1.5", "繁殖速度": "-1.0", "运动能力": "-0.5"}},
+            "trait_changes": {{"光照需求": "+1.5", "繁殖速度": "-1.0"}},
             "morphology_changes": {{"body_length_cm": 1.05}},
             "event_description": "浅海光照促进感光器官发展",
             "reason": "光感知优势带来生存收益",
@@ -633,33 +577,7 @@ marine | deep_sea | coastal | freshwater | amphibious | terrestrial | aerial
     ]
 }}
 
-=== 正确示例2：🌱植物分化（阶段2群体藻类，保水能力=5.2，耐旱性=4.5，准备登陆）===
-{{
-    "results": [
-        {{
-            "request_id": "req_002",
-            "latin_name": "Bryophytella primordialis",
-            "common_name": "原始苔藓体",
-            "description": "首批登陆的植物先驱，从潮间带向内陆扩展。发展出原始角质层减少水分散失，假根固着于岩石缝隙。作为自养生产者，光合效率略降，但获得了陆地生存的关键能力。",
-            "habitat_type": "coastal",
-            "trophic_level": 1.0,
-            "key_innovations": ["首次登陆陆地", "角质层保水"],
-            "trait_changes": {{"保水能力": "+1.0", "耐旱性": "+0.8", "光合效率": "-0.5", "繁殖速度": "-0.3"}},
-            "morphology_changes": {{"body_length_cm": 1.2}},
-            "event_description": "群体藻类成功登陆，成为苔藓类先驱",
-            "reason": "潮间带干湿交替环境促进保水结构演化",
-            "organ_evolution": [
-                {{"category": "protection", "action": "initiate", "current_stage": 0, "target_stage": 1, "structure_name": "角质层", "description": "发展原始角质层防止水分散失"}},
-                {{"category": "root_system", "action": "initiate", "current_stage": 0, "target_stage": 1, "structure_name": "假根", "description": "简单假根固着岩石"}}
-            ],
-            "life_form_stage": 3,
-            "growth_form": "moss",
-            "milestone_triggered": "first_land_plant"
-        }}
-    ]
-}}
-
-只返回JSON对象，不要返回markdown。
+只返回JSON。
 """,
 
     "species_description_update": """你是科学记录员。该物种经历了漫长的渐进式演化，其数值特征已发生显著变化，但文字描述尚未更新。请重写描述以匹配当前数值。

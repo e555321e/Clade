@@ -181,19 +181,19 @@ modes:
         enabled: true
         order: 105
       - name: auto_hybridization
-        enabled: false  # 禁用自动杂交
+        enabled: true  # 【启用】自动杂交
         order: 110
       - name: subspecies_promotion
         enabled: true
         order: 115
       - name: ai_parallel_tasks
-        enabled: false  # 禁用AI并行任务
+        enabled: false  # 【已废弃】叙事功能已迁移到 ecological_intelligence
         order: 120
       - name: adaptation
-        enabled: false  # 禁用适应性演化（依赖AI）
+        enabled: true  # 【启用】适应性演化
         order: 121
       - name: speciation
-        enabled: false  # 禁用物种分化（依赖AI）
+        enabled: true  # 【关键修复】启用物种分化
         order: 122
       - name: background_management
         enabled: true

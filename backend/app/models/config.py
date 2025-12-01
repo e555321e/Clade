@@ -42,71 +42,71 @@ class SpeciationConfig(BaseModel):
     
     # ========== 基础分化参数 ==========
     # 分化冷却期（回合数）：分化后多少回合内不能再次分化
-    cooldown_turns: int = 0
+    cooldown_turns: int = 2
     # 物种密度软上限：超过此数量后分化概率开始衰减
-    species_soft_cap: int = 60
+    species_soft_cap: int = 80
     # 基础分化概率（0-1）
-    base_speciation_rate: float = 0.50
+    base_speciation_rate: float = 0.35
     # 最大子种数量
-    max_offspring_count: int = 6
+    max_offspring_count: int = 3
     
-    # ========== 早期分化优化（大浪淘沙模式）==========
+    # ========== 早期分化优化 ==========
     # 早期回合阈值：低于此回合数时使用更宽松的条件
-    early_game_turns: int = 100
-    # 早期门槛折减系数的最小值（0.05 = 最低降到 5%）
-    early_threshold_min_factor: float = 0.05
+    early_game_turns: int = 50
+    # 早期门槛折减系数的最小值（0.25 = 最低降到 25%）
+    early_threshold_min_factor: float = 0.25
     # 早期门槛折减速率（每回合降低多少）
-    early_threshold_decay_rate: float = 0.03
+    early_threshold_decay_rate: float = 0.02
     # 早期跳过冷却期的回合数
-    early_skip_cooldown_turns: int = 3
+    early_skip_cooldown_turns: int = 2
     
-    # ========== 压力/资源触发阈值（大幅降低）==========
+    # ========== 压力/资源触发阈值 ==========
     # 后期压力阈值
-    pressure_threshold_late: float = 0.25
+    pressure_threshold_late: float = 0.35
     # 早期压力阈值
-    pressure_threshold_early: float = 0.10
+    pressure_threshold_early: float = 0.20
     # 后期资源阈值
-    resource_threshold_late: float = 0.20
+    resource_threshold_late: float = 0.30
     # 早期资源阈值
-    resource_threshold_early: float = 0.10
+    resource_threshold_early: float = 0.18
     # 后期演化潜力阈值
-    evo_potential_threshold_late: float = 0.30
+    evo_potential_threshold_late: float = 0.40
     # 早期演化潜力阈值
-    evo_potential_threshold_early: float = 0.15
+    evo_potential_threshold_early: float = 0.25
     
-    # ========== 候选地块筛选（放宽条件）==========
-    # 候选地块最小种群（大幅降低）
-    candidate_tile_min_pop: int = 10
-    # 候选地块死亡率下限（放宽下限）
-    candidate_tile_death_rate_min: float = 0.01
-    # 候选地块死亡率上限（放宽上限）
-    candidate_tile_death_rate_max: float = 0.90
+    # ========== 候选地块筛选 ==========
+    # 候选地块最小种群
+    candidate_tile_min_pop: int = 50
+    # 候选地块死亡率下限
+    candidate_tile_death_rate_min: float = 0.05
+    # 候选地块死亡率上限
+    candidate_tile_death_rate_max: float = 0.75
     
-    # ========== 辐射演化（提高概率）==========
+    # ========== 辐射演化 ==========
     # 辐射演化基础概率
-    radiation_base_chance: float = 0.15
+    radiation_base_chance: float = 0.08
     # 早期辐射演化额外加成
-    radiation_early_bonus: float = 0.25
-    # 早期辐射演化种群比例要求（降低）
-    radiation_pop_ratio_early: float = 0.8
-    # 后期辐射演化种群比例要求（降低）
-    radiation_pop_ratio_late: float = 1.0
-    # 早期辐射演化概率上限（大幅提高）
-    radiation_max_chance_early: float = 0.60
+    radiation_early_bonus: float = 0.12
+    # 早期辐射演化种群比例要求
+    radiation_pop_ratio_early: float = 1.2
+    # 后期辐射演化种群比例要求
+    radiation_pop_ratio_late: float = 1.5
+    # 早期辐射演化概率上限
+    radiation_max_chance_early: float = 0.25
     # 后期辐射演化概率上限
-    radiation_max_chance_late: float = 0.40
-    # 早期无隔离惩罚系数（接近1=几乎无惩罚）
-    no_isolation_penalty_early: float = 0.95
+    radiation_max_chance_late: float = 0.15
+    # 早期无隔离惩罚系数
+    no_isolation_penalty_early: float = 0.70
     # 后期无隔离惩罚系数
-    no_isolation_penalty_late: float = 0.70
+    no_isolation_penalty_late: float = 0.50
     
-    # ========== 门槛乘数（降低惩罚）==========
-    # 无隔离时门槛乘数（降低惩罚）
-    threshold_multiplier_no_isolation: float = 1.1
-    # 高生态位重叠时门槛乘数（无惩罚）
-    threshold_multiplier_high_overlap: float = 1.0
-    # 高资源饱和时门槛乘数（无惩罚）
-    threshold_multiplier_high_saturation: float = 1.0
+    # ========== 门槛乘数 ==========
+    # 无隔离时门槛乘数
+    threshold_multiplier_no_isolation: float = 1.3
+    # 高生态位重叠时门槛乘数
+    threshold_multiplier_high_overlap: float = 1.15
+    # 高资源饱和时门槛乘数
+    threshold_multiplier_high_saturation: float = 1.1
     
     # ========== 距离型隔离判定 ==========
     # 距离隔离阈值（六边形步数）：候选地块跨度超过此值视为隔离（降低以更容易触发）

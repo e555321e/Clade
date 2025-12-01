@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     mass_extinction_threshold: float = 0.6
     background_promotion_quota: int = 3
     critical_species_limit: int = 3
-    focus_batch_size: int = 8
+    focus_batch_size: int = 4  # 【优化】减小批量大小，提高并发数
     focus_batch_limit: int = 3
     use_report_v2: bool = Field(default=True, alias="USE_REPORT_V2")  # 使用并行化报告生成器
     minor_pressure_window: int = 10

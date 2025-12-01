@@ -1394,7 +1394,7 @@ class SpeciationService:
                 PlantTraitConfig.is_plant(e["ctx"]["parent"]) for e in entries
             )
             if is_all_plants:
-                prompt_name = "plant_speciation"
+                prompt_name = "plant_speciation_batch"  # 【修复】使用批量版本的植物分化prompt
                 # 为植物批次添加器官类别信息
                 if entries:
                     first_parent = entries[0]["ctx"]["parent"]

@@ -61,12 +61,12 @@ class FocusBatchProcessor:
         chunks = list(chunk_iter(results, self.batch_size))
         logger.info(f"[Focus增润] 开始处理 {len(results)} 个物种，分为 {len(chunks)} 个批次（间隔并行）")
         
-        # 【优化】间隔并行执行，每2秒启动一个批次，最多同时3个
+        # 【优化】小批次+高并发：间隔1.5秒，最多同时4个
         coroutines = [self._process_chunk(chunk) for chunk in chunks]
         batch_results = await staggered_gather(
             coroutines, 
-            interval=2.0,  # 每2秒启动一个
-            max_concurrent=3,  # 最多同时3个
+            interval=1.5,  # 每1.5秒启动一个
+            max_concurrent=4,  # 最多同时4个
             task_name="Focus批次"
         )
         

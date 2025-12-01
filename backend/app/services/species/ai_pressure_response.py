@@ -984,7 +984,7 @@ class AIPressureResponseService:
     # ==================== 【新】物种叙事生成 ====================
     
     # 叙事生成批次大小阈值
-    NARRATIVE_BATCH_SIZE = 5
+    NARRATIVE_BATCH_SIZE = 4  # 【优化】减小批量，提高并发
     
     # 【优化】叙事物种数量上限（节省tokens）
     MAX_CRITICAL_NARRATIVES = 3   # Critical物种最多3个
@@ -1064,10 +1064,10 @@ class AIPressureResponseService:
         # 使用 staggered_gather 并行处理
         batch_results = await staggered_gather(
             [process_batch(batch) for batch in batches],
-            interval=1.5,  # 每批间隔1.5秒
-            max_concurrent=3,  # 最多同时3个请求
+            interval=1.5,  
+            max_concurrent=4,  
             task_name="叙事批次",
-            task_timeout=60.0,  # 单批次超时60秒
+            task_timeout=45.0,  # 【优化】缩短超时到45秒
         )
         
         # 合并结果
