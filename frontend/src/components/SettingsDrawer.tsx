@@ -394,6 +394,38 @@ function reducer(state: State, action: Action): State {
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
+// 默认分化配置
+const DEFAULT_SPECIATION_CONFIG: SpeciationConfig = {
+  cooldown_turns: 0,
+  species_soft_cap: 60,
+  base_speciation_rate: 0.5,
+  max_offspring_count: 6,
+  early_game_turns: 10,
+  early_threshold_min_factor: 0.3,
+  early_threshold_decay_rate: 0.07,
+  early_skip_cooldown_turns: 5,
+  pressure_threshold_late: 0.7,
+  pressure_threshold_early: 0.4,
+  resource_threshold_late: 0.6,
+  resource_threshold_early: 0.35,
+  evo_potential_threshold_late: 0.7,
+  evo_potential_threshold_early: 0.5,
+  candidate_tile_min_pop: 50,
+  candidate_tile_death_rate_min: 0.02,
+  candidate_tile_death_rate_max: 0.75,
+  radiation_base_chance: 0.05,
+  radiation_early_bonus: 0.15,
+  radiation_pop_ratio_early: 1.2,
+  radiation_pop_ratio_late: 1.5,
+  radiation_max_chance_early: 0.35,
+  radiation_max_chance_late: 0.25,
+  no_isolation_penalty_early: 0.8,
+  no_isolation_penalty_late: 0.5,
+  threshold_multiplier_no_isolation: 1.8,
+  threshold_multiplier_high_overlap: 1.2,
+  threshold_multiplier_high_saturation: 1.2,
+};
+
 function createDefaultConfig(): UIConfig {
   const providers: Record<string, ProviderConfig> = {};
   PROVIDER_PRESETS.forEach(preset => {
@@ -414,6 +446,7 @@ function createDefaultConfig(): UIConfig {
     ai_model: null,
     ai_timeout: 60,
     embedding_provider: null,
+    speciation: { ...DEFAULT_SPECIATION_CONFIG },
   };
 }
 
@@ -477,6 +510,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
     ...config,
     providers: getInitialProviders(config),
     capability_routes: config.capability_routes || {},
+    speciation: { ...DEFAULT_SPECIATION_CONFIG, ...(config.speciation || {}) },
   }), []);
 
   const [state, dispatch] = useReducer(reducer, {
