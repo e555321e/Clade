@@ -257,8 +257,8 @@ class SimulationEngine:
             for stage_name in result.failed_stages:
                 logger.warning(f"  - {stage_name}")
         
-        # 增加回合计数器
-                self.turn_counter += 1
+        # 增加回合计数器（无论成功失败都要推进）
+        self.turn_counter += 1
         
         return ctx.report
     

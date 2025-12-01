@@ -124,99 +124,117 @@ class SpeciationConfig(BaseModel):
 class ReproductionConfig(BaseModel):
     """繁殖配置 - 控制物种繁殖行为的参数
     
-    【设计理念】
+    【设计理念 v7 优化】
     - 基础增长率由繁殖速度属性决定
-    - 体型和世代时间提供额外加成
-    - 高营养级受能量传递效率限制
-    - 生存本能在危机时提高繁殖效率
+    - 【降低】体型和世代加成，避免种群过快恢复
+    - 高营养级受更强的能量传递限制
+    - 【降低】生存本能加成，极端压力下繁殖效率应显著下降
+    - 【新增】高死亡率繁殖惩罚，死亡率>60%时繁殖效率大幅下降
     """
     model_config = ConfigDict(extra="ignore")
     
     # ========== 基础增长 ==========
     # 每点繁殖速度提供的增长率加成
-    growth_rate_per_repro_speed: float = 0.4
+    growth_rate_per_repro_speed: float = 0.35  # 从0.4降低到0.35
     # 增长倍数下限（保护濒危物种）
-    growth_multiplier_min: float = 0.6
-    # 增长倍数上限（限制爆发）
-    growth_multiplier_max: float = 15.0
+    growth_multiplier_min: float = 0.5  # 从0.6降低到0.5
+    # 【关键】增长倍数上限（大幅降低以避免种群爆发）
+    growth_multiplier_max: float = 8.0  # 从15.0降低到8.0
     
     # ========== 体型加成 ==========
+    # 【优化v7】降低体型加成，避免微生物过快繁殖
     # 微生物（<0.1mm）增长加成
-    size_bonus_microbe: float = 2.0
+    size_bonus_microbe: float = 1.6  # 从2.0降低到1.6
     # 小型生物（0.1mm-1mm）增长加成
-    size_bonus_tiny: float = 1.5
+    size_bonus_tiny: float = 1.3  # 从1.5降低到1.3
     # 中小型生物（1mm-1cm）增长加成
-    size_bonus_small: float = 1.2
+    size_bonus_small: float = 1.1  # 从1.2降低到1.1
     
     # ========== 世代时间加成 ==========
+    # 【优化v7】降低世代加成
     # 极快繁殖（<1周）加成
-    repro_bonus_weekly: float = 1.8
+    repro_bonus_weekly: float = 1.5  # 从1.8降低到1.5
     # 快速繁殖（<1月）加成
-    repro_bonus_monthly: float = 1.4
+    repro_bonus_monthly: float = 1.25  # 从1.4降低到1.25
     # 中速繁殖（<半年）加成
-    repro_bonus_halfyear: float = 1.2
+    repro_bonus_halfyear: float = 1.1  # 从1.2降低到1.1
     
     # ========== 存活率修正 ==========
+    # 【优化v7】降低存活率修正，使高死亡率更有效
     # 存活率修正基础值
-    survival_modifier_base: float = 0.4
+    survival_modifier_base: float = 0.3  # 从0.4降低到0.3
     # 存活率修正系数
-    survival_modifier_rate: float = 1.2
+    survival_modifier_rate: float = 1.0  # 从1.2降低到1.0
     
     # ========== 生存本能 ==========
+    # 【优化v7】提高阈值，降低加成，极端环境下繁殖能力应下降
     # 生存本能激活阈值（死亡率超过此值）
-    survival_instinct_threshold: float = 0.5
-    # 生存本能最大加成
-    survival_instinct_bonus: float = 0.8
+    survival_instinct_threshold: float = 0.6  # 从0.5提高到0.6
+    # 生存本能最大加成（大幅降低）
+    survival_instinct_bonus: float = 0.4  # 从0.8降低到0.4
     
     # ========== 资源压力 ==========
+    # 【优化v7】增强资源压力惩罚
     # 资源饱和时的惩罚率（饱和度1.0-2.0区间）
-    resource_saturation_penalty_mild: float = 0.4
+    resource_saturation_penalty_mild: float = 0.5  # 从0.4提升到0.5
     # 资源严重不足时的最低效率
-    resource_saturation_floor: float = 0.2
+    resource_saturation_floor: float = 0.15  # 从0.2降低到0.15
     
     # ========== 承载力超载 ==========
+    # 【优化v7】增强超载衰减
     # 超载时的衰减率
-    overshoot_decay_rate: float = 0.25
+    overshoot_decay_rate: float = 0.35  # 从0.25提升到0.35
     # 接近承载力时的增长效率
-    near_capacity_efficiency: float = 0.6
+    near_capacity_efficiency: float = 0.5  # 从0.6降低到0.5
     
     # ========== 营养级惩罚 ==========
+    # 【优化v7】增强高营养级惩罚
     # T2 初级消费者繁殖效率
-    t2_birth_efficiency: float = 0.9
+    t2_birth_efficiency: float = 0.85  # 从0.9降低到0.85
     # T3 高级消费者繁殖效率
-    t3_birth_efficiency: float = 0.7
+    t3_birth_efficiency: float = 0.60  # 从0.7降低到0.60
     # T4+ 顶级捕食者繁殖效率
-    t4_birth_efficiency: float = 0.5
+    t4_birth_efficiency: float = 0.40  # 从0.5降低到0.40
+    
+    # ========== 【新增v7】高死亡率繁殖惩罚 ==========
+    # 死亡率惩罚阈值：超过此值开始降低繁殖效率
+    mortality_penalty_threshold: float = 0.4
+    # 死亡率惩罚系数：每超过阈值10%，繁殖效率降低此比例
+    mortality_penalty_rate: float = 0.3
+    # 极端死亡率阈值：超过此值繁殖效率直接减半
+    extreme_mortality_threshold: float = 0.7
 
 
 class MortalityConfig(BaseModel):
     """死亡率配置 - 控制物种死亡率计算的参数
     
-    【设计理念】
+    【设计理念 v7 优化】
     - 多种压力源叠加计算死亡率
-    - 各压力有独立上限避免极端值
-    - 抗性机制降低压力影响
-    - 权重系统平衡各因素贡献
+    - 极端环境条件下压力上限提高
+    - 降低抗性减免，确保极端压力产生显著效果
+    - 乘法模型比重增加，产生更陡峭的压力响应曲线
     """
     model_config = ConfigDict(extra="ignore")
     
     # ========== 压力上限 ==========
+    # 【优化v7】提高压力上限，允许极端条件产生更高压力
     # 环境压力上限
-    env_pressure_cap: float = 0.50
+    env_pressure_cap: float = 0.70  # 从0.50提升到0.70
     # 竞争压力上限
-    competition_pressure_cap: float = 0.40
+    competition_pressure_cap: float = 0.45
     # 营养级压力上限（捕食/被捕食）
-    trophic_pressure_cap: float = 0.45
+    trophic_pressure_cap: float = 0.50
     # 资源压力上限
-    resource_pressure_cap: float = 0.40
+    resource_pressure_cap: float = 0.45
     # 捕食网压力上限
-    predation_pressure_cap: float = 0.50
+    predation_pressure_cap: float = 0.55
     # 植物竞争压力上限
-    plant_competition_cap: float = 0.30
+    plant_competition_cap: float = 0.35
     
     # ========== 加权求和权重 ==========
+    # 【优化v7】提高环境压力权重
     # 环境压力权重
-    env_weight: float = 0.40
+    env_weight: float = 0.55  # 从0.40提升到0.55
     # 竞争压力权重
     competition_weight: float = 0.30
     # 营养级压力权重
@@ -229,36 +247,39 @@ class MortalityConfig(BaseModel):
     plant_competition_weight: float = 0.25
     
     # ========== 乘法模型系数 ==========
+    # 【优化v7】提高乘法系数，使压力效果更陡峭
     # 环境压力乘法系数
-    env_mult_coef: float = 0.50
+    env_mult_coef: float = 0.65  # 从0.50提升到0.65
     # 竞争压力乘法系数
-    competition_mult_coef: float = 0.45
+    competition_mult_coef: float = 0.50
     # 营养级压力乘法系数
-    trophic_mult_coef: float = 0.55
+    trophic_mult_coef: float = 0.60
     # 资源压力乘法系数
-    resource_mult_coef: float = 0.45
+    resource_mult_coef: float = 0.50
     # 捕食网压力乘法系数
-    predation_mult_coef: float = 0.55
+    predation_mult_coef: float = 0.60
     # 植物竞争乘法系数
-    plant_mult_coef: float = 0.35
+    plant_mult_coef: float = 0.40
     
     # ========== 模型混合 ==========
+    # 【优化v7】增加乘法模型比重，产生更陡峭的响应曲线
     # 加权和模型占比（乘法模型占1-此值）
-    additive_model_weight: float = 0.70
+    additive_model_weight: float = 0.55  # 从0.70降低到0.55
     
     # ========== 抗性系数 ==========
+    # 【优化v7】降低抗性上限，确保极端压力仍产生显著效果
     # 体型抗性系数（每10cm体长的抗性）
-    size_resistance_per_10cm: float = 0.02
+    size_resistance_per_10cm: float = 0.015
     # 世代时间抗性系数
-    generation_resistance_coef: float = 0.05
+    generation_resistance_coef: float = 0.04
     # 最大抗性上限
-    max_resistance: float = 0.25
+    max_resistance: float = 0.18  # 从0.25降低到0.18
     
     # ========== 死亡率边界 ==========
     # 最低死亡率（保证自然死亡）
-    min_mortality: float = 0.02
+    min_mortality: float = 0.03  # 从0.02提升到0.03
     # 最高死亡率上限
-    max_mortality: float = 0.95
+    max_mortality: float = 0.92  # 从0.95降低到0.92，保留一点生存希望
 
 
 class EcologyBalanceConfig(BaseModel):

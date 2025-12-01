@@ -1,6 +1,181 @@
 """Trait配置和验证工具"""
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+# ==================== 地质时代配置 ====================
+# 游戏从28亿年前开始，每回合50万年
+# 时代上限会随回合数**渐进式增长**，体现生物复杂度的演化
+# 
+# 设计理念：
+# - 早期时代（太古宙）：上限较低，生物简单
+# - 随时代推进：上限不断提升，允许更复杂的生物
+# - 5600回合后：继续按公式增长，无上限限制
+
+# 基础上限（太古宙起点，所有物种从这里开始）
+ERA_BASE_LIMITS = {
+    "single": 5,   # 单属性基础上限
+    "total": 25,   # 属性总和基础上限
+}
+
+# 每100回合的增长量（渐进式增长）
+ERA_GROWTH_PER_100_TURNS = {
+    "single": 0.25,  # 每100回合单属性上限+0.25
+    "total": 1.5,    # 每100回合总和上限+1.5
+}
+
+# 地质时代定义（主要用于描述和里程碑）
+GEOLOGICAL_ERAS = {
+    # 太古宙末期（28-25亿年前）：原始单细胞时代
+    "archean": {
+        "start_turn": 0,
+        "end_turn": 600,  # 0-600回合（3亿年）
+        "name": "太古宙",
+        "name_en": "Archean",
+        "description": "原始生命时代，只有简单的原核生物",
+        "milestone": "生命起源",
+    },
+    # 元古宙早期（25-18亿年前）：真核生物出现
+    "proterozoic_early": {
+        "start_turn": 600,
+        "end_turn": 2000,  # 600-2000回合（7亿年）
+        "name": "元古宙早期",
+        "name_en": "Early Proterozoic", 
+        "description": "真核生物和光合作用出现，大氧化事件",
+        "milestone": "真核生物",
+    },
+    # 元古宙中期（18-10亿年前）：多细胞生物萌芽
+    "proterozoic_middle": {
+        "start_turn": 2000,
+        "end_turn": 3600,  # 2000-3600回合（8亿年）
+        "name": "元古宙中期",
+        "name_en": "Middle Proterozoic",
+        "description": "多细胞生物开始出现，真核藻类繁盛",
+        "milestone": "多细胞生物",
+    },
+    # 元古宙晚期（10-5.4亿年前）：埃迪卡拉纪生物群
+    "proterozoic_late": {
+        "start_turn": 3600,
+        "end_turn": 4720,  # 3600-4720回合（5.6亿年）
+        "name": "元古宙晚期",
+        "name_en": "Late Proterozoic",
+        "description": "埃迪卡拉生物群，软体动物兴起",
+        "milestone": "动物起源",
+    },
+    # 古生代早期（5.4-4亿年前）：寒武纪大爆发
+    "paleozoic_early": {
+        "start_turn": 4720,
+        "end_turn": 5000,  # 4720-5000回合（1.4亿年）
+        "name": "古生代早期",
+        "name_en": "Early Paleozoic",
+        "description": "寒武纪大爆发，三叶虫时代，脊椎动物出现",
+        "milestone": "寒武纪大爆发",
+    },
+    # 古生代中期（4-3亿年前）：鱼类时代，登陆开始
+    "paleozoic_middle": {
+        "start_turn": 5000,
+        "end_turn": 5200,  # 5000-5200回合（1亿年）
+        "name": "古生代中期",
+        "name_en": "Middle Paleozoic",
+        "description": "鱼类时代，植物和动物开始登陆",
+        "milestone": "生物登陆",
+    },
+    # 古生代晚期（3-2.5亿年前）：两栖类和早期爬行类
+    "paleozoic_late": {
+        "start_turn": 5200,
+        "end_turn": 5300,  # 5200-5300回合（0.5亿年）
+        "name": "古生代晚期",
+        "name_en": "Late Paleozoic",
+        "description": "石炭纪森林，两栖类繁盛，早期爬行类出现",
+        "milestone": "羊膜卵演化",
+    },
+    # 中生代（2.5-0.66亿年前）：恐龙时代
+    "mesozoic": {
+        "start_turn": 5300,
+        "end_turn": 5532,  # 5300-5532回合（1.84亿年）
+        "name": "中生代",
+        "name_en": "Mesozoic",
+        "description": "恐龙时代，哺乳类和鸟类出现",
+        "milestone": "恐龙统治",
+    },
+    # 新生代（0.66亿年前-现在）：哺乳类时代
+    "cenozoic": {
+        "start_turn": 5532,
+        "end_turn": 5600,  # 5532-5600回合（0.66亿年）
+        "name": "新生代",
+        "name_en": "Cenozoic",
+        "description": "哺乳类辐射演化，智慧生命出现",
+        "milestone": "哺乳类时代",
+    },
+    # 超越新生代（5600回合后）：未来演化
+    "future": {
+        "start_turn": 5600,
+        "end_turn": 99999,  # 无上限
+        "name": "未来纪",
+        "name_en": "Future",
+        "description": "超越已知历史，生物继续演化",
+        "milestone": "无限可能",
+    },
+}
+
+
+def get_current_era(turn_index: int) -> dict:
+    """根据回合数获取当前地质时代信息
+    
+    Args:
+        turn_index: 当前回合数
+        
+    Returns:
+        时代配置字典
+    """
+    for era_id, era in GEOLOGICAL_ERAS.items():
+        if era["start_turn"] <= turn_index < era["end_turn"]:
+            return {"id": era_id, **era}
+    # 超出定义范围，返回未来纪
+    return {"id": "future", **GEOLOGICAL_ERAS["future"]}
+
+
+def get_era_progress(turn_index: int) -> float:
+    """获取当前时代的进度（0.0-1.0）
+    
+    用于显示时代进度
+    """
+    era = get_current_era(turn_index)
+    duration = era["end_turn"] - era["start_turn"]
+    if duration <= 0 or duration > 10000:  # 未来纪没有固定结束
+        return 0.0
+    progress = (turn_index - era["start_turn"]) / duration
+    return min(1.0, max(0.0, progress))
+
+
+def calculate_era_limits(turn_index: int) -> dict:
+    """根据回合数计算当前的属性上限（渐进式增长）
+    
+    核心公式：
+    - 单属性上限 = 基础值 + (回合数 / 100) × 每100回合增长量
+    - 总和上限 = 基础值 + (回合数 / 100) × 每100回合增长量
+    
+    Args:
+        turn_index: 当前回合数
+        
+    Returns:
+        {"single": 单属性上限, "total": 总和上限}
+    """
+    # 计算增长量
+    growth_factor = turn_index / 100.0
+    
+    single_limit = ERA_BASE_LIMITS["single"] + growth_factor * ERA_GROWTH_PER_100_TURNS["single"]
+    total_limit = ERA_BASE_LIMITS["total"] + growth_factor * ERA_GROWTH_PER_100_TURNS["total"]
+    
+    # 取整（向下取整，确保不会超标）
+    return {
+        "single": int(single_limit),
+        "total": int(total_limit),
+    }
+
 
 class TraitConfig:
     """统一的trait配置管理"""
@@ -18,13 +193,17 @@ class TraitConfig:
         "防御性": 3.0,
     }
     
-    TROPHIC_LIMITS = {
+    # 基础营养级上限（不考虑时代修正）
+    TROPHIC_LIMITS_BASE = {
         1.0: {"base": 5, "specialized": 8, "total": 30},
         2.0: {"base": 7, "specialized": 10, "total": 50},
         3.0: {"base": 9, "specialized": 12, "total": 80},
         4.0: {"base": 12, "specialized": 14, "total": 105},
         5.0: {"base": 14, "specialized": 15, "total": 135},
     }
+    
+    # 兼容旧代码
+    TROPHIC_LIMITS = TROPHIC_LIMITS_BASE
     
     # 特质到压力类型的映射
     # 格式: { 特质名: (压力类型, 触发方向) }
@@ -317,46 +496,83 @@ class TraitConfig:
         return inherited
     
     @classmethod
-    def get_trophic_limits(cls, trophic_level: float) -> dict:
-        """获取营养级对应的属性上限
+    def get_trophic_limits(cls, trophic_level: float, turn_index: int = None) -> dict:
+        """获取属性上限（营养级 + 时代双重增长）
+        
+        计算逻辑：
+        1. 时代上限 = 基础值 + 回合数带来的增长（所有物种共享）
+        2. 营养级加成 = 高营养级获得额外加成（捕食者更强）
+        3. 最终上限 = 时代上限 + 营养级加成
         
         Args:
             trophic_level: 营养级（1.0-5.0+）
+            turn_index: 当前回合数（如果提供，会应用时代增长）
             
         Returns:
-            {"base": 基础上限, "specialized": 特化上限, "total": 总和上限}
+            {"base": 基础上限, "specialized": 特化上限, "total": 总和上限, 
+             "era_name": 时代名称, "era_progress": 时代进度}
         """
-        if trophic_level < 2.0:
-            return cls.TROPHIC_LIMITS[1.0]
-        elif trophic_level < 3.0:
-            return cls.TROPHIC_LIMITS[2.0]
-        elif trophic_level < 4.0:
-            return cls.TROPHIC_LIMITS[3.0]
-        elif trophic_level < 5.0:
-            return cls.TROPHIC_LIMITS[4.0]
-        else:
-            return cls.TROPHIC_LIMITS[5.0]
+        # 1. 计算时代基础上限
+        if turn_index is None:
+            turn_index = 0
+        
+        era_limits = calculate_era_limits(turn_index)
+        era = get_current_era(turn_index)
+        era_progress = get_era_progress(turn_index)
+        
+        # 2. 计算营养级加成
+        # 高营养级的捕食者可以比同时代的低营养级生物更强
+        # 每提升1个营养级，单属性+1，总和+8
+        trophic_bonus_single = int((trophic_level - 1.0) * 1.5)
+        trophic_bonus_total = int((trophic_level - 1.0) * 10)
+        
+        # 3. 计算最终上限
+        final_single = era_limits["single"] + trophic_bonus_single
+        final_total = era_limits["total"] + trophic_bonus_total
+        
+        # base 是普通属性的建议上限（specialized 的 60%）
+        final_base = int(final_single * 0.6)
+        
+        adjusted_limits = {
+            "base": max(3, final_base),
+            "specialized": max(5, final_single),
+            "total": max(20, final_total),
+            "era_name": era["name"],
+            "era_id": era["id"],
+            "era_progress": era_progress,
+            "era_description": era["description"],
+            # 额外信息
+            "era_single_base": era_limits["single"],
+            "era_total_base": era_limits["total"],
+            "trophic_bonus_single": trophic_bonus_single,
+            "trophic_bonus_total": trophic_bonus_total,
+        }
+        
+        return adjusted_limits
     
     @classmethod
     def validate_traits_with_trophic(
         cls,
         traits: dict[str, float],
-        trophic_level: float
+        trophic_level: float,
+        turn_index: int = None
     ) -> tuple[bool, str]:
-        """验证traits是否符合营养级限制
+        """验证traits是否符合营养级和时代限制
         
         Args:
             traits: 待验证的traits字典
             trophic_level: 营养级
+            turn_index: 当前回合数（可选，用于时代修正）
             
         Returns:
             (是否通过, 错误信息)
         """
-        limits = cls.get_trophic_limits(trophic_level)
+        limits = cls.get_trophic_limits(trophic_level, turn_index)
         
         total = sum(traits.values())
         if total > limits["total"]:
-            return False, f"属性总和{total:.1f}超过营养级{trophic_level:.1f}的上限{limits['total']}"
+            era_info = f"（{limits.get('era_name', '未知')}时代）" if turn_index else ""
+            return False, f"属性总和{total:.1f}超过{era_info}上限{limits['total']}"
         
         above_specialized = [(k, v) for k, v in traits.items() if v > limits["specialized"]]
         if above_specialized:
@@ -372,18 +588,20 @@ class TraitConfig:
     def clamp_traits_to_trophic(
         cls,
         traits: dict[str, float],
-        trophic_level: float
+        trophic_level: float,
+        turn_index: int = None
     ) -> dict[str, float]:
-        """将traits限制到营养级允许的范围内
+        """将traits限制到营养级和时代允许的范围内
         
         Args:
             traits: 原始traits
             trophic_level: 营养级
+            turn_index: 当前回合数（可选，用于时代修正）
             
         Returns:
             调整后的traits
         """
-        limits = cls.get_trophic_limits(trophic_level)
+        limits = cls.get_trophic_limits(trophic_level, turn_index)
         adjusted = {}
         
         for trait_name, value in traits.items():
@@ -397,6 +615,49 @@ class TraitConfig:
                 adjusted[trait_name] = round(adjusted[trait_name] * scale_factor, 2)
         
         return adjusted
+    
+    @classmethod
+    def get_era_limits_summary(cls, turn_index: int, trophic_level: float = 2.0) -> str:
+        """获取时代上限的文字摘要（用于prompt）
+        
+        Args:
+            turn_index: 当前回合数
+            trophic_level: 营养级（默认2.0作为参考）
+            
+        Returns:
+            格式化的时代上限说明
+        """
+        limits = cls.get_trophic_limits(trophic_level, turn_index)
+        era = get_current_era(turn_index)
+        progress = get_era_progress(turn_index)
+        
+        # 计算游戏内时间
+        years_passed = turn_index * 500_000
+        years_ago = 2_800_000_000 - years_passed
+        
+        if years_ago >= 1_000_000_000:
+            time_str = f"{years_ago / 1_000_000_000:.1f}亿年前"
+        elif years_ago >= 10_000_000:
+            time_str = f"{years_ago / 100_000_000:.1f}亿年前"
+        elif years_ago >= 1_000_000:
+            time_str = f"{years_ago / 10_000:.0f}万年前"
+        elif years_ago > 0:
+            time_str = f"{years_ago:.0f}年前"
+        else:
+            time_str = "现代"
+        
+        # 显示增长信息
+        era_base = limits.get('era_single_base', limits['specialized'])
+        trophic_bonus = limits.get('trophic_bonus_single', 0)
+        
+        return (
+            f"【当前时代】{era['name']}（{time_str}，回合{turn_index}）\n"
+            f"里程碑：{era.get('milestone', '未知')}\n"
+            f"时代特征：{era['description']}\n"
+            f"时代基础上限：单属性≤{era_base}，总和≤{limits.get('era_total_base', limits['total'])}\n"
+            f"营养级T{trophic_level:.1f}加成：单属性+{trophic_bonus}，总和+{limits.get('trophic_bonus_total', 0)}\n"
+            f"【最终上限】单属性≤{limits['specialized']}，总和≤{limits['total']}"
+        )
 
 
 class PlantTraitConfig:

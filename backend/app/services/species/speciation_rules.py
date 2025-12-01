@@ -157,6 +157,7 @@ class SpeciationRules:
         total_offspring: int,
         environment_pressure: dict[str, float],
         pressure_context: str,
+        turn_index: int = 0,
     ) -> dict[str, Any]:
         """预处理：生成传给LLM的约束摘要
         
@@ -166,12 +167,15 @@ class SpeciationRules:
             total_offspring: 总子代数量
             environment_pressure: 环境压力字典
             pressure_context: 压力描述文本
+            turn_index: 当前回合数（用于时代修正）
             
         Returns:
             约束条件字典，直接传给LLM
         """
-        # 1. 计算属性变化预算
-        trait_budget = self._calculate_trait_budget(parent_species, environment_pressure)
+        from .trait_config import TraitConfig, get_current_era
+        
+        # 1. 计算属性变化预算（考虑时代上限）
+        trait_budget = self._calculate_trait_budget(parent_species, environment_pressure, turn_index)
         
         # 2. 计算器官演化约束
         organ_constraints = self._get_organ_constraints(parent_species)
@@ -185,8 +189,13 @@ class SpeciationRules:
         # 5. 营养级范围
         trophic_range = self._get_trophic_range(parent_species.trophic_level)
         
+        # 6. 获取时代信息
+        era = get_current_era(turn_index)
+        era_limits = TraitConfig.get_trophic_limits(parent_species.trophic_level, turn_index)
+        era_summary = TraitConfig.get_era_limits_summary(turn_index, parent_species.trophic_level)
+        
         return {
-            "trait_budget_summary": self._format_trait_budget(trait_budget),
+            "trait_budget_summary": self._format_trait_budget(trait_budget, era_limits),
             "organ_constraints_summary": self._format_organ_constraints(organ_constraints),
             "evolution_direction": direction.strategy,
             "direction_description": direction.description,
@@ -194,17 +203,25 @@ class SpeciationRules:
             "suggested_decreases": direction.tradeoff_targets,
             "habitat_options": habitat_options,
             "trophic_range": trophic_range,
+            # 时代信息
+            "era_summary": era_summary,
+            "era_name": era["name"],
+            "era_description": era["description"],
+            "era_single_cap": era_limits["specialized"],
+            "era_total_cap": era_limits["total"],
             # 原始数据（供后验证使用）
             "_trait_budget": trait_budget,
             "_organ_constraints": organ_constraints,
+            "_turn_index": turn_index,
         }
     
     def _calculate_trait_budget(
         self, 
         parent_species, 
-        environment_pressure: dict[str, float]
+        environment_pressure: dict[str, float],
+        turn_index: int = 0
     ) -> TraitBudget:
-        """计算属性变化预算"""
+        """计算属性变化预算（考虑时代上限）"""
         # 根据环境压力强度调整预算
         total_pressure = sum(abs(v) for v in environment_pressure.values())
         
@@ -297,13 +314,23 @@ class SpeciationRules:
         max_t = min(5.5, parent_trophic + 0.5)
         return f"{min_t:.1f}-{max_t:.1f}"
     
-    def _format_trait_budget(self, budget: TraitBudget) -> str:
-        """格式化属性预算为文本"""
-        return (
-            f"增加上限: +{budget.total_increase_allowed:.1f}, "
-            f"减少下限: -{budget.total_decrease_required:.1f}, "
-            f"单项上限: ±{budget.single_trait_max:.1f}"
+    def _format_trait_budget(self, budget: TraitBudget, era_limits: dict = None) -> str:
+        """格式化属性预算为文本（包含时代上限）"""
+        base_info = (
+            f"变化预算: 增加≤+{budget.total_increase_allowed:.1f}, "
+            f"减少≥-{budget.total_decrease_required:.1f}, "
+            f"单项变化≤±{budget.single_trait_max:.1f}"
         )
+        
+        if era_limits:
+            era_info = (
+                f"\n时代上限({era_limits.get('era_name', '未知')}): "
+                f"单属性≤{era_limits.get('specialized', 15)}, "
+                f"总和≤{era_limits.get('total', 100)}"
+            )
+            return base_info + era_info
+        
+        return base_info
     
     def _format_organ_constraints(self, constraints: list[OrganConstraint]) -> str:
         """格式化器官约束为文本

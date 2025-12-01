@@ -233,16 +233,21 @@ type Action =
   | { type: 'TOGGLE_ROUTE_PROVIDER'; capKey: string; providerId: string }
   // 分化配置
   | { type: 'UPDATE_SPECIATION'; updates: Partial<SpeciationConfig> }
+  | { type: 'RESET_SPECIATION' }
   // 繁殖配置
   | { type: 'UPDATE_REPRODUCTION'; updates: Partial<ReproductionConfig> }
+  | { type: 'RESET_REPRODUCTION' }
   // 死亡率配置
   | { type: 'UPDATE_MORTALITY'; updates: Partial<MortalityConfig> }
+  | { type: 'RESET_MORTALITY' }
   // 生态平衡配置
   | { type: 'UPDATE_ECOLOGY'; updates: Partial<EcologyBalanceConfig> }
+  | { type: 'RESET_ECOLOGY' }
   // 游戏模式配置
   | { type: 'UPDATE_GAMEPLAY'; updates: Partial<GameplayConfig> }
   // 地图环境配置
-  | { type: 'UPDATE_MAP_ENV'; updates: Partial<MapEnvironmentConfig> };
+  | { type: 'UPDATE_MAP_ENV'; updates: Partial<MapEnvironmentConfig> }
+  | { type: 'RESET_MAP_ENV' };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -488,6 +493,52 @@ function reducer(state: State, action: Action): State {
         }
       };
     }
+    // ========== 恢复默认配置 ==========
+    case 'RESET_SPECIATION': {
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          speciation: { ...DEFAULT_SPECIATION_CONFIG }
+        }
+      };
+    }
+    case 'RESET_REPRODUCTION': {
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          reproduction: { ...DEFAULT_REPRODUCTION_CONFIG }
+        }
+      };
+    }
+    case 'RESET_MORTALITY': {
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          mortality: { ...DEFAULT_MORTALITY_CONFIG }
+        }
+      };
+    }
+    case 'RESET_ECOLOGY': {
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          ecology_balance: { ...DEFAULT_ECOLOGY_BALANCE_CONFIG }
+        }
+      };
+    }
+    case 'RESET_MAP_ENV': {
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          map_environment: { ...DEFAULT_MAP_ENVIRONMENT_CONFIG }
+        }
+      };
+    }
     default:
       return state;
   }
@@ -527,6 +578,136 @@ const DEFAULT_SPECIATION_CONFIG: SpeciationConfig = {
   threshold_multiplier_no_isolation: 1.8,
   threshold_multiplier_high_overlap: 1.2,
   threshold_multiplier_high_saturation: 1.2,
+};
+
+// 默认繁殖配置
+const DEFAULT_REPRODUCTION_CONFIG: ReproductionConfig = {
+  growth_rate_per_repro_speed: 0.35,
+  growth_multiplier_min: 0.5,
+  growth_multiplier_max: 8.0,
+  size_bonus_microbe: 1.6,
+  size_bonus_tiny: 1.3,
+  size_bonus_small: 1.1,
+  repro_bonus_weekly: 1.5,
+  repro_bonus_monthly: 1.25,
+  repro_bonus_halfyear: 1.1,
+  survival_modifier_base: 0.3,
+  survival_modifier_rate: 1.0,
+  survival_instinct_threshold: 0.6,
+  survival_instinct_bonus: 0.4,
+  resource_saturation_penalty_mild: 0.5,
+  resource_saturation_floor: 0.15,
+  overshoot_decay_rate: 0.35,
+  near_capacity_efficiency: 0.5,
+  t2_birth_efficiency: 0.85,
+  t3_birth_efficiency: 0.60,
+  t4_birth_efficiency: 0.40,
+};
+
+// 默认死亡率配置
+const DEFAULT_MORTALITY_CONFIG: MortalityConfig = {
+  env_pressure_cap: 0.70,
+  competition_pressure_cap: 0.45,
+  trophic_pressure_cap: 0.50,
+  resource_pressure_cap: 0.45,
+  predation_pressure_cap: 0.55,
+  plant_competition_cap: 0.35,
+  env_weight: 0.55,
+  competition_weight: 0.30,
+  trophic_weight: 0.40,
+  resource_weight: 0.35,
+  predation_weight: 0.35,
+  plant_competition_weight: 0.25,
+  env_mult_coef: 0.65,
+  competition_mult_coef: 0.50,
+  trophic_mult_coef: 0.60,
+  resource_mult_coef: 0.50,
+  predation_mult_coef: 0.60,
+  plant_mult_coef: 0.40,
+  additive_model_weight: 0.55,
+  size_resistance_per_10cm: 0.015,
+  generation_resistance_coef: 0.04,
+  max_resistance: 0.18,
+  min_mortality: 0.03,
+  max_mortality: 0.92,
+};
+
+// 默认生态平衡配置
+const DEFAULT_ECOLOGY_BALANCE_CONFIG: EcologyBalanceConfig = {
+  food_scarcity_threshold: 0.3,
+  food_scarcity_penalty: 0.4,
+  scarcity_weight: 0.5,
+  prey_search_top_k: 5,
+  competition_base_coefficient: 0.60,
+  competition_per_species_cap: 0.35,
+  competition_total_cap: 0.80,
+  same_level_competition_k: 0.15,
+  niche_overlap_penalty_k: 0.20,
+  trophic_transfer_efficiency: 0.15,
+  high_trophic_birth_penalty: 0.7,
+  apex_predator_penalty: 0.5,
+  terrestrial_top_k: 4,
+  marine_top_k: 3,
+  coastal_top_k: 3,
+  aerial_top_k: 5,
+  suitability_cutoff: 0.25,
+  suitability_weight_alpha: 1.5,
+  high_trophic_dispersal_damping: 0.7,
+  dispersal_cost_base: 0.1,
+  migration_suitability_bias: 0.6,
+  migration_prey_bias: 0.3,
+  habitat_recalc_frequency: 1,
+  carrying_capacity_base: 1.0,
+  carrying_capacity_variance: 0.1,
+  resource_recovery_rate: 0.15,
+  resource_recovery_lag: 1,
+  resource_min_recovery: 0.05,
+  resource_capacity_multiplier: 1.0,
+  resource_perturbation: 0.05,
+  climate_perturbation: 0.02,
+  environment_noise: 0.03,
+  base_escape_rate: 0.3,
+  size_advantage_factor: 0.1,
+};
+
+// 默认地图环境配置
+const DEFAULT_MAP_ENVIRONMENT_CONFIG: MapEnvironmentConfig = {
+  global_temperature_offset: 0.0,
+  global_humidity_offset: 0.0,
+  extreme_climate_frequency: 0.05,
+  extreme_climate_amplitude: 0.3,
+  sea_level_offset: 0.0,
+  sea_level_change_rate: 0.0,
+  terrain_erosion_rate: 0.01,
+  coastal_temp_tolerance: 15.0,
+  shallow_sea_salinity_tolerance: 0.8,
+  freshwater_min_humidity: 0.5,
+  terrestrial_min_temp: -20.0,
+  terrestrial_max_temp: 50.0,
+  biome_capacity_rainforest: 1.5,
+  biome_capacity_temperate: 1.2,
+  biome_capacity_grassland: 1.0,
+  biome_capacity_desert: 0.3,
+  biome_capacity_tundra: 0.4,
+  biome_capacity_deep_sea: 0.5,
+  biome_capacity_shallow_sea: 1.3,
+  volcano_frequency: 0.02,
+  volcano_impact_radius: 3,
+  volcano_damage_intensity: 0.8,
+  flood_frequency: 0.03,
+  flood_impact_radius: 2,
+  drought_frequency: 0.04,
+  drought_duration: 2,
+  earthquake_frequency: 0.01,
+  same_tile_density_penalty: 0.15,
+  overcrowding_threshold: 0.7,
+  overcrowding_max_penalty: 0.4,
+  show_resource_overlay: false,
+  show_prey_overlay: false,
+  show_suitability_overlay: false,
+  show_competition_overlay: false,
+  show_temperature_overlay: false,
+  show_humidity_overlay: false,
 };
 
 function createDefaultConfig(): UIConfig {
@@ -2186,8 +2367,20 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
           {tab === "speciation" && (
             <div className="tab-content fade-in">
               <div className="section-header">
-                <h3>🧬 物种分化参数</h3>
-                <p>调整新物种产生的频率与时机。数值越低 = 分化越容易发生。</p>
+                <div className="section-header-row">
+                  <div>
+                    <h3>🧬 物种分化参数</h3>
+                    <p>调整新物种产生的频率与时机。数值越低 = 分化越容易发生。</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="reset-default-btn"
+                    onClick={() => dispatch({ type: 'RESET_SPECIATION' })}
+                    title="恢复默认设置"
+                  >
+                    🔄 恢复默认
+                  </button>
+                </div>
               </div>
               
               <div className="memory-layout">
@@ -2689,8 +2882,20 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
           {tab === "reproduction" && (
             <div className="tab-content fade-in">
               <div className="section-header">
-                <h3>🐣 繁殖参数设置</h3>
-                <p>控制物种繁殖行为，影响种群增长速度和稳定性。</p>
+                <div className="section-header-row">
+                  <div>
+                    <h3>🐣 繁殖参数设置</h3>
+                    <p>控制物种繁殖行为，影响种群增长速度和稳定性。</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="reset-default-btn"
+                    onClick={() => dispatch({ type: 'RESET_REPRODUCTION' })}
+                    title="恢复默认设置"
+                  >
+                    🔄 恢复默认
+                  </button>
+                </div>
               </div>
               
               <div className="memory-layout">
@@ -3061,8 +3266,20 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
           {tab === "mortality" && (
             <div className="tab-content fade-in">
               <div className="section-header">
-                <h3>💀 死亡率参数设置</h3>
-                <p>控制各类压力对物种死亡率的影响程度。</p>
+                <div className="section-header-row">
+                  <div>
+                    <h3>💀 死亡率参数设置</h3>
+                    <p>控制各类压力对物种死亡率的影响程度。</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="reset-default-btn"
+                    onClick={() => dispatch({ type: 'RESET_MORTALITY' })}
+                    title="恢复默认设置"
+                  >
+                    🔄 恢复默认
+                  </button>
+                </div>
               </div>
               
               <div className="memory-layout">
@@ -3477,8 +3694,20 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
           {tab === "ecology" && (
             <div className="tab-content fade-in">
               <div className="section-header">
-                <h3>🌍 生态平衡参数设置</h3>
-                <p>控制生态系统的动态平衡，包括竞争、扩散和食物链。</p>
+                <div className="section-header-row">
+                  <div>
+                    <h3>🌍 生态平衡参数设置</h3>
+                    <p>控制生态系统的动态平衡，包括竞争、扩散和食物链。</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="reset-default-btn"
+                    onClick={() => dispatch({ type: 'RESET_ECOLOGY' })}
+                    title="恢复默认设置"
+                  >
+                    🔄 恢复默认
+                  </button>
+                </div>
               </div>
               
               <div className="memory-layout">
@@ -4323,8 +4552,20 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
           {tab === "map" && (
             <div className="tab-content fade-in">
               <div className="section-header">
-                <h3>🗺️ 地图环境参数</h3>
-                <p>控制气候、地形、灾害等地图级别的环境因素。</p>
+                <div className="section-header-row">
+                  <div>
+                    <h3>🗺️ 地图环境参数</h3>
+                    <p>控制气候、地形、灾害等地图级别的环境因素。</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="reset-default-btn"
+                    onClick={() => dispatch({ type: 'RESET_MAP_ENV' })}
+                    title="恢复默认设置"
+                  >
+                    🔄 恢复默认
+                  </button>
+                </div>
               </div>
               
               <div className="memory-layout">

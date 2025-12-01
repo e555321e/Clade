@@ -1070,13 +1070,39 @@ class ReproductionService:
         # 3. 生存率修正
         survival_modifier = survival_mod_base + survival_rate * survival_mod_rate
         
-        # 4. 生存本能加成
-        # 当种群处于衰退（死亡率超过阈值）时，繁殖效率提高
+        # 4. 【优化v7】高死亡率繁殖效率调整
+        # 设计理念：极端环境下，物种繁殖能力应该下降而非上升
+        # 原因：高死亡率意味着能量消耗在生存而非繁殖
         death_rate = 1.0 - survival_rate
-        if death_rate > instinct_threshold:
-            survival_instinct = 1.0 + (death_rate - instinct_threshold) * instinct_bonus
+        
+        # 加载高死亡率惩罚参数
+        try:
+            mortality_penalty_threshold = repro_cfg.mortality_penalty_threshold
+            mortality_penalty_rate = repro_cfg.mortality_penalty_rate
+            extreme_mortality_threshold = repro_cfg.extreme_mortality_threshold
+        except Exception:
+            mortality_penalty_threshold = 0.4
+            mortality_penalty_rate = 0.3
+            extreme_mortality_threshold = 0.7
+        
+        # 【核心修改】高死亡率惩罚优先于生存本能
+        if death_rate > extreme_mortality_threshold:
+            # 极端死亡率：繁殖效率直接减半
+            extreme_penalty = 0.5
+            survival_modifier *= extreme_penalty
+            logger.info(f"[极端压力] {species.common_name} 死亡率{death_rate:.1%}超过阈值，繁殖效率减半")
+        elif death_rate > mortality_penalty_threshold:
+            # 高死亡率：按比例降低繁殖效率
+            # 死亡率超过阈值每10%，繁殖效率降低 mortality_penalty_rate
+            penalty_factor = 1.0 - (death_rate - mortality_penalty_threshold) * mortality_penalty_rate * 10
+            penalty_factor = max(0.3, penalty_factor)  # 最低保留30%效率
+            survival_modifier *= penalty_factor
+            logger.debug(f"[高压力惩罚] {species.common_name} 死亡率{death_rate:.1%}，繁殖效率×{penalty_factor:.2f}")
+        elif death_rate > instinct_threshold:
+            # 中等死亡率：轻微的生存本能加成（但比原来更温和）
+            survival_instinct = 1.0 + (death_rate - instinct_threshold) * instinct_bonus * 0.5  # 加成减半
             survival_modifier *= survival_instinct
-            logger.debug(f"[生存本能] {species.common_name} 激活生存本能，繁殖加成 {survival_instinct:.2f}x")
+            logger.debug(f"[生存本能] {species.common_name} 死亡率{death_rate:.1%}，繁殖加成×{survival_instinct:.2f}")
         
         # 5. 资源压力修正（使用配置参数）
         if resource_saturation <= 1.0:

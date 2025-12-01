@@ -1217,27 +1217,73 @@ class TileBasedMortalityEngine:
         base_sens = species_arrays['base_sensitivity']
         
         # ========== 温度压力 ==========
+        # 【优化v7】改进极端温度压力计算，使冰河期/温室效应产生显著影响
         # 全局温度修饰（来自冰河期/温室效应等）
         temp_modifier = pressure_modifiers.get('temperature', 0.0)
-        adjusted_temps = tile_temps + temp_modifier * 3.0  # 每单位修饰器=3°C
+        # 【修改1】增强温度修饰效果：每单位 = 5°C（原3°C）
+        adjusted_temps = tile_temps + temp_modifier * 5.0
         
-        temp_deviation = np.abs(adjusted_temps[:, np.newaxis] - 15.0)
+        # 【修改2】引入极端温度阈值
+        # - 适宜温度范围：5°C ~ 25°C（原10°C ~ 20°C）
+        # - 极端温度：<-10°C 或 >35°C 产生额外压力
+        OPTIMAL_LOW = 5.0
+        OPTIMAL_HIGH = 25.0
+        EXTREME_LOW = -10.0
+        EXTREME_HIGH = 35.0
         
-        # 高温/低温检测
-        high_temp_mask = adjusted_temps[:, np.newaxis] > 20.0
-        low_temp_mask = adjusted_temps[:, np.newaxis] < 10.0
+        # 计算偏离适宜范围的程度
+        cold_deviation = np.maximum(0, OPTIMAL_LOW - adjusted_temps[:, np.newaxis])
+        heat_deviation = np.maximum(0, adjusted_temps[:, np.newaxis] - OPTIMAL_HIGH)
         
+        # 【修改3】非线性温度压力曲线（sigmoid形）
+        # 轻微偏离（<10°C）产生温和压力，严重偏离（>20°C）产生急剧压力
+        def sigmoid_pressure(deviation, scale=15.0):
+            """S型压力曲线：deviation=10 → 0.5, deviation=20 → 0.88"""
+            return 2.0 / (1.0 + np.exp(-deviation / scale)) - 1.0
+        
+        # 基础温度压力
+        cold_base_pressure = sigmoid_pressure(cold_deviation)
+        heat_base_pressure = sigmoid_pressure(heat_deviation)
+        
+        # 【修改4】极端温度额外惩罚
+        extreme_cold_mask = adjusted_temps[:, np.newaxis] < EXTREME_LOW
+        extreme_heat_mask = adjusted_temps[:, np.newaxis] > EXTREME_HIGH
+        
+        # 极端低温：<-10°C时，每低10°C额外增加0.3压力
+        extreme_cold_deviation = np.maximum(0, EXTREME_LOW - adjusted_temps[:, np.newaxis])
+        extreme_cold_penalty = np.where(extreme_cold_mask, extreme_cold_deviation / 10.0 * 0.3, 0.0)
+        
+        # 极端高温：>35°C时，每高10°C额外增加0.3压力
+        extreme_heat_deviation = np.maximum(0, adjusted_temps[:, np.newaxis] - EXTREME_HIGH)
+        extreme_heat_penalty = np.where(extreme_heat_mask, extreme_heat_deviation / 10.0 * 0.3, 0.0)
+        
+        # 【修改5】应用耐性减免，但保留最低30%基础压力
+        # 耐寒性10/10 最多减免70%寒冷压力，仍保留30%
+        MIN_PRESSURE_FACTOR = 0.30
+        cold_resistance_factor = MIN_PRESSURE_FACTOR + (1.0 - MIN_PRESSURE_FACTOR) * (1.0 - cold_res[np.newaxis, :])
+        heat_resistance_factor = MIN_PRESSURE_FACTOR + (1.0 - MIN_PRESSURE_FACTOR) * (1.0 - heat_res[np.newaxis, :])
+        
+        # 组合温度压力
         temp_pressure = np.zeros((n_tiles, n_species))
+        cold_mask = cold_deviation > 0
+        heat_mask = heat_deviation > 0
+        
         temp_pressure = np.where(
-            high_temp_mask,
-            (temp_deviation / 30.0) * (1.0 - heat_res[np.newaxis, :]),
+            cold_mask,
+            (cold_base_pressure + extreme_cold_penalty) * cold_resistance_factor,
             temp_pressure
         )
         temp_pressure = np.where(
-            low_temp_mask,
-            (temp_deviation / 30.0) * (1.0 - cold_res[np.newaxis, :]),
+            heat_mask,
+            (heat_base_pressure + extreme_heat_penalty) * heat_resistance_factor,
             temp_pressure
         )
+        
+        # 【新增】记录极端温度事件供日志使用
+        if np.any(extreme_cold_mask) or np.any(extreme_heat_mask):
+            avg_temp = np.mean(adjusted_temps)
+            if avg_temp < EXTREME_LOW:
+                logger.info(f"[极端气候] 检测到极端低温 {avg_temp:.1f}°C，触发冰河期死亡压力加成")
         
         # ========== 水分压力（干旱/洪水） ==========
         drought_modifier = pressure_modifiers.get('drought', 0.0)
@@ -1347,16 +1393,33 @@ class TileBasedMortalityEngine:
         global_pressure = (other_pressure / 30.0) * base_sens[np.newaxis, :]
         
         # ========== 组合压力 ==========
-        # 【优化】调整各压力因素权重
-        pressure = (
-            temp_pressure * 0.25 +      # 温度是基础影响
-            drought_pressure * 0.15 +   # 水分次之
-            flood_pressure * 0.10 +     # 洪水影响较小
-            special_pressure * 0.30 +   # 特殊事件影响显著
-            global_pressure * 0.20      # 其他综合影响
-        )
+        # 【优化v7】动态权重：极端温度时提升温度压力权重
+        # 检测是否存在极端温度条件
+        avg_temp_pressure = np.mean(temp_pressure)
+        is_extreme_climate = avg_temp_pressure > 0.3  # 平均温度压力>30%视为极端气候
         
-        return np.clip(pressure, 0.0, 1.0)
+        if is_extreme_climate:
+            # 极端气候模式：温度成为主导因素
+            pressure = (
+                temp_pressure * 0.50 +      # 【极端模式】温度压力权重翻倍
+                drought_pressure * 0.12 +   # 水分权重降低
+                flood_pressure * 0.08 +     # 洪水权重降低
+                special_pressure * 0.20 +   # 特殊事件权重降低
+                global_pressure * 0.10      # 其他综合影响降低
+            )
+            logger.debug(f"[极端气候模式] 温度压力主导，平均温度压力={avg_temp_pressure:.2%}")
+        else:
+            # 正常气候模式：平衡各因素
+            pressure = (
+                temp_pressure * 0.30 +      # 【提升】温度权重从0.25提升到0.30
+                drought_pressure * 0.15 +   # 水分次之
+                flood_pressure * 0.10 +     # 洪水影响较小
+                special_pressure * 0.28 +   # 特殊事件影响显著
+                global_pressure * 0.17      # 其他综合影响
+            )
+        
+        # 【修改】提高环境压力上限，允许极端条件下更高的压力值
+        return np.clip(pressure, 0.0, 1.2)  # 从1.0提升到1.2
     
     def _compute_tile_competition_pressure(
         self,
@@ -1911,15 +1974,17 @@ class TileBasedMortalityEngine:
         species_arrays: dict[str, np.ndarray],
         mortality: np.ndarray,
     ) -> np.ndarray:
-        """【平衡修复v2】应用世代适应性加成 - 大幅降低减免
+        """【平衡修复v7】应用世代适应性加成 - 极端环境下进一步削弱
         
         50万年时间尺度说明：
         - 微生物（1天1代）：约1.8亿代，有充足时间演化适应
         - 昆虫（1月1代）：约600万代
         - 哺乳动物（1年1代）：约50万代
         
-        【平衡修复】原方案减免太多（最高50%），导致高压力下死亡率仍然很低
-        调整后最高减免从50%降到25%
+        【v7优化】
+        - 进一步降低抗性加成
+        - 高死亡率环境下抗性效果递减（极端环境下适应能力受限）
+        - 最高减免从25%降到15%
         """
         n_tiles, n_species = mortality.shape
         
@@ -1930,40 +1995,59 @@ class TileBasedMortalityEngine:
         # 计算50万年内的世代数 (n_species,)
         num_generations = (_settings.turn_years * 365) / np.maximum(1.0, generation_time)
         
-        # 基于世代数的适应性加成（大幅降低）
-        # 使用对数缩放
+        # 基于世代数的适应性加成（v7进一步降低）
         log_generations = np.log10(np.maximum(1.0, num_generations))
         
-        # 【修复】演化适应加成大幅降低：
-        # 1亿代(log=8) -> 0.15加成（原0.35）
-        # 100万代(log=6) -> 0.10加成（原0.25）
-        # 50万代(log=5.7) -> 0.09加成（原0.22）
-        # 1万代(log=4) -> 0.04加成（原0.12）
-        evolution_bonus = np.clip((log_generations - 3.0) / 5.0 * 0.15, 0.0, 0.18)
+        # 【v7修复】演化适应加成进一步降低：
+        # 1亿代(log=8) -> 0.10加成（原0.15，再降33%）
+        # 100万代(log=6) -> 0.06加成
+        # 50万代(log=5.7) -> 0.05加成
+        evolution_bonus = np.clip((log_generations - 3.0) / 5.0 * 0.10, 0.0, 0.12)
         
-        # 【修复】体型抗性降低
+        # 【v7修复】体型抗性进一步降低
         size_bonus = np.where(
-            body_size < 0.01, 0.06,  # 微生物（原0.15）
-            np.where(body_size < 0.1, 0.04,  # 小型（原0.10）
-                np.where(body_size < 1.0, 0.02, 0.0))  # 中型（原0.05）
+            body_size < 0.01, 0.03,  # 微生物（原0.06）
+            np.where(body_size < 0.1, 0.02,  # 小型（原0.04）
+                np.where(body_size < 1.0, 0.01, 0.0))  # 中型（原0.02）
         )
         
-        # 【修复】种群规模抗性降低
+        # 【v7修复】种群规模抗性降低
         pop_bonus = np.where(
-            population > 1_000_000, 0.04,  # 原0.10
-            np.where(population > 100_000, 0.02, 0.0)  # 原0.05
+            population > 1_000_000, 0.02,  # 原0.04
+            np.where(population > 100_000, 0.01, 0.0)  # 原0.02
         )
         
-        # 【修复】综合抗性上限从50%降到25%
-        total_resistance = np.minimum(0.25, evolution_bonus + size_bonus + pop_bonus)
+        # 基础综合抗性上限：15%（原25%）
+        base_resistance = np.minimum(0.15, evolution_bonus + size_bonus + pop_bonus)
         
-        # 广播到矩阵形状 (n_tiles, n_species)
-        resistance_matrix = total_resistance[np.newaxis, :]
+        # 【v7核心优化】极端环境下抗性效果递减
+        # 计算每个地块的平均死亡率
+        mean_mortality_per_tile = np.mean(mortality, axis=1, keepdims=True)
+        
+        # 高死亡率环境（>50%）下，抗性效果线性递减
+        # 死亡率50% → 抗性保持100%
+        # 死亡率70% → 抗性降至50%
+        # 死亡率90% → 抗性降至10%
+        resistance_effectiveness = np.clip(1.0 - (mean_mortality_per_tile - 0.5) * 2.5, 0.1, 1.0)
+        resistance_effectiveness = np.where(mean_mortality_per_tile < 0.5, 1.0, resistance_effectiveness)
+        
+        # 应用抗性效果递减
+        effective_resistance = base_resistance[np.newaxis, :] * resistance_effectiveness
         
         # 应用抗性：降低死亡率
-        adjusted_mortality = mortality * (1.0 - resistance_matrix)
+        adjusted_mortality = mortality * (1.0 - effective_resistance)
         
-        return np.clip(adjusted_mortality, 0.0, 0.98)
+        # 【v7】确保极端环境下仍有显著死亡率
+        # 如果原始死亡率>60%，调整后死亡率至少为原来的70%
+        high_mortality_mask = mortality > 0.6
+        min_adjusted = mortality * 0.70
+        adjusted_mortality = np.where(
+            high_mortality_mask,
+            np.maximum(adjusted_mortality, min_adjusted),
+            adjusted_mortality
+        )
+        
+        return np.clip(adjusted_mortality, 0.0, 0.95)
     
     def _aggregate_tile_results(
         self,

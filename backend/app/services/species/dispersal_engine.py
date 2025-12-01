@@ -174,7 +174,8 @@ class DispersalEngine:
         # 资源越多越好，但保证最低值
         resource_match = np.maximum(0.3, self._tile_matrix[:, 3] * 0.7 + 0.3)
         
-        # === 栖息地类型匹配（硬约束但不是0）===
+        # === 栖息地类型匹配（硬约束）===
+        # 【修复v8】水生物种不能到陆地，陆生物种不能到深海
         habitat_match = (
             self._tile_matrix[:, 4] * pref[4] +  # 陆地
             self._tile_matrix[:, 5] * pref[5] +  # 海洋
@@ -184,8 +185,22 @@ class DispersalEngine:
         if pref[4] + pref[5] + pref[6] < 0.1:
             habitat_match = self._tile_matrix[:, 4]
         
-        # 栖息地不匹配时给予惩罚但不是0
-        habitat_match = np.where(habitat_match > 0.5, habitat_match, 0.1)
+        # 【修复v8】硬约束：栖息地类型完全不匹配时，适宜度为0
+        # 水生物种（海洋偏好 > 0.5）不能去陆地
+        is_aquatic = pref[5] > 0.5  # 海洋偏好
+        is_terrestrial = pref[4] > 0.5  # 陆地偏好
+        is_land_tile = self._tile_matrix[:, 4] > 0.5  # 是陆地地块
+        is_sea_tile = self._tile_matrix[:, 5] > 0.5   # 是海洋地块
+        
+        # 水生物种到陆地 = 0
+        if is_aquatic:
+            habitat_match = np.where(is_land_tile, 0.0, habitat_match)
+        # 陆生物种到深海 = 0
+        if is_terrestrial:
+            habitat_match = np.where(is_sea_tile, 0.0, habitat_match)
+        
+        # 【修复v8】栖息地不匹配时严格惩罚
+        habitat_match = np.where(habitat_match > 0.3, habitat_match, 0.0)
         
         # === 综合适宜度 ===
         suitability = (
@@ -195,6 +210,9 @@ class DispersalEngine:
             habitat_match * 0.35  # 栖息地类型权重提高
         )
         
+        # 【修复v8】栖息地完全不匹配时，整体适宜度为0
+        suitability = np.where(habitat_match == 0.0, 0.0, suitability)
+        
         # 排除指定地块
         if exclude_tiles:
             for tile_id in exclude_tiles:
@@ -202,8 +220,9 @@ class DispersalEngine:
                     idx = self._tile_map[tile_id]
                     suitability[idx] = 0.0
         
-        # 保证最低适宜度（避免全部为0）
-        suitability = np.clip(suitability, 0.15, 1.0)
+        # 【修复v8】移除最低适宜度保证，允许为0
+        # 原来：suitability = np.clip(suitability, 0.15, 1.0)
+        suitability = np.clip(suitability, 0.0, 1.0)
         
         return suitability
     

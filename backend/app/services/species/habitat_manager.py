@@ -789,7 +789,45 @@ class HabitatManager:
         return filtered if filtered else tiles[:10]  # 如果没有合适的，返回前10个作为备选
     
     def _calculate_suitability(self, species: Species, tile: MapTile) -> float:
-        """计算物种在地块的适宜度（简化版）"""
+        """计算物种在地块的适宜度
+        
+        【修复v8】增加栖息地类型硬约束：
+        - 水生物种（marine/deep_sea/freshwater）不能在陆地生存
+        - 陆生物种（terrestrial/aerial）不能在深海生存
+        """
+        # === 【修复v8】首先检查栖息地类型硬约束 ===
+        habitat_type = (getattr(species, 'habitat_type', 'terrestrial') or 'terrestrial').lower()
+        biome = (tile.biome or '').lower()
+        
+        # 判断地块类型
+        is_water_tile = any(w in biome for w in ['海', '深海', '浅海', '中层', '湖', '河'])
+        is_land_tile = not is_water_tile
+        is_deep_sea = '深海' in biome or '深层' in biome
+        is_coastal = '海岸' in biome or '浅海' in biome
+        
+        # 判断物种类型
+        is_aquatic_species = habitat_type in {'marine', 'deep_sea', 'freshwater'}
+        is_terrestrial_species = habitat_type in {'terrestrial', 'aerial'}
+        is_coastal_species = habitat_type in {'coastal', 'amphibious'}
+        
+        # 硬约束检查
+        if is_aquatic_species and is_land_tile and not is_coastal:
+            # 水生物种不能在纯陆地生存
+            return 0.0
+        
+        if is_terrestrial_species and is_deep_sea:
+            # 陆生物种不能在深海生存
+            return 0.0
+        
+        if habitat_type == 'marine' and is_land_tile:
+            # 海洋物种不能在陆地
+            return 0.0
+        
+        if habitat_type == 'deep_sea' and not is_deep_sea:
+            # 深海物种只能在深海
+            return 0.0 if is_land_tile else 0.3  # 非深海水域有一定适宜度
+        
+        # === 环境因素评分 ===
         # 温度适应性
         temp_pref = species.abstract_traits.get("耐热性", 5)
         cold_pref = species.abstract_traits.get("耐寒性", 5)
@@ -808,8 +846,38 @@ class HabitatManager:
         # 资源可用性
         resource_score = min(1.0, tile.resources / 500.0)
         
+        # === 栖息地类型匹配加成/惩罚 ===
+        habitat_bonus = 1.0
+        
+        if is_aquatic_species:
+            if is_water_tile:
+                habitat_bonus = 1.2  # 水生物种在水中有加成
+            elif is_coastal:
+                habitat_bonus = 0.5  # 海岸区域勉强可以
+            else:
+                habitat_bonus = 0.0  # 不应该到这里，但保险起见
+        
+        elif is_terrestrial_species:
+            if is_land_tile:
+                habitat_bonus = 1.0  # 正常
+            elif is_coastal:
+                habitat_bonus = 0.3  # 海岸区域降低
+            else:
+                habitat_bonus = 0.0  # 不应该到这里
+        
+        elif is_coastal_species:
+            if is_coastal or (is_land_tile and tile.humidity > 0.5):
+                habitat_bonus = 1.0
+            elif is_water_tile:
+                habitat_bonus = 0.6
+            else:
+                habitat_bonus = 0.4
+        
         # 综合评分
-        return (temp_score * 0.4 + humidity_score * 0.3 + resource_score * 0.3)
+        base_score = (temp_score * 0.35 + humidity_score * 0.25 + resource_score * 0.25 + 0.15)
+        final_score = base_score * habitat_bonus
+        
+        return max(0.0, min(1.0, final_score))
     
     def _calculate_migration_ratio(self, migration_event: MigrationEvent) -> float:
         """计算迁徙比例（0-1之间）

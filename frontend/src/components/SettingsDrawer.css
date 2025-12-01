@@ -1192,6 +1192,47 @@
   line-height: 1.5;
 }
 
+/* Section Header Row - 用于放置标题和恢复默认按钮 */
+.section-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.section-header-row > div {
+  flex: 1;
+}
+
+/* 恢复默认按钮 */
+.reset-default-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--sd-text-muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.reset-default-btn:hover {
+  color: var(--sd-warning);
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.15);
+}
+
+.reset-default-btn:active {
+  transform: scale(0.97);
+}
+
 /* ========== Capability Groups ========== */
 .capability-group {
   margin-bottom: 2rem;
