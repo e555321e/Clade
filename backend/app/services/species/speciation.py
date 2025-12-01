@@ -287,9 +287,9 @@ class SpeciationService:
             # 基础门槛修正
             threshold_multiplier = 1.0
             
-            # 【关键】无隔离时门槛 ×1.8
+            # 【大浪淘沙v1】无隔离惩罚从1.8降到1.2，让分化更容易
             if not is_isolated:
-                threshold_multiplier *= 1.8
+                threshold_multiplier *= 1.2  # 原1.8 -> 1.2
             
             # 高生态位重叠（overlap > 0.6）时，门槛 ×1.2
             if niche_overlap_for_threshold > 0.6:
@@ -2683,20 +2683,21 @@ class SpeciationService:
         body_weight_g = species.morphology_stats.get("body_weight_g", 1.0)
         
         # 使用体长作为主要指标（更直观）
+        # 【大浪淘沙v1】大幅降低分化门槛，让物种更容易分化
         if body_length_cm < 0.01:  # <0.1mm - 细菌级别
-            base_threshold = 200_000   # 原200万 -> 20万
+            base_threshold = 5_000     # 原20万 -> 5千（降低40倍）
         elif body_length_cm < 0.1:  # 0.1mm-1mm - 原生动物
-            base_threshold = 100_000   # 原100万 -> 10万
+            base_threshold = 3_000     # 原10万 -> 3千（降低33倍）
         elif body_length_cm < 1.0:  # 1mm-1cm - 小型无脊椎动物
-            base_threshold = 20_000    # 原10万 -> 2万
+            base_threshold = 1_000     # 原2万 -> 1千（降低20倍）
         elif body_length_cm < 10.0:  # 1cm-10cm - 昆虫、小鱼
-            base_threshold = 2_000     # 原1万 -> 2千
+            base_threshold = 300       # 原2千 -> 300（降低7倍）
         elif body_length_cm < 50.0:  # 10cm-50cm - 中型脊椎动物
-            base_threshold = 600       # 原2千 -> 600
+            base_threshold = 100       # 原600 -> 100（降低6倍）
         elif body_length_cm < 200.0:  # 50cm-2m - 大型哺乳动物
-            base_threshold = 200       # 原500 -> 200
+            base_threshold = 50        # 原200 -> 50（降低4倍）
         else:  # >2m - 超大型动物（大象、鲸鱼）
-            base_threshold = 80        # 原100 -> 80
+            base_threshold = 20        # 原80 -> 20（降低4倍）
         
         # 体重修正（提供额外验证）
         # 1g以下：微小生物
