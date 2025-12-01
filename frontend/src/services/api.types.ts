@@ -437,12 +437,14 @@ export interface EcologyBalanceConfig {
   food_scarcity_threshold?: number;    // 猎物丰富度阈值
   food_scarcity_penalty?: number;      // 食物匮乏惩罚系数
   scarcity_weight?: number;            // 稀缺压力权重
+  prey_search_top_k?: number;          // 消费者搜索猎物地块数
   
   // ========== 竞争强度 ==========
   competition_base_coefficient?: number;   // 基础竞争系数
   competition_per_species_cap?: number;    // 单个竞争者贡献上限
   competition_total_cap?: number;          // 总竞争压力上限
   same_level_competition_k?: number;       // 同级竞争系数
+  niche_overlap_penalty_k?: number;        // 生态位重叠惩罚系数
   
   // ========== 营养传递效率 ==========
   trophic_transfer_efficiency?: number;    // 能量传递效率
@@ -452,22 +454,55 @@ export interface EcologyBalanceConfig {
   // ========== 扩散行为 ==========
   terrestrial_top_k?: number;              // 陆生物种分布地块数
   marine_top_k?: number;                   // 海洋物种分布地块数
+  coastal_top_k?: number;                  // 海岸物种分布地块数
+  aerial_top_k?: number;                   // 空中物种分布地块数
   suitability_cutoff?: number;             // 宜居度截断阈值
   suitability_weight_alpha?: number;       // 宜居度权重指数
   high_trophic_dispersal_damping?: number; // 高营养级扩散阻尼
+  dispersal_cost_base?: number;            // 跨地块扩散基础成本
+  migration_suitability_bias?: number;     // 迁移偏好：宜居度权重
+  migration_prey_bias?: number;            // 迁移偏好：猎物权重
+  habitat_recalc_frequency?: number;       // 栖息地重算频率
+  
+  // ========== 承载力 ==========
+  carrying_capacity_base?: number;         // 承载力基础倍数
+  carrying_capacity_variance?: number;     // 承载力波动范围
   
   // ========== 资源再生 ==========
   resource_recovery_rate?: number;         // 资源恢复速率
   resource_recovery_lag?: number;          // 资源恢复滞后
   resource_min_recovery?: number;          // 最小恢复率
+  resource_capacity_multiplier?: number;   // 资源上限倍数
   
   // ========== 环境扰动 ==========
   resource_perturbation?: number;          // 资源扰动幅度
   climate_perturbation?: number;           // 气候扰动幅度
+  environment_noise?: number;              // 环境噪声
   
   // ========== 防御/逃逸 ==========
   base_escape_rate?: number;               // 基础逃逸成功率
   size_advantage_factor?: number;          // 体型优势因子
+}
+
+/**
+ * 游戏模式配置 - 控制整体游戏难度和风格
+ */
+export interface GameplayConfig {
+  // 游戏模式
+  game_mode?: "casual" | "balanced" | "hardcore" | "custom";
+  
+  // 难度系数
+  mortality_multiplier?: number;           // 死亡率倍率
+  competition_multiplier?: number;         // 竞争强度倍率
+  reproduction_multiplier?: number;        // 繁殖效率倍率
+  resource_abundance_multiplier?: number;  // 资源丰富度倍率
+  
+  // 显示选项
+  show_prey_abundance?: boolean;           // 显示猎物丰富度
+  show_food_score?: boolean;               // 显示食物分数
+  show_competition_penalty?: boolean;      // 显示竞争惩罚
+  show_mortality_breakdown?: boolean;      // 显示死亡率分解
+  show_advanced_metrics?: boolean;         // 显示高级指标
 }
 
 export interface UIConfig {
@@ -519,6 +554,9 @@ export interface UIConfig {
   
   // 13. 死亡率配置
   mortality?: MortalityConfig;
+  
+  // 14. 游戏模式配置
+  gameplay?: GameplayConfig;
 
   // --- Legacy Fields (For backward compatibility types) ---
   ai_provider?: string | null;

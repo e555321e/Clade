@@ -268,6 +268,8 @@ class EcologyBalanceConfig(BaseModel):
     food_scarcity_penalty: float = 0.4
     # 稀缺压力在死亡率中的权重
     scarcity_weight: float = 0.5
+    # 消费者分布时搜索的猎物地块数量
+    prey_search_top_k: int = 5
     
     # ========== 竞争强度 ==========
     # 基础竞争系数（相似度 × 营养级系数 × 此值）
@@ -278,6 +280,8 @@ class EcologyBalanceConfig(BaseModel):
     competition_total_cap: float = 0.80
     # 同级竞争系数（同营养级物种之间）
     same_level_competition_k: float = 0.15
+    # 生态位重叠惩罚系数（基于embedding相似度）
+    niche_overlap_penalty_k: float = 0.20
     
     # ========== 营养传递效率 ==========
     # 能量传递效率（10%规则）：每升一个营养级，可用能量降至此比例
@@ -292,12 +296,30 @@ class EcologyBalanceConfig(BaseModel):
     terrestrial_top_k: int = 4
     # 海洋物种分布地块数上限
     marine_top_k: int = 3
+    # 海岸物种分布地块数上限
+    coastal_top_k: int = 3
+    # 空中物种分布地块数上限
+    aerial_top_k: int = 5
     # 宜居度阈值：低于此值的地块不分配种群
     suitability_cutoff: float = 0.25
     # 宜居度权重指数：pow(suitability, alpha)，alpha>1 更集中
     suitability_weight_alpha: float = 1.5
     # 高营养级扩散阻尼（跨地块成本）
     high_trophic_dispersal_damping: float = 0.7
+    # 跨地块扩散基础成本（限制远距离迁移）
+    dispersal_cost_base: float = 0.1
+    # 迁移偏好：向高宜居度的偏好权重
+    migration_suitability_bias: float = 0.6
+    # 迁移偏好：向有猎物地块的偏好权重（消费者）
+    migration_prey_bias: float = 0.3
+    # 栖息地重算频率（每N回合强制重算）
+    habitat_recalc_frequency: int = 1
+    
+    # ========== 承载力 ==========
+    # 承载力基础倍数（相对于体型估算值）
+    carrying_capacity_base: float = 1.0
+    # 承载力随机波动范围（±百分比）
+    carrying_capacity_variance: float = 0.1
     
     # ========== 资源再生 ==========
     # 资源最大恢复速率（logistic r）
@@ -306,18 +328,58 @@ class EcologyBalanceConfig(BaseModel):
     resource_recovery_lag: int = 1
     # 过度消耗后的最小恢复率
     resource_min_recovery: float = 0.05
+    # 资源上限倍数
+    resource_capacity_multiplier: float = 1.0
     
     # ========== 环境扰动 ==========
     # 资源随机扰动幅度
     resource_perturbation: float = 0.05
     # 气候随机扰动幅度
     climate_perturbation: float = 0.02
+    # 环境噪声（避免局部不合理稳态）
+    environment_noise: float = 0.03
     
     # ========== 防御/逃逸 ==========
     # 基础逃逸成功率（猎物默认）
     base_escape_rate: float = 0.3
     # 体型差异对捕食成功率的影响
     size_advantage_factor: float = 0.1
+
+
+class GameplayConfig(BaseModel):
+    """游戏模式配置 - 控制整体游戏难度和风格
+    
+    【设计理念】
+    提供预设模式快速切换游戏风格，
+    以及调试选项帮助理解生态系统运作。
+    """
+    model_config = ConfigDict(extra="ignore")
+    
+    # ========== 游戏模式 ==========
+    # 当前游戏模式：casual/balanced/hardcore/custom
+    game_mode: str = "balanced"
+    
+    # ========== 难度系数 ==========
+    # 全局死亡率倍率（1.0=正常，<1休闲，>1硬核）
+    mortality_multiplier: float = 1.0
+    # 全局竞争强度倍率
+    competition_multiplier: float = 1.0
+    # 全局繁殖效率倍率
+    reproduction_multiplier: float = 1.0
+    # 全局资源丰富度倍率
+    resource_abundance_multiplier: float = 1.0
+    
+    # ========== 显示选项 ==========
+    # 是否显示猎物丰富度详情
+    show_prey_abundance: bool = True
+    # 是否显示食物分数详情
+    show_food_score: bool = True
+    # 是否显示竞争惩罚详情
+    show_competition_penalty: bool = True
+    # 是否显示死亡率分解
+    show_mortality_breakdown: bool = False
+    # 是否显示高级生态指标
+    show_advanced_metrics: bool = False
 
 
 class UIConfig(BaseModel):
@@ -371,6 +433,9 @@ class UIConfig(BaseModel):
     
     # 13. 死亡率配置
     mortality: MortalityConfig = Field(default_factory=MortalityConfig)
+    
+    # 14. 游戏模式配置
+    gameplay: GameplayConfig = Field(default_factory=GameplayConfig)
     
     # --- Legacy Fields (Keep for migration) ---
     ai_provider: str | None = None
