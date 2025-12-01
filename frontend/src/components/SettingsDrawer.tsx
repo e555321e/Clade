@@ -111,24 +111,43 @@ const PROVIDER_PRESETS = [
 ] as const;
 
 // AI 能力列表定义（分组）
+// 只包含实际调用 LLM 的能力，规则型能力（migration/pressure_escalation/reemergence）已移除
 const AI_CAPABILITIES = {
-  high: [
-    { key: "turn_report", label: "主推演叙事", desc: "负责生成每个回合的总体生态演化报告", defaultTimeout: 120 },
-    { key: "focus_batch", label: "重点批次推演", desc: "处理关键物种的具体生存判定", defaultTimeout: 90 },
-    { key: "critical_detail", label: "关键物种分析", desc: "分析濒危或优势物种的详细状态", defaultTimeout: 90 },
+  // 核心推演 - 每回合必调用，高耗能
+  core: [
+    { key: "turn_report", label: "回合报告", desc: "生成每回合的整体生态演化总结", defaultTimeout: 120 },
+    { key: "focus_batch", label: "重点批次", desc: "处理关键物种的具体生存判定", defaultTimeout: 90 },
+    { key: "critical_detail", label: "关键分析", desc: "分析濒危或优势物种的详细状态", defaultTimeout: 90 },
   ],
-  medium: [
+  // 物种分化 - 新物种诞生相关
+  speciation: [
     { key: "speciation", label: "物种分化", desc: "判定新物种的诞生条件与特征", defaultTimeout: 60 },
-    { key: "species_generation", label: "物种生成", desc: "生成初始物种或新物种", defaultTimeout: 60 },
+    { key: "speciation_batch", label: "批量分化", desc: "批量处理多个物种的分化判定", defaultTimeout: 90 },
+    { key: "plant_speciation", label: "植物分化", desc: "植物专用的分化判定逻辑", defaultTimeout: 60 },
+    { key: "species_generation", label: "物种生成", desc: "生成初始物种或新物种的属性", defaultTimeout: 60 },
   ],
-  low: [
-    { key: "migration", label: "迁徙建议", desc: "计算物种在不同地块间的移动", defaultTimeout: 45 },
-    { key: "pressure_escalation", label: "压力升级", desc: "动态调整环境生存压力", defaultTimeout: 45 },
-    { key: "reemergence", label: "物种重现/起名", desc: "为新物种生成名称与描述", defaultTimeout: 45 },
+  // 适应与叙事 - 物种状态描述
+  narrative: [
+    { key: "pressure_adaptation", label: "压力适应", desc: "评估物种对环境压力的适应能力", defaultTimeout: 60 },
+    { key: "species_status_eval", label: "状态评估", desc: "综合评估物种的生存状态与威胁", defaultTimeout: 60 },
+    { key: "species_narrative", label: "物种叙事", desc: "生成物种的故事性描述", defaultTimeout: 60 },
+    { key: "narrative", label: "描述重写", desc: "重写或润色物种的描述文本", defaultTimeout: 45 },
+  ],
+  // 杂交与智能体 - 高级功能
+  advanced: [
+    { key: "hybridization", label: "自然杂交", desc: "判定物种间的杂交可能性与结果", defaultTimeout: 60 },
+    { key: "forced_hybridization", label: "强制杂交", desc: "玩家触发的杂交事件判定", defaultTimeout: 60 },
+    { key: "biological_assessment_a", label: "智能体A档", desc: "生态智能体高精度评估（高耗能）", defaultTimeout: 90 },
+    { key: "biological_assessment_b", label: "智能体B档", desc: "生态智能体快速评估（低耗能）", defaultTimeout: 60 },
   ],
 } as const;
 
-const ALL_CAPABILITIES = [...AI_CAPABILITIES.high, ...AI_CAPABILITIES.medium, ...AI_CAPABILITIES.low];
+const ALL_CAPABILITIES = [
+  ...AI_CAPABILITIES.core, 
+  ...AI_CAPABILITIES.speciation, 
+  ...AI_CAPABILITIES.narrative, 
+  ...AI_CAPABILITIES.advanced
+];
 
 // 向量模型预设
 const EMBEDDING_PRESETS = [
@@ -1320,18 +1339,22 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
             <div className="tab-content fade-in">
               <div className="section-header">
                 <h3>🧠 AI 能力路由配置</h3>
-                <p>为不同的 AI 功能分配专属模型。未配置的功能将使用全局默认服务商。每个功能可独立设置超时时间和思考模式。</p>
+                <p>为不同的 AI 功能分配专属模型。未配置的功能将使用全局默认服务商。</p>
+              </div>
+
+              <div className="tip-box info" style={{marginBottom: '1rem'}}>
+                💡 <strong>提示：</strong>这里列出的都是实际调用 LLM 的能力。迁徙、压力升级等规则型计算不使用 AI，无需配置。
               </div>
               
-              {/* 高优先级 */}
+              {/* 核心推演 */}
               <div className="capability-group">
                 <div className="group-header high">
                   <span className="group-icon">🔴</span>
                   <span className="group-title">核心推演</span>
-                  <span className="group-desc">主要叙事与关键决策，推荐使用高性能模型</span>
+                  <span className="group-desc">每回合必调用，建议使用高性能模型</span>
                 </div>
                 <div className="capabilities-grid">
-                  {AI_CAPABILITIES.high.map(cap => (
+                  {AI_CAPABILITIES.core.map(cap => (
                     <CapabilityCard 
                       key={cap.key}
                       cap={cap}
@@ -1349,15 +1372,15 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                 </div>
               </div>
 
-              {/* 中优先级 */}
+              {/* 物种分化 */}
               <div className="capability-group">
                 <div className="group-header medium">
-                  <span className="group-icon">🟡</span>
-                  <span className="group-title">物种演化</span>
-                  <span className="group-desc">新物种诞生与基因分化判定</span>
+                  <span className="group-icon">🧬</span>
+                  <span className="group-title">物种分化</span>
+                  <span className="group-desc">新物种诞生相关，调用频率视分化条件而定</span>
                 </div>
                 <div className="capabilities-grid">
-                  {AI_CAPABILITIES.medium.map(cap => (
+                  {AI_CAPABILITIES.speciation.map(cap => (
                     <CapabilityCard 
                       key={cap.key}
                       cap={cap}
@@ -1375,19 +1398,45 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                 </div>
               </div>
 
-              {/* 低优先级 */}
+              {/* 适应与叙事 */}
               <div className="capability-group">
                 <div className="group-header low">
-                  <span className="group-icon">🟢</span>
-                  <span className="group-title">辅助功能</span>
-                  <span className="group-desc">迁徙、命名等轻量任务，可使用经济模型</span>
+                  <span className="group-icon">📖</span>
+                  <span className="group-title">适应与叙事</span>
+                  <span className="group-desc">物种状态评估与故事生成，可用经济模型</span>
                 </div>
                 <div className="capabilities-grid">
-                  {AI_CAPABILITIES.low.map(cap => (
+                  {AI_CAPABILITIES.narrative.map(cap => (
                     <CapabilityCard 
                       key={cap.key}
                       cap={cap}
                       priority="low"
+                      route={form.capability_routes[cap.key] || {}}
+                      providers={form.providers}
+                      defaultProviderId={form.default_provider_id}
+                      defaultModel={form.default_model}
+                      onUpdate={(field, value) => dispatch({ type: 'UPDATE_ROUTE', capKey: cap.key, field, value })}
+                      providerModels={providerModels}
+                      loadBalanceEnabled={form.load_balance_enabled}
+                      onToggleProvider={(providerId) => dispatch({ type: 'TOGGLE_ROUTE_PROVIDER', capKey: cap.key, providerId })}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* 杂交与智能体 */}
+              <div className="capability-group">
+                <div className="group-header medium">
+                  <span className="group-icon">🔬</span>
+                  <span className="group-title">杂交与智能体</span>
+                  <span className="group-desc">高级功能，按需调用</span>
+                </div>
+                <div className="capabilities-grid">
+                  {AI_CAPABILITIES.advanced.map(cap => (
+                    <CapabilityCard 
+                      key={cap.key}
+                      cap={cap}
+                      priority="medium"
                       route={form.capability_routes[cap.key] || {}}
                       providers={form.providers}
                       defaultProviderId={form.default_provider_id}

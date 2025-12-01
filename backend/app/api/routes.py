@@ -143,65 +143,63 @@ mortality_engine = MortalityEngine(settings.batch_rule_limit)
 embedding_service = EmbeddingService(settings.embedding_provider)
 model_router = ModelRouter(
     {
+        # ========== 核心推演能力（高优先级）==========
         "turn_report": ModelConfig(provider="local", model="template-narrator"),
         "focus_batch": ModelConfig(
             provider="local", 
             model="focus-template",
-            extra_body={"response_format": {"type": "json_object"}}  # 强制JSON数组
+            extra_body={"response_format": {"type": "json_object"}}
         ),
         "critical_detail": ModelConfig(provider="local", model="critical-template"),
+        
+        # ========== 物种分化能力 ==========
         "speciation": ModelConfig(
             provider="openai", 
             model=settings.speciation_model,
-            extra_body={"response_format": {"type": "json_object"}}  # 强制JSON
+            extra_body={"response_format": {"type": "json_object"}}
         ),
         "speciation_batch": ModelConfig(
             provider="openai", 
             model=settings.speciation_model,
-            extra_body={"response_format": {"type": "json_object"}}  # 强制JSON
+            extra_body={"response_format": {"type": "json_object"}}
         ),
-        # 【新增】植物分化
         "plant_speciation": ModelConfig(
             provider="openai", 
             model=settings.speciation_model,
-            extra_body={"response_format": {"type": "json_object"}}  # 强制JSON
+            extra_body={"response_format": {"type": "json_object"}}
         ),
-        "plant_speciation_batch": ModelConfig(
-            provider="openai", 
-            model=settings.speciation_model,
-            extra_body={"response_format": {"type": "json_object"}}  # 强制JSON
-        ),
-        "reemergence": ModelConfig(provider="local", model="reemergence-template"),
-        "pressure_escalation": ModelConfig(provider="local", model="pressure-template"),
-        "migration": ModelConfig(provider="local", model="migration-template"),
+        # 注：plant_speciation_batch 已移除，批量植物分化使用 plant_speciation
+        
+        # ========== 物种生成与叙事 ==========
         "species_generation": ModelConfig(
             provider="openai", 
             model=settings.species_gen_model,
-            extra_body={"response_format": {"type": "json_object"}}  # 强制JSON
+            extra_body={"response_format": {"type": "json_object"}}
         ),
-        "pressure_adaptation": ModelConfig(
+        "species_narrative": ModelConfig(
             provider="openai", 
-            model=settings.speciation_model,  # 使用与分化相同的模型
-            extra_body={"response_format": {"type": "json_object"}}  # 强制JSON
+            model=settings.speciation_model,
+            extra_body={"response_format": {"type": "json_object"}}
         ),
         "narrative": ModelConfig(
             provider="openai", 
             model=settings.speciation_model,
-            extra_body={"response_format": {"type": "json_object"}}  # 强制JSON
+            extra_body={"response_format": {"type": "json_object"}}
         ),
-        # 【新增】综合状态评估（合并了压力评估+紧急响应）
+        
+        # ========== 压力适应与状态评估 ==========
+        "pressure_adaptation": ModelConfig(
+            provider="openai", 
+            model=settings.speciation_model,
+            extra_body={"response_format": {"type": "json_object"}}
+        ),
         "species_status_eval": ModelConfig(
             provider="openai", 
             model=settings.speciation_model,
             extra_body={"response_format": {"type": "json_object"}}
         ),
-        # 【新增】物种叙事（合并了Critical+Focus增润）
-        "species_narrative": ModelConfig(
-            provider="openai", 
-            model=settings.speciation_model,  # 使用与分化相同的模型
-            extra_body={"response_format": {"type": "json_object"}}
-        ),
-        # 【新增】杂交相关
+        
+        # ========== 杂交能力 ==========
         "hybridization": ModelConfig(
             provider="openai", 
             model=settings.speciation_model,
@@ -212,17 +210,23 @@ model_router = ModelRouter(
             model=settings.speciation_model,
             extra_body={"response_format": {"type": "json_object"}}
         ),
-        # 【新增】生态智能体评估
+        
+        # ========== 生态智能体评估 ==========
         "biological_assessment_a": ModelConfig(
             provider="openai", 
-            model=settings.speciation_model,  # A档使用与分化相同的模型
+            model=settings.speciation_model,
             extra_body={"response_format": {"type": "json_object"}}
         ),
         "biological_assessment_b": ModelConfig(
             provider="openai", 
-            model=settings.speciation_model,  # B档使用相同模型，可配置为更轻量的
+            model=settings.speciation_model,
             extra_body={"response_format": {"type": "json_object"}}
         ),
+        
+        # ========== 已移除的规则型能力（不使用LLM）==========
+        # migration: 迁徙计算完全基于规则，不调用LLM
+        # pressure_escalation: 压力升级完全基于规则，不调用LLM  
+        # reemergence: 物种重现完全基于规则，不调用LLM
     },
     base_url=settings.ai_base_url,
     api_key=settings.ai_api_key,
