@@ -37,10 +37,10 @@
 > - **Node.js** 用于运行前端界面
 
 如果你还没有安装，请先下载安装：
-
+注意！！目前只支持python3.12，请下载对应版本的python安装
 | 软件 | 版本要求 | 下载链接 |
 |------|---------|----------|
-| **Python** | 3.11 或更高 | [👉 点击下载](https://www.python.org/downloads/) |
+| **Python** | 3.12  | [👉 点击下载](https://www.python.org/downloads/) |
 | **Node.js** | 18 或更高 | [👉 点击下载](https://nodejs.org/zh-cn) |
 
 <details>
