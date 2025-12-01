@@ -306,7 +306,7 @@ class ReproductionService:
             # 6. 按适宜度分配当前种群到各地块
             # 【改进v5】使用指数权重 + 低阈值截断，让物种更集中在高适宜度地块
             from ...core.config import PROJECT_ROOT
-            from ...repositories.environment_repository import environment_repository
+            # 注意：environment_repository 已在模块顶部导入，此处不要重复导入
             try:
                 ui_cfg = environment_repository.load_ui_config(PROJECT_ROOT / "data/settings.json")
                 eco_cfg = ui_cfg.ecology_balance

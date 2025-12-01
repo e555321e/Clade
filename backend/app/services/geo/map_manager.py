@@ -732,13 +732,20 @@ class MapStateManager:
 
     def get_overview(
         self, 
-        tile_limit: int = 3200, 
-        habitat_limit: int = 3200,
+        tile_limit: int | None = None, 
+        habitat_limit: int | None = None,
         view_mode: ViewMode = "terrain",
         species_id: int | None = None,
     ) -> MapOverview:
-        logger.debug(f"[地图管理器] 获取概览，地块限制={tile_limit}, 栖息地限制={habitat_limit}, 视图模式={view_mode}, 物种ID={species_id}")
-        
+        logger.debug(
+            f"[地图总览] 获取地图 tile_limit={tile_limit or 'all'}, habitats={habitat_limit or 'all'}, view_mode={view_mode}, species_id={species_id}"
+        )
+        # Treat non-positive limits as no limit to avoid truncation
+        if tile_limit is not None and tile_limit <= 0:
+            tile_limit = None
+        if habitat_limit is not None and habitat_limit <= 0:
+            habitat_limit = None
+
         tiles = self.repo.list_tiles(limit=tile_limit)
         logger.debug(f"[地图管理器] 查询到 {len(tiles)} 个地块")
         

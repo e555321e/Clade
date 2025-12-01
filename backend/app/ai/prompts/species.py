@@ -115,15 +115,12 @@ SPECIES_PROMPTS = {
 
 【栖息地类型说明】
 - marine: 海洋（浅海、中层海域，需要盐水）
-- deep_sea: 深海（深海平原、黑暗高压环境，不含热泉）
-- hydrothermal: 热泉（深海热液喷口、海底火山附近，化能自养生物首选）
+- deep_sea: 深海（深海平原、热液喷口、黑暗高压环境）
 - coastal: 海岸（潮间带、海岸带、滨海区）
 - freshwater: 淡水（湖泊、河流、池塘）
 - amphibious: 两栖（水陆两栖，需要湿润环境）
 - terrestrial: 陆生（陆地，从平原到山地）
 - aerial: 空中（主要在空中活动的飞行生物）
-
-⚠️ 化能自养生物（如硫细菌）应使用 hydrothermal 类型！
 
 【食性类型说明】
 - autotroph: 自养生物（光合作用或化能合成，营养级T1.0-1.5，无需猎物）
@@ -545,9 +542,9 @@ marine | deep_sea | coastal | freshwater | amphibious | terrestrial | aerial
     "results": [
         {{
             "request_id": "请求ID（与输入对应）",
-            "latin_name": "拉丁学名（2词组成：属名+种加词）",
-            "common_name": "中文俗名（2-5字）",
-            "description": "⚠️重要：必须80-150字！描述外形特征、食性、栖息环境、与祖先的差异",
+            "latin_name": "拉丁学名",
+            "common_name": "中文俗名",
+            "description": "120-180字生物学描述，含食性和栖息环境",
             "habitat_type": "栖息地类型",
             "trophic_level": 父代±0.5范围内,
             "key_innovations": ["关键演化创新"],
@@ -579,7 +576,7 @@ marine | deep_sea | coastal | freshwater | amphibious | terrestrial | aerial
             "request_id": "req_001",
             "latin_name": "Protoflagella ocularis",
             "common_name": "眼点鞭毛虫",
-            "description": "这种微小的单细胞生物体长约0.02毫米，身体呈卵圆形。浅海环境中强烈的光照促使其感光点逐渐内陷，形成原始的眼凹结构，大幅提升了趋光能力。以滤食悬浮的蓝藻和有机碎屑为生，繁殖速度略有下降以维持复杂的感觉结构。主要栖息于阳光充足的浅海水域。",
+            "description": "浅海环境促使感光点内陷形成眼凹结构。繁殖速度下降以维持复杂感觉结构。主要滤食蓝藻，栖息于阳光充足的浅海。",
             "habitat_type": "marine",
             "trophic_level": 2.0,
             "key_innovations": ["眼凹结构"],
@@ -601,7 +598,7 @@ marine | deep_sea | coastal | freshwater | amphibious | terrestrial | aerial
             "request_id": "req_002",
             "latin_name": "Bryophytella primordialis",
             "common_name": "原始苔藓体",
-            "description": "这是首批成功登陆的植物先驱之一，体型扁平呈片状，约0.5厘米宽。从潮间带逐步向内陆岩石表面扩展，发展出薄而有效的原始角质层来减少水分散失。通过简单的假根结构固着于岩石缝隙中，吸收矿物质和水分。作为自养生产者，光合效率因陆地强光略有下降，但获得了陆地生存的关键适应能力。",
+            "description": "首批登陆的植物先驱，从潮间带向内陆扩展。发展出原始角质层减少水分散失，假根固着于岩石缝隙。作为自养生产者，光合效率略降，但获得了陆地生存的关键能力。",
             "habitat_type": "coastal",
             "trophic_level": 1.0,
             "key_innovations": ["首次登陆陆地", "角质层保水"],

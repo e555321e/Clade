@@ -188,7 +188,7 @@ export async function generateRandomPressures(targetEnergy: number): Promise<Pre
 
 export async function fetchMapOverview(viewMode: string = "terrain", speciesCode?: string): Promise<MapOverview> {
   // 始终请求完整的 126x40 六边形网格 (约5040个)，支持视图模式切换
-  let url = `/api/map?limit_tiles=6000&limit_habitats=500&view_mode=${viewMode}`;
+  let url = `/api/map?limit_tiles=0&limit_habitats=0&view_mode=${viewMode}`;
   if (speciesCode) {
     url += `&species_code=${speciesCode}`;
   }

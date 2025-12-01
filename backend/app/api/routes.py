@@ -1054,13 +1054,15 @@ def list_exports() -> list[ExportRecord]:
 
 @router.get("/map", response_model=MapOverview)
 def get_map_overview(
-    limit_tiles: int = 6000, 
-    limit_habitats: int = 500,
+    limit_tiles: int = 0, 
+    limit_habitats: int = 0,
     view_mode: str = "terrain",
     species_code: str | None = None,
 ) -> MapOverview:
     try:
-        logger.debug(f"[地图查询] 请求地块数: {limit_tiles}, 栖息地数: {limit_habitats}, 视图模式: {view_mode}, 物种: {species_code}")
+        tile_limit = None if limit_tiles <= 0 else limit_tiles
+        habitat_limit = None if limit_habitats <= 0 else limit_habitats
+        logger.debug(f"[地图查询] 限制地块: {tile_limit or "all"}, 栖息地: {habitat_limit or "all"}, 模式: {view_mode}, 物种: {species_code}")
         
         species_id = None
         if species_code:
@@ -1069,8 +1071,8 @@ def get_map_overview(
                 species_id = species.id
         
         overview = map_manager.get_overview(
-            tile_limit=limit_tiles, 
-            habitat_limit=limit_habitats,
+            tile_limit=tile_limit, 
+            habitat_limit=habitat_limit,
             view_mode=view_mode,  # type: ignore
             species_id=species_id,
         )

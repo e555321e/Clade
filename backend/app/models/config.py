@@ -75,12 +75,12 @@ class SpeciationConfig(BaseModel):
     evo_potential_threshold_early: float = 0.5
     
     # ========== 候选地块筛选 ==========
-    # 候选地块最小种群
-    candidate_tile_min_pop: int = 50
-    # 候选地块死亡率下限
-    candidate_tile_death_rate_min: float = 0.02
-    # 候选地块死亡率上限
-    candidate_tile_death_rate_max: float = 0.75
+    # 候选地块最小种群（降低以让更多地块进入候选，更容易形成多簇）
+    candidate_tile_min_pop: int = 15
+    # 候选地块死亡率下限（放宽下限）
+    candidate_tile_death_rate_min: float = 0.01
+    # 候选地块死亡率上限（放宽上限，避免高死亡率区域被排除）
+    candidate_tile_death_rate_max: float = 0.85
     
     # ========== 辐射演化 ==========
     # 辐射演化基础概率
@@ -101,12 +101,24 @@ class SpeciationConfig(BaseModel):
     no_isolation_penalty_late: float = 0.5
     
     # ========== 门槛乘数 ==========
-    # 无隔离时门槛乘数
-    threshold_multiplier_no_isolation: float = 1.8
+    # 无隔离时门槛乘数（降低以让无隔离也能分化）
+    threshold_multiplier_no_isolation: float = 1.1
     # 高生态位重叠时门槛乘数
-    threshold_multiplier_high_overlap: float = 1.2
+    threshold_multiplier_high_overlap: float = 1.1
     # 高资源饱和时门槛乘数（无隔离情况下）
-    threshold_multiplier_high_saturation: float = 1.2
+    threshold_multiplier_high_saturation: float = 1.1
+    
+    # ========== 距离型隔离判定 ==========
+    # 距离隔离阈值（六边形步数）：候选地块跨度超过此值视为隔离（降低以更容易触发）
+    distance_threshold_hex: int = 6
+    # 长宽比阈值：长轴/短轴超过此值视为"带状"隔离（降低以更容易触发）
+    elongation_ratio_threshold: float = 1.8
+    # 是否启用距离型隔离判定
+    enable_distance_isolation: bool = True
+    # 死亡率梯度阈值（降低以更容易判定为隔离）
+    mortality_gradient_threshold: float = 0.08
+    # 最小簇间距离（候选块数量>=N且任意两簇间距离>此值也视为隔离）
+    min_cluster_gap: int = 2
 
 
 class ReproductionConfig(BaseModel):

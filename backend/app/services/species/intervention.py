@@ -101,3 +101,7 @@ class InterventionService:
         self._emit_event("info", f"🌍 引入: {species.common_name}", "干预")
 
 
+
+
+
+

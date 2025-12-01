@@ -62,6 +62,31 @@ def _load_mortality_config() -> MortalityConfig:
         return MortalityConfig()
 
 
+def _load_speciation_config():
+    """从 UI 配置中加载分化参数"""
+    try:
+        from ..repositories.environment_repository import environment_repository
+        from ..models.config import SpeciationConfig
+        ui_config_path = PROJECT_ROOT / "data/settings.json"
+        ui_config = environment_repository.load_ui_config(ui_config_path)
+        return ui_config.speciation
+    except Exception as e:
+        from ..models.config import SpeciationConfig
+        logger.warning(f"[分化配置] 无法加载配置，使用默认值: {e}")
+        return SpeciationConfig()
+
+
+def hex_distance(q1: int, r1: int, q2: int, r2: int) -> int:
+    """计算两个六边形格子之间的距离（轴坐标系）
+    
+    使用 cube 坐标转换计算曼哈顿距离
+    """
+    # 转换为 cube 坐标 (q, r, s)，其中 s = -q - r
+    s1 = -q1 - r1
+    s2 = -q2 - r2
+    return max(abs(q1 - q2), abs(r1 - r2), abs(s1 - s2))
+
+
 @dataclass(slots=True)
 class TileMortalityResult:
     """单个地块上单个物种的死亡率结果"""
@@ -384,23 +409,24 @@ class TileBasedMortalityEngine:
     def _build_tile_adjacency(self, tiles: list[MapTile]) -> None:
         """构建地块邻接关系
         
-        基于地块的 row/col 坐标判断相邻（8邻域）
+        【改进】使用六边形轴坐标 (q, r) 的 6 邻域，而非 8 邻域
+        这样更准确地反映六边形网格的连通性，避免对角相连降低分裂概率
         """
         self._tile_adjacency = {}
         
-        # 构建坐标到tile_id的映射
+        # 构建六边形轴坐标 (q, r) 到 tile_id 的映射
         coord_to_tile: dict[tuple[int, int], int] = {}
         for tile in tiles:
-            row = getattr(tile, 'row', None)
-            col = getattr(tile, 'col', None)
-            if row is not None and col is not None and tile.id is not None:
-                coord_to_tile[(row, col)] = tile.id
+            q = getattr(tile, 'q', None)
+            r = getattr(tile, 'r', None)
+            if q is not None and r is not None and tile.id is not None:
+                coord_to_tile[(q, r)] = tile.id
         
-        # 8邻域偏移
-        neighbors_offset = [
-            (-1, -1), (-1, 0), (-1, 1),
-            (0, -1),           (0, 1),
-            (1, -1),  (1, 0),  (1, 1)
+        # 六边形轴坐标的 6 邻域偏移 (dq, dr)
+        # 在 axial 坐标系中，6 个相邻格子的偏移量是固定的
+        hex_neighbors_offset = [
+            (+1,  0), (+1, -1), ( 0, -1),
+            (-1,  0), (-1, +1), ( 0, +1),
         ]
         
         # 为每个地块找邻居
@@ -408,23 +434,34 @@ class TileBasedMortalityEngine:
             if tile.id is None:
                 continue
             
-            row = getattr(tile, 'row', None)
-            col = getattr(tile, 'col', None)
+            q = getattr(tile, 'q', None)
+            r = getattr(tile, 'r', None)
             
-            if row is None or col is None:
-                # 没有坐标信息，假设孤立
-                self._tile_adjacency[tile.id] = set()
+            if q is None or r is None:
+                # 没有六边形坐标，尝试使用 row/col 回退
+                row = getattr(tile, 'row', None)
+                col = getattr(tile, 'col', None)
+                if row is None or col is None:
+                    self._tile_adjacency[tile.id] = set()
+                    continue
+                # 回退到简单的 4 邻域（上下左右）
+                fallback_offset = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+                neighbors = set()
+                for dr, dc in fallback_offset:
+                    neighbor_coord = (row + dr, col + dc)
+                    # 这里需要 row/col 映射，但我们用 q/r 映射，所以跳过
+                self._tile_adjacency[tile.id] = neighbors
                 continue
             
             neighbors = set()
-            for dr, dc in neighbors_offset:
-                neighbor_coord = (row + dr, col + dc)
+            for dq, dr in hex_neighbors_offset:
+                neighbor_coord = (q + dq, r + dr)
                 if neighbor_coord in coord_to_tile:
                     neighbors.add(coord_to_tile[neighbor_coord])
             
             self._tile_adjacency[tile.id] = neighbors
         
-        logger.debug(f"[地块邻接] 构建了 {len(self._tile_adjacency)} 个地块的邻接关系")
+        logger.debug(f"[地块邻接] 构建了 {len(self._tile_adjacency)} 个地块的六边形6邻域关系")
     
     def clear_accumulated_data(self) -> None:
         """清空累积的存活数据（每回合开始时调用）"""
@@ -613,9 +650,9 @@ class TileBasedMortalityEngine:
     
     def get_speciation_candidates(
         self, 
-        min_tile_population: int = 100,
-        mortality_threshold: tuple[float, float] = (0.03, 0.70),
-        min_mortality_gradient: float = 0.15,
+        min_tile_population: int | None = None,
+        mortality_threshold: tuple[float, float] | None = None,
+        min_mortality_gradient: float | None = None,
     ) -> dict[str, dict]:
         """获取适合分化的物种及其候选地块
         
@@ -623,11 +660,13 @@ class TileBasedMortalityEngine:
         - 在特定地块上种群达到阈值
         - 地块死亡率在适宜范围内
         - 存在地块间死亡率梯度（地理/生态隔离）
+        - 【新增】距离型隔离：候选地块跨度超过阈值
+        - 【新增】簇间距离隔离：多簇且簇间有间隙
         
         Args:
-            min_tile_population: 地块最小种群门槛
-            mortality_threshold: 死亡率范围 (min, max)
-            min_mortality_gradient: 最小死亡率梯度（隔离判定）
+            min_tile_population: 地块最小种群门槛（None则使用配置）
+            mortality_threshold: 死亡率范围 (min, max)（None则使用配置）
+            min_mortality_gradient: 最小死亡率梯度（None则使用配置）
             
         Returns:
             {lineage_code: {
@@ -637,10 +676,32 @@ class TileBasedMortalityEngine:
                 "mortality_gradient": float,  # 死亡率梯度
                 "is_isolated": bool,  # 是否存在隔离
                 "clusters": list[set[int]],  # 隔离区域
+                "max_hex_distance": int,  # 【新增】候选地块最大六边形距离
+                "isolation_type": str,  # 【新增】隔离类型
             }}
         """
         if self._population_matrix is None or self._last_mortality_matrix is None:
             return {}
+        
+        # 【改进】从配置加载所有参数
+        spec_config = _load_speciation_config()
+        
+        # 使用配置值或传入的参数
+        min_tile_population = min_tile_population if min_tile_population is not None else spec_config.candidate_tile_min_pop
+        if mortality_threshold is None:
+            mortality_threshold = (spec_config.candidate_tile_death_rate_min, spec_config.candidate_tile_death_rate_max)
+        min_mortality_gradient = min_mortality_gradient if min_mortality_gradient is not None else spec_config.mortality_gradient_threshold
+        
+        distance_threshold = spec_config.distance_threshold_hex
+        elongation_threshold = spec_config.elongation_ratio_threshold
+        enable_distance_isolation = spec_config.enable_distance_isolation
+        min_cluster_gap = spec_config.min_cluster_gap
+        
+        # 【新增】构建 tile_id -> (q, r) 坐标映射
+        tile_coords: dict[int, tuple[int, int]] = {}
+        for tile in self._tiles:
+            if tile.id is not None:
+                tile_coords[tile.id] = (tile.q, tile.r)
         
         min_rate, max_rate = mortality_threshold
         result = {}
@@ -673,9 +734,108 @@ class TileBasedMortalityEngine:
             else:
                 mortality_gradient = 0.0
             
-            # 检测隔离区域
+            # 检测隔离区域（原有逻辑）
             clusters = self._find_population_clusters(set(tile_pops.keys()))
-            is_isolated = len(clusters) >= 2 or mortality_gradient >= min_mortality_gradient
+            
+            # 【新增】计算候选地块的最大六边形距离和长宽比
+            max_hex_dist = 0
+            elongation_ratio = 1.0
+            distance_isolated = False
+            
+            if enable_distance_isolation and len(candidate_tiles) >= 2:
+                # 收集候选地块的坐标
+                coords_list = []
+                for tid in candidate_tiles:
+                    if tid in tile_coords:
+                        coords_list.append((tid, tile_coords[tid]))
+                
+                if len(coords_list) >= 2:
+                    # 计算所有候选地块两两之间的最大距离
+                    for i, (tid1, (q1, r1)) in enumerate(coords_list):
+                        for tid2, (q2, r2) in coords_list[i+1:]:
+                            dist = hex_distance(q1, r1, q2, r2)
+                            if dist > max_hex_dist:
+                                max_hex_dist = dist
+                    
+                    # 计算包围盒的长宽比（简化版：用 q 和 r 范围）
+                    q_vals = [c[1][0] for c in coords_list]
+                    r_vals = [c[1][1] for c in coords_list]
+                    q_range = max(q_vals) - min(q_vals) + 1
+                    r_range = max(r_vals) - min(r_vals) + 1
+                    if min(q_range, r_range) > 0:
+                        elongation_ratio = max(q_range, r_range) / min(q_range, r_range)
+                    
+                    # 判断距离型隔离
+                    if max_hex_dist >= distance_threshold:
+                        distance_isolated = True
+                        logger.debug(
+                            f"[距离隔离] {lineage_code}: max_dist={max_hex_dist} >= threshold={distance_threshold}"
+                        )
+                    elif elongation_ratio >= elongation_threshold:
+                        distance_isolated = True
+                        logger.debug(
+                            f"[带状隔离] {lineage_code}: elongation={elongation_ratio:.2f} >= threshold={elongation_threshold}"
+                        )
+            
+            # 【改进】综合判定隔离（放宽条件）
+            cluster_isolated = len(clusters) >= 2
+            gradient_isolated = mortality_gradient >= min_mortality_gradient
+            
+            # 【新增】相对梯度判定（max-min)/max >= 0.3 也算隔离
+            max_rate_val = max(tile_rates.values()) if tile_rates else 0
+            relative_gradient = mortality_gradient / max_rate_val if max_rate_val > 0 else 0
+            relative_gradient_isolated = relative_gradient >= 0.25  # 相对梯度 25% 以上
+            
+            # 【新增】簇间距离隔离：多个簇且簇间有间隙（即使物理连通）
+            cluster_gap_isolated = False
+            if len(clusters) >= 2 and len(candidate_tiles) >= 4:
+                # 计算不同簇之间的最小距离
+                for i, cluster_a in enumerate(clusters):
+                    for cluster_b in clusters[i+1:]:
+                        # 找到两个簇中最近的两个地块
+                        min_inter_dist = float('inf')
+                        for tid_a in cluster_a:
+                            if tid_a not in tile_coords:
+                                continue
+                            q_a, r_a = tile_coords[tid_a]
+                            for tid_b in cluster_b:
+                                if tid_b not in tile_coords:
+                                    continue
+                                q_b, r_b = tile_coords[tid_b]
+                                dist = hex_distance(q_a, r_a, q_b, r_b)
+                                if dist < min_inter_dist:
+                                    min_inter_dist = dist
+                        if min_inter_dist > min_cluster_gap:
+                            cluster_gap_isolated = True
+                            break
+                    if cluster_gap_isolated:
+                        break
+            
+            # 【放宽】任一条件满足即视为隔离
+            is_isolated = (
+                cluster_isolated or 
+                gradient_isolated or 
+                relative_gradient_isolated or
+                distance_isolated or
+                cluster_gap_isolated
+            )
+            
+            # 【新增】隔离类型标记
+            isolation_types = []
+            if cluster_isolated:
+                isolation_types.append("cluster")
+            if gradient_isolated:
+                isolation_types.append("gradient")
+            if relative_gradient_isolated:
+                isolation_types.append("rel_gradient")
+            if cluster_gap_isolated:
+                isolation_types.append("cluster_gap")
+            if distance_isolated:
+                if max_hex_dist >= distance_threshold:
+                    isolation_types.append("distance")
+                if elongation_ratio >= elongation_threshold:
+                    isolation_types.append("elongated")
+            isolation_type = "+".join(isolation_types) if isolation_types else "none"
             
             result[lineage_code] = {
                 "candidate_tiles": candidate_tiles,
@@ -685,6 +845,10 @@ class TileBasedMortalityEngine:
                 "is_isolated": is_isolated,
                 "clusters": clusters,
                 "total_candidate_population": sum(tile_pops.get(t, 0) for t in candidate_tiles),
+                # 【新增】距离隔离相关字段
+                "max_hex_distance": max_hex_dist,
+                "elongation_ratio": elongation_ratio,
+                "isolation_type": isolation_type,
             }
         
         return result

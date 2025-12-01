@@ -1010,9 +1010,10 @@ class SpeciationService:
 
         logger.info(f"[分化] 开始批量处理 {len(active_batch)} 个分化任务 (剩余排队 {len(self._deferred_requests)})")
         
-        # 【优化】使用批量请求 + 间隔并行，提高效率
-        # 每批最多处理 10 个物种
-        batch_size = 10
+        # 【优化】小批次 + 高并发策略
+        # 每批 4 个物种，token 更少，单次响应更快
+        # 同时 4 个批次并行，提高整体吞吐量
+        batch_size = 4
         
         # 分割成多个批次
         batches = []
@@ -1020,7 +1021,7 @@ class SpeciationService:
             batch_entries = active_batch[batch_start:batch_start + batch_size]
             batches.append(batch_entries)
         
-        logger.info(f"[分化] 共 {len(batches)} 个批次，开始间隔并行执行")
+        logger.info(f"[分化] 共 {len(batches)} 个批次（每批≤{batch_size}个），开始高并发执行")
         
         async def process_batch(batch_entries: list) -> list:
             """处理单个批次"""
@@ -1032,12 +1033,12 @@ class SpeciationService:
             batch_results = await self._call_batch_ai(batch_payload, stream_callback, batch_entries)
             return self._parse_batch_results(batch_results, batch_entries)
         
-        # 【优化】间隔并行执行批次，每3秒启动一个，最多同时2个
+        # 【优化】小批次 + 高并发：间隔更短，并发更高
         coroutines = [process_batch(batch) for batch in batches]
         batch_results_list = await staggered_gather(
             coroutines,
-            interval=3.0,  # 每3秒启动一个批次
-            max_concurrent=2,  # 最多同时2个批次（每批10个物种）
+            interval=1.5,  # 每1.5秒启动一个批次（批次更小，间隔可以更短）
+            max_concurrent=4,  # 最多同时4个批次（每批4个物种，总共最多16个并行）
             task_name="分化批次"
         )
         
