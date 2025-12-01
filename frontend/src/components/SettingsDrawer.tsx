@@ -112,42 +112,56 @@ const PROVIDER_PRESETS = [
 
 // AI 能力列表定义（分组）
 // 只包含实际调用 LLM 的能力，规则型能力（migration/pressure_escalation/reemergence）已移除
-const AI_CAPABILITIES = {
-  // 核心推演 - 每回合必调用，高耗能
+// parallel: "batch" = 批量接口，一次请求处理多个 | "concurrent" = 并发多个单请求 | "single" = 单次请求
+type ParallelMode = "batch" | "concurrent" | "single";
+interface CapabilityDef {
+  key: string;
+  label: string;
+  desc: string;
+  defaultTimeout: number;
+  parallel: ParallelMode;
+  parallelNote?: string; // 并行说明
+}
+
+const AI_CAPABILITIES: Record<string, CapabilityDef[]> = {
+  // 核心推演 - 每回合必调用
   core: [
-    { key: "turn_report", label: "回合报告", desc: "生成每回合的整体生态演化总结", defaultTimeout: 120 },
-    { key: "focus_batch", label: "重点批次", desc: "处理关键物种的具体生存判定", defaultTimeout: 90 },
-    { key: "critical_detail", label: "关键分析", desc: "分析濒危或优势物种的详细状态", defaultTimeout: 90 },
+    { key: "turn_report", label: "回合报告", desc: "生成每回合的整体生态演化总结", defaultTimeout: 120, parallel: "single", parallelNote: "流式输出，无需并行" },
+    { key: "focus_batch", label: "重点批次", desc: "关键物种分块并行处理（max_concurrent=3）", defaultTimeout: 90, parallel: "batch", parallelNote: "staggered_gather 分块并行" },
+    { key: "critical_detail", label: "关键分析", desc: "分析濒危或优势物种的详细状态", defaultTimeout: 90, parallel: "concurrent", parallelNote: "多物种并发评估" },
   ],
   // 物种分化 - 新物种诞生相关
   speciation: [
-    { key: "speciation", label: "物种分化", desc: "判定新物种的诞生条件与特征", defaultTimeout: 60 },
-    { key: "speciation_batch", label: "批量分化", desc: "批量处理多个物种的分化判定", defaultTimeout: 90 },
-    { key: "plant_speciation", label: "植物分化", desc: "植物专用的分化判定逻辑", defaultTimeout: 60 },
-    { key: "species_generation", label: "物种生成", desc: "生成初始物种或新物种的属性", defaultTimeout: 60 },
+    { key: "speciation", label: "物种分化", desc: "单物种分化判定，回合内多物种并发", defaultTimeout: 60, parallel: "concurrent", parallelNote: "staggered_gather 并发控制" },
+    { key: "speciation_batch", label: "批量分化", desc: "同批多物种一次请求处理", defaultTimeout: 90, parallel: "batch", parallelNote: "批量接口，高并发场景" },
+    { key: "plant_speciation", label: "植物分化", desc: "植物专用分化，支持批量模式", defaultTimeout: 60, parallel: "batch", parallelNote: "植物批量分化" },
+    { key: "species_generation", label: "物种生成", desc: "生成初始物种或新物种的属性", defaultTimeout: 60, parallel: "single" },
   ],
   // 适应与叙事 - 物种状态描述
   narrative: [
-    { key: "pressure_adaptation", label: "压力适应", desc: "评估物种对环境压力的适应能力", defaultTimeout: 60 },
-    { key: "species_status_eval", label: "状态评估", desc: "综合评估物种的生存状态与威胁", defaultTimeout: 60 },
-    { key: "species_narrative", label: "物种叙事", desc: "生成物种的故事性描述", defaultTimeout: 60 },
-    { key: "narrative", label: "描述重写", desc: "重写或润色物种的描述文本", defaultTimeout: 45 },
+    { key: "pressure_adaptation", label: "压力适应", desc: "多物种并行评估适应能力", defaultTimeout: 60, parallel: "concurrent", parallelNote: "staggered_gather 带并发上限" },
+    { key: "species_status_eval", label: "状态评估", desc: "分批并行评估，单个超时有fallback", defaultTimeout: 60, parallel: "batch", parallelNote: "批量评估接口" },
+    { key: "species_narrative", label: "物种叙事", desc: "批量组装提示并并行请求", defaultTimeout: 60, parallel: "batch", parallelNote: "staggered_gather 批量叙事" },
+    { key: "narrative", label: "描述重写", desc: "多物种并行执行描述更新", defaultTimeout: 45, parallel: "concurrent", parallelNote: "staggered_gather 并发" },
   ],
   // 杂交与智能体 - 高级功能
   advanced: [
-    { key: "hybridization", label: "自然杂交", desc: "判定物种间的杂交可能性与结果", defaultTimeout: 60 },
-    { key: "forced_hybridization", label: "强制杂交", desc: "玩家触发的杂交事件判定", defaultTimeout: 60 },
-    { key: "biological_assessment_a", label: "智能体A档", desc: "生态智能体高精度评估（高耗能）", defaultTimeout: 90 },
-    { key: "biological_assessment_b", label: "智能体B档", desc: "生态智能体快速评估（低耗能）", defaultTimeout: 60 },
+    { key: "hybridization", label: "自然杂交", desc: "回合内多组杂交并发执行", defaultTimeout: 60, parallel: "concurrent", parallelNote: "并发杂交判定" },
+    { key: "forced_hybridization", label: "强制杂交", desc: "玩家触发的杂交事件判定", defaultTimeout: 60, parallel: "single" },
+    { key: "biological_assessment_a", label: "智能体A档", desc: "生态智能体高精度评估，A/B可并行", defaultTimeout: 90, parallel: "batch", parallelNote: "A/B两批可并行gather" },
+    { key: "biological_assessment_b", label: "智能体B档", desc: "生态智能体快速评估，与A档并行", defaultTimeout: 60, parallel: "batch", parallelNote: "A/B两批可并行gather" },
   ],
-} as const;
+};
 
-const ALL_CAPABILITIES = [
+const ALL_CAPABILITIES: CapabilityDef[] = [
   ...AI_CAPABILITIES.core, 
   ...AI_CAPABILITIES.speciation, 
   ...AI_CAPABILITIES.narrative, 
   ...AI_CAPABILITIES.advanced
 ];
+
+// 判断能力是否支持负载均衡（batch 或 concurrent 模式）
+const supportsLoadBalance = (cap: CapabilityDef) => cap.parallel !== "single";
 
 // 向量模型预设
 const EMBEDDING_PRESETS = [
@@ -1339,11 +1353,32 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
             <div className="tab-content fade-in">
               <div className="section-header">
                 <h3>🧠 AI 能力路由配置</h3>
-                <p>为不同的 AI 功能分配专属模型。未配置的功能将使用全局默认服务商。</p>
+                <p>为不同的 AI 能力分配专属服务商和模型。支持负载均衡的能力可配置多个服务商分散请求。</p>
               </div>
 
-              <div className="tip-box info" style={{marginBottom: '1rem'}}>
-                💡 <strong>提示：</strong>这里列出的都是实际调用 LLM 的能力。迁徙、压力升级等规则型计算不使用 AI，无需配置。
+              {/* 说明面板 */}
+              <div className="route-info-panel">
+                <div className="route-info-item">
+                  <span className="route-info-icon">⚡</span>
+                  <div>
+                    <strong>批量接口</strong>
+                    <span>一次请求处理多个物种，启用负载均衡可分散到多服务商</span>
+                  </div>
+                </div>
+                <div className="route-info-item">
+                  <span className="route-info-icon">🔄</span>
+                  <div>
+                    <strong>并发请求</strong>
+                    <span>回合内多物种同时请求，负载均衡可避免单服务商限流</span>
+                  </div>
+                </div>
+                <div className="route-info-item">
+                  <span className="route-info-icon">📝</span>
+                  <div>
+                    <strong>单次请求</strong>
+                    <span>单独调用，无需负载均衡</span>
+                  </div>
+                </div>
               </div>
               
               {/* 核心推演 */}
@@ -1351,7 +1386,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                 <div className="group-header high">
                   <span className="group-icon">🔴</span>
                   <span className="group-title">核心推演</span>
-                  <span className="group-desc">每回合必调用，建议使用高性能模型</span>
+                  <span className="group-desc">每回合必调用，建议高性能模型</span>
                 </div>
                 <div className="capabilities-grid">
                   {AI_CAPABILITIES.core.map(cap => (
@@ -1365,7 +1400,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                       defaultModel={form.default_model}
                       onUpdate={(field, value) => dispatch({ type: 'UPDATE_ROUTE', capKey: cap.key, field, value })}
                       providerModels={providerModels}
-                      loadBalanceEnabled={form.load_balance_enabled}
+                      loadBalanceEnabled={form.load_balance_enabled && supportsLoadBalance(cap)}
                       onToggleProvider={(providerId) => dispatch({ type: 'TOGGLE_ROUTE_PROVIDER', capKey: cap.key, providerId })}
                     />
                   ))}
@@ -1377,7 +1412,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                 <div className="group-header medium">
                   <span className="group-icon">🧬</span>
                   <span className="group-title">物种分化</span>
-                  <span className="group-desc">新物种诞生相关，调用频率视分化条件而定</span>
+                  <span className="group-desc">批量分化支持负载均衡，分散高并发请求</span>
                 </div>
                 <div className="capabilities-grid">
                   {AI_CAPABILITIES.speciation.map(cap => (
@@ -1391,7 +1426,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                       defaultModel={form.default_model}
                       onUpdate={(field, value) => dispatch({ type: 'UPDATE_ROUTE', capKey: cap.key, field, value })}
                       providerModels={providerModels}
-                      loadBalanceEnabled={form.load_balance_enabled}
+                      loadBalanceEnabled={form.load_balance_enabled && supportsLoadBalance(cap)}
                       onToggleProvider={(providerId) => dispatch({ type: 'TOGGLE_ROUTE_PROVIDER', capKey: cap.key, providerId })}
                     />
                   ))}
@@ -1403,7 +1438,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                 <div className="group-header low">
                   <span className="group-icon">📖</span>
                   <span className="group-title">适应与叙事</span>
-                  <span className="group-desc">物种状态评估与故事生成，可用经济模型</span>
+                  <span className="group-desc">批量评估与叙事生成，高并发场景建议启用负载均衡</span>
                 </div>
                 <div className="capabilities-grid">
                   {AI_CAPABILITIES.narrative.map(cap => (
@@ -1417,7 +1452,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                       defaultModel={form.default_model}
                       onUpdate={(field, value) => dispatch({ type: 'UPDATE_ROUTE', capKey: cap.key, field, value })}
                       providerModels={providerModels}
-                      loadBalanceEnabled={form.load_balance_enabled}
+                      loadBalanceEnabled={form.load_balance_enabled && supportsLoadBalance(cap)}
                       onToggleProvider={(providerId) => dispatch({ type: 'TOGGLE_ROUTE_PROVIDER', capKey: cap.key, providerId })}
                     />
                   ))}
@@ -1429,7 +1464,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                 <div className="group-header medium">
                   <span className="group-icon">🔬</span>
                   <span className="group-title">杂交与智能体</span>
-                  <span className="group-desc">高级功能，按需调用</span>
+                  <span className="group-desc">A/B智能体可并行，杂交支持并发</span>
                 </div>
                 <div className="capabilities-grid">
                   {AI_CAPABILITIES.advanced.map(cap => (
@@ -1443,7 +1478,7 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                       defaultModel={form.default_model}
                       onUpdate={(field, value) => dispatch({ type: 'UPDATE_ROUTE', capKey: cap.key, field, value })}
                       providerModels={providerModels}
-                      loadBalanceEnabled={form.load_balance_enabled}
+                      loadBalanceEnabled={form.load_balance_enabled && supportsLoadBalance(cap)}
                       onToggleProvider={(providerId) => dispatch({ type: 'TOGGLE_ROUTE_PROVIDER', capKey: cap.key, providerId })}
                     />
                   ))}
@@ -2635,7 +2670,7 @@ function CapabilityCard({
   loadBalanceEnabled,
   onToggleProvider,
 }: {
-  cap: { key: string; label: string; desc: string; defaultTimeout: number };
+  cap: CapabilityDef;
   priority: 'high' | 'medium' | 'low';
   route: Partial<CapabilityRouteConfig>;
   providers: Record<string, ProviderConfig>;
@@ -2690,10 +2725,22 @@ function CapabilityCard({
   const isUsingDefaultProvider = !route.provider_id;
   const isUsingDefaultModel = !route.model;
 
+  // 并行模式图标和说明
+  const parallelIcon = cap.parallel === "batch" ? "⚡" : cap.parallel === "concurrent" ? "🔄" : "📝";
+  const parallelLabel = cap.parallel === "batch" ? "批量" : cap.parallel === "concurrent" ? "并发" : "单次";
+
   return (
     <div className={`capability-card ${priority}`}>
       <div className="capability-header">
-        <strong>{cap.label}</strong>
+        <div className="capability-title">
+          <strong>{cap.label}</strong>
+          <span 
+            className={`parallel-badge ${cap.parallel}`} 
+            title={cap.parallelNote || parallelLabel}
+          >
+            {parallelIcon} {parallelLabel}
+          </span>
+        </div>
         <div className="capability-status">
           {loadBalanceEnabled && poolProviderIds.length > 0 ? (
             <span className="status-badge lb" title={`负载均衡: ${poolProviderIds.length}个服务商`}>
