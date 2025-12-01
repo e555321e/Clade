@@ -815,11 +815,15 @@ class MapStateManager:
         # {tile_id: {prey_trophic_range: total_population}}
         tile_prey_populations: dict[int, dict[float, float]] = {}
         tile_consumer_populations: dict[int, float] = {}
+        species_tile_populations: dict[int, dict[int, float]] = {}
         
         for item in habitats:
             sp = species_map.get(item.species_id)
             if not sp:
                 continue
+            if item.species_id not in species_tile_populations:
+                species_tile_populations[item.species_id] = {}
+            species_tile_populations[item.species_id][item.tile_id] = item.population
             trophic = getattr(sp, 'trophic_level', 1.0) or 1.0
             
             if trophic < 2.0:
@@ -835,6 +839,19 @@ class MapStateManager:
                 if item.tile_id not in tile_consumer_populations:
                     tile_consumer_populations[item.tile_id] = 0
                 tile_consumer_populations[item.tile_id] += item.population
+
+        def _get_prey_ranges_for_consumer(consumer_trophic: float) -> list[float]:
+            """确定消费者对应的猎物营养级范围。"""
+            consumer_range = math.floor(consumer_trophic * 2) / 2.0
+            if consumer_range >= 5.0:
+                return [4.0, 4.5, 3.5, 3.0]
+            if consumer_range >= 4.0:
+                return [3.0, 3.5, 2.5, 2.0]
+            if consumer_range >= 3.0:
+                return [2.0, 2.5, 1.5]
+            if consumer_range >= 2.0:
+                return [1.0, 1.5]
+            return []
         
         # 使用混合 Embedding 宜居度服务
         from .suitability_service import get_suitability_service
@@ -851,10 +868,49 @@ class MapStateManager:
             breakdown = None
             calculated_suitability = item.suitability
             
+            # 消费者营养级信息（用于猎物丰富度计算）
+            food_score = None
+            has_prey = None
+            prey_abundance = None
+            
             if species and tile:
                 try:
                     result = suitability_service.compute_suitability(species, tile)
                     calculated_suitability = result.total
+                    
+                    # 【改进】对消费者，额外计算猎物丰富度惩罚
+                    trophic_level = getattr(species, 'trophic_level', 1.0) or 1.0
+                    if trophic_level >= 2.0:
+                        # 获取消费者对应的猎物营养级范围
+                        prey_ranges = _get_prey_ranges_for_consumer(trophic_level)
+                        
+                        # 汇总该地块的猎物总量
+                        tile_id = item.tile_id
+                        prey_pop = 0
+                        if tile_id in tile_prey_populations:
+                            for prey_range in prey_ranges:
+                                prey_pop += tile_prey_populations[tile_id].get(prey_range, 0)
+                        
+                        # 获取该物种在该地块的消费者数量
+                        consumer_pop_map = species_tile_populations.get(item.species_id, {})
+                        
+                        # 调用 _suitability_score_with_breakdown 计算猎物丰富度感知的宜居度
+                        consumer_result = self._suitability_score_with_breakdown(
+                            species,
+                            tile,
+                            prey_tile_populations={tile_id: prey_pop},
+                            consumer_tile_populations=consumer_pop_map,
+                        )
+                        
+                        # 提取食物相关分数
+                        food_score = consumer_result.get("food_score", 0.5)
+                        has_prey = consumer_result.get("has_prey", False)
+                        prey_abundance = consumer_result.get("prey_abundance", 0.0)
+                        
+                        # 取 Embedding 结果和营养级计算结果的较小值
+                        # 避免"光有环境匹配度"时高估消费者宜居度
+                        consumer_suitability = consumer_result.get("total", calculated_suitability)
+                        calculated_suitability = min(calculated_suitability, consumer_suitability)
                     
                     # 构建分解数据
                     breakdown = SuitabilityBreakdown(
@@ -873,6 +929,10 @@ class MapStateManager:
                         stability=result.feature_breakdown.get("stability", 0),
                         vegetation=result.feature_breakdown.get("vegetation", 0),
                         river=result.feature_breakdown.get("river", 0),
+                        # 【新增】消费者猎物丰富度信息
+                        food_score=food_score,
+                        has_prey=has_prey,
+                        prey_abundance=prey_abundance,
                     )
                 except Exception as e:
                     logger.warning(f"[MapManager] 宜居度计算失败: {e}")
