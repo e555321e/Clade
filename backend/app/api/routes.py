@@ -431,25 +431,30 @@ def apply_ui_config(config: UIConfig) -> UIConfig:
             for pid in provider_ids:
                 p = config.providers.get(pid)
                 if p and p.api_key and p.base_url:
+                    # 【修复】如果 route_config.model 为空，使用服务商的 selected_models
+                    pool_model = route_config.model
+                    if not pool_model and p.selected_models:
+                        pool_model = p.selected_models[0]
                     pool_configs.append(ProviderPoolConfig(
                         provider_id=pid,
                         base_url=p.base_url,
                         api_key=p.api_key,
                         provider_type=p.provider_type or "openai",
-                        model=route_config.model,
+                        model=pool_model,
                     ))
             if pool_configs:
                 model_router.set_provider_pool(capability, pool_configs)
                 logger.info(f"[配置] {capability} 启用负载均衡: {len(pool_configs)} 个服务商")
         
         if active_provider:
-            # 构建 extra_body
-            extra_body = None
+            # 【修复】保留原始的 extra_body（如 response_format），同时支持 enable_thinking
+            original_extra_body = model_router.routes.get(capability)
+            original_extra_body = original_extra_body.extra_body if original_extra_body else None
+            extra_body = dict(original_extra_body) if original_extra_body else {}
+            
             if route_config.enable_thinking:
-                extra_body = {
-                    "enable_thinking": True,
-                    "thinking_budget": 4096 # 默认 budget
-                }
+                extra_body["enable_thinking"] = True
+                extra_body["thinking_budget"] = 4096
 
             # 更新路由配置
             model_router.routes[capability] = ModelConfig(
