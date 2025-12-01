@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useReducer, useMemo } from "react";
-import type { UIConfig, ProviderConfig, CapabilityRouteConfig, ProviderType } from "../services/api.types";
+import type { UIConfig, ProviderConfig, CapabilityRouteConfig, ProviderType, SpeciationConfig } from "../services/api.types";
 import { testApiConnection, fetchProviderModels, type ModelInfo } from "../services/api";
 import { GamePanel } from "./common/GamePanel";
 import { ConfirmDialog } from "./common/ConfirmDialog";
@@ -12,7 +12,7 @@ interface Props {
   onSave: (config: UIConfig) => Promise<void>;
 }
 
-type Tab = "connection" | "models" | "memory" | "autosave" | "performance";
+type Tab = "connection" | "models" | "memory" | "autosave" | "performance" | "speciation";
 
 // ========== 常量定义 ==========
 
@@ -197,7 +197,9 @@ type Action =
   | { type: 'SELECT_ALL_MODELS'; providerId: string }
   | { type: 'DESELECT_ALL_MODELS'; providerId: string }
   // 多服务商负载均衡
-  | { type: 'TOGGLE_ROUTE_PROVIDER'; capKey: string; providerId: string };
+  | { type: 'TOGGLE_ROUTE_PROVIDER'; capKey: string; providerId: string }
+  // 分化配置
+  | { type: 'UPDATE_SPECIATION'; updates: Partial<SpeciationConfig> };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -367,6 +369,18 @@ function reducer(state: State, action: Action): State {
           capability_routes: {
             ...state.form.capability_routes,
             [action.capKey]: { ...currentRoute, provider_ids: newIds }
+          }
+        }
+      };
+    }
+    case 'UPDATE_SPECIATION': {
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          speciation: {
+            ...(state.form.speciation || {}),
+            ...action.updates
           }
         }
       };
@@ -870,6 +884,13 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
               icon="⚡" 
               label="性能调优" 
               desc="超时与并发控制"
+            />
+            <NavButton 
+              active={tab === "speciation"} 
+              onClick={() => dispatch({ type: 'SET_TAB', tab: 'speciation' })} 
+              icon="🧬" 
+              label="分化设置" 
+              desc="物种演化参数"
             />
           </div>
           
@@ -1937,6 +1958,504 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
                       <div>
                         <strong>注意</strong>
                         <p>过短的超时会导致更多规则降级，叙事质量可能下降</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 6: 分化设置 */}
+          {tab === "speciation" && (
+            <div className="tab-content fade-in">
+              <div className="section-header">
+                <h3>🧬 物种分化参数</h3>
+                <p>调整物种演化分化的触发条件和概率，影响新物种产生的频率与时机。</p>
+              </div>
+              
+              <div className="memory-layout">
+                <div className="memory-main">
+                  {/* 快速预设 */}
+                  <div className="preset-section">
+                    <h4>快速配置预设</h4>
+                    <div className="preset-buttons autosave-presets">
+                      <button
+                        type="button"
+                        className="preset-btn"
+                        onClick={() => {
+                          dispatch({ type: 'UPDATE_SPECIATION', updates: {
+                            early_game_turns: 15,
+                            early_threshold_min_factor: 0.2,
+                            early_threshold_decay_rate: 0.1,
+                            pressure_threshold_early: 0.3,
+                            resource_threshold_early: 0.25,
+                            radiation_early_bonus: 0.2,
+                            no_isolation_penalty_early: 0.9,
+                          }});
+                        }}
+                      >
+                        🌱 爆发模式
+                        <span className="preset-desc">早期大量分化，适合新游戏</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="preset-btn"
+                        onClick={() => {
+                          dispatch({ type: 'UPDATE_SPECIATION', updates: {
+                            early_game_turns: 10,
+                            early_threshold_min_factor: 0.3,
+                            early_threshold_decay_rate: 0.07,
+                            pressure_threshold_early: 0.4,
+                            resource_threshold_early: 0.35,
+                            radiation_early_bonus: 0.15,
+                            no_isolation_penalty_early: 0.8,
+                          }});
+                        }}
+                      >
+                        ⚖️ 平衡模式
+                        <span className="preset-desc">默认设置，平衡分化速度</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="preset-btn"
+                        onClick={() => {
+                          dispatch({ type: 'UPDATE_SPECIATION', updates: {
+                            early_game_turns: 5,
+                            early_threshold_min_factor: 0.5,
+                            early_threshold_decay_rate: 0.03,
+                            pressure_threshold_early: 0.6,
+                            resource_threshold_early: 0.5,
+                            radiation_early_bonus: 0.05,
+                            no_isolation_penalty_early: 0.6,
+                          }});
+                        }}
+                      >
+                        🔬 写实模式
+                        <span className="preset-desc">分化困难，适合长期游戏</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="tip-box info">
+                    💡 分化是新物种产生的核心机制。早期阶段参数会在游戏前期降低分化门槛，帮助建立多样化的生态系统。
+                  </div>
+
+                  {/* 基础参数 */}
+                  <div className="speciation-section">
+                    <h4>🎯 基础分化参数</h4>
+                    <div className="form-fields">
+                      <label className="form-field">
+                        <span className="field-label">
+                          冷却回合
+                          <span className="field-hint-inline">（分化后等待回合数）</span>
+                        </span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="10"
+                            value={form.speciation?.cooldown_turns ?? 0}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { cooldown_turns: parseInt(e.target.value) || 0 } })}
+                          />
+                          <span className="unit-label">回合</span>
+                        </div>
+                        <span className="field-hint">物种分化后需要等待的回合数才能再次分化</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">
+                          物种软上限
+                          <span className="field-hint-inline">（密度衰减阈值）</span>
+                        </span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="10"
+                            max="200"
+                            value={form.speciation?.species_soft_cap ?? 60}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { species_soft_cap: parseInt(e.target.value) || 60 } })}
+                          />
+                          <span className="unit-label">种</span>
+                        </div>
+                        <span className="field-hint">超过此数量后分化概率开始衰减</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">
+                          基础分化率
+                          <span className="field-hint-inline">（达成条件后的基础概率）</span>
+                        </span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={form.speciation?.base_speciation_rate ?? 0.5}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { base_speciation_rate: parseFloat(e.target.value) || 0.5 } })}
+                          />
+                          <span className="unit-label">%</span>
+                        </div>
+                        <span className="field-hint">满足分化条件时的基础成功概率</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* 早期优化参数 */}
+                  <div className="speciation-section">
+                    <h4>🌅 早期分化优化</h4>
+                    <div className="tip-box">
+                      💡 这些参数在游戏早期降低分化难度，帮助生态系统快速多样化。
+                    </div>
+                    <div className="form-fields">
+                      <label className="form-field">
+                        <span className="field-label">
+                          早期阶段回合数
+                          <span className="field-hint-inline">（使用宽松规则的回合数）</span>
+                        </span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="50"
+                            value={form.speciation?.early_game_turns ?? 10}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { early_game_turns: parseInt(e.target.value) || 10 } })}
+                          />
+                          <span className="unit-label">回合</span>
+                        </div>
+                        <span className="field-hint">前N回合使用更宽松的分化条件</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">
+                          门槛最低系数
+                          <span className="field-hint-inline">（门槛降低的最低比例）</span>
+                        </span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0.1"
+                            max="1"
+                            step="0.05"
+                            value={form.speciation?.early_threshold_min_factor ?? 0.3}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { early_threshold_min_factor: parseFloat(e.target.value) || 0.3 } })}
+                          />
+                          <span className="unit-label">倍</span>
+                        </div>
+                        <span className="field-hint">门槛最低可降至基础值的多少倍（0.3 = 30%）</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">
+                          门槛衰减速率
+                          <span className="field-hint-inline">（每回合降低的比例）</span>
+                        </span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0.01"
+                            max="0.2"
+                            step="0.01"
+                            value={form.speciation?.early_threshold_decay_rate ?? 0.07}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { early_threshold_decay_rate: parseFloat(e.target.value) || 0.07 } })}
+                          />
+                          <span className="unit-label">/回合</span>
+                        </div>
+                        <span className="field-hint">每回合门槛降低的速率（0.07 = 第0回合100%，第5回合65%）</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">
+                          跳过冷却回合数
+                          <span className="field-hint-inline">（早期不受冷却限制）</span>
+                        </span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="20"
+                            value={form.speciation?.early_skip_cooldown_turns ?? 5}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { early_skip_cooldown_turns: parseInt(e.target.value) || 5 } })}
+                          />
+                          <span className="unit-label">回合</span>
+                        </div>
+                        <span className="field-hint">前N回合忽略分化冷却期</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* 触发阈值 */}
+                  <div className="speciation-section">
+                    <h4>📊 触发条件阈值</h4>
+                    <div className="form-fields two-column">
+                      <div className="column">
+                        <h5 style={{margin: '0 0 8px', color: 'var(--accent-color)'}}>🌅 早期阶段</h5>
+                        <label className="form-field compact">
+                          <span className="field-label">压力阈值</span>
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={form.speciation?.pressure_threshold_early ?? 0.4}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { pressure_threshold_early: parseFloat(e.target.value) || 0.4 } })}
+                          />
+                        </label>
+                        <label className="form-field compact">
+                          <span className="field-label">资源阈值</span>
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={form.speciation?.resource_threshold_early ?? 0.35}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { resource_threshold_early: parseFloat(e.target.value) || 0.35 } })}
+                          />
+                        </label>
+                        <label className="form-field compact">
+                          <span className="field-label">演化潜力阈值</span>
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={form.speciation?.evo_potential_threshold_early ?? 0.5}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { evo_potential_threshold_early: parseFloat(e.target.value) || 0.5 } })}
+                          />
+                        </label>
+                      </div>
+                      <div className="column">
+                        <h5 style={{margin: '0 0 8px', color: 'var(--text-secondary)'}}>🌙 后期阶段</h5>
+                        <label className="form-field compact">
+                          <span className="field-label">压力阈值</span>
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={form.speciation?.pressure_threshold_late ?? 0.7}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { pressure_threshold_late: parseFloat(e.target.value) || 0.7 } })}
+                          />
+                        </label>
+                        <label className="form-field compact">
+                          <span className="field-label">资源阈值</span>
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={form.speciation?.resource_threshold_late ?? 0.6}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { resource_threshold_late: parseFloat(e.target.value) || 0.6 } })}
+                          />
+                        </label>
+                        <label className="form-field compact">
+                          <span className="field-label">演化潜力阈值</span>
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={form.speciation?.evo_potential_threshold_late ?? 0.7}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { evo_potential_threshold_late: parseFloat(e.target.value) || 0.7 } })}
+                          />
+                        </label>
+                      </div>
+                    </div>
+                    <span className="field-hint" style={{display: 'block', marginTop: '8px'}}>
+                      超过阈值时更容易触发分化。早期使用更低阈值，后期收紧。
+                    </span>
+                  </div>
+
+                  {/* 辐射演化 */}
+                  <div className="speciation-section">
+                    <h4>☀️ 辐射演化参数</h4>
+                    <div className="tip-box">
+                      💡 辐射演化是繁荣物种在无压力情况下的自然分化，概率较低但可产生多样性。
+                    </div>
+                    <div className="form-fields">
+                      <label className="form-field">
+                        <span className="field-label">
+                          基础概率
+                          <span className="field-hint-inline">（无压力时的分化基础概率）</span>
+                        </span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="0.5"
+                            step="0.01"
+                            value={form.speciation?.radiation_base_chance ?? 0.05}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { radiation_base_chance: parseFloat(e.target.value) || 0.05 } })}
+                          />
+                          <span className="unit-label">%</span>
+                        </div>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">
+                          早期额外加成
+                          <span className="field-hint-inline">（早期辐射演化的额外概率）</span>
+                        </span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="0.5"
+                            step="0.01"
+                            value={form.speciation?.radiation_early_bonus ?? 0.15}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { radiation_early_bonus: parseFloat(e.target.value) || 0.15 } })}
+                          />
+                          <span className="unit-label">%</span>
+                        </div>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">
+                          早期无隔离惩罚
+                          <span className="field-hint-inline">（无地理隔离时的概率乘数）</span>
+                        </span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={form.speciation?.no_isolation_penalty_early ?? 0.8}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { no_isolation_penalty_early: parseFloat(e.target.value) || 0.8 } })}
+                          />
+                          <span className="unit-label">倍</span>
+                        </div>
+                        <span className="field-hint">无地理隔离时概率乘以此系数（0.8 = 降低20%）</span>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">
+                          后期无隔离惩罚
+                        </span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={form.speciation?.no_isolation_penalty_late ?? 0.5}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { no_isolation_penalty_late: parseFloat(e.target.value) || 0.5 } })}
+                          />
+                          <span className="unit-label">倍</span>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* 候选地块筛选 */}
+                  <div className="speciation-section">
+                    <h4>🗺️ 候选地块筛选</h4>
+                    <div className="form-fields">
+                      <label className="form-field">
+                        <span className="field-label">
+                          最小种群
+                          <span className="field-hint-inline">（地块成为候选的最低种群）</span>
+                        </span>
+                        <div className="input-with-unit">
+                          <input
+                            className="field-input"
+                            type="number"
+                            min="10"
+                            max="500"
+                            value={form.speciation?.candidate_tile_min_pop ?? 50}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { candidate_tile_min_pop: parseInt(e.target.value) || 50 } })}
+                          />
+                          <span className="unit-label">个体</span>
+                        </div>
+                      </label>
+
+                      <label className="form-field">
+                        <span className="field-label">
+                          死亡率范围
+                          <span className="field-hint-inline">（允许分化的死亡率区间）</span>
+                        </span>
+                        <div className="range-inputs">
+                          <input
+                            className="field-input small"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={form.speciation?.candidate_tile_death_rate_min ?? 0.02}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { candidate_tile_death_rate_min: parseFloat(e.target.value) || 0.02 } })}
+                          />
+                          <span className="range-separator">~</span>
+                          <input
+                            className="field-input small"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={form.speciation?.candidate_tile_death_rate_max ?? 0.75}
+                            onChange={(e) => dispatch({ type: 'UPDATE_SPECIATION', updates: { candidate_tile_death_rate_max: parseFloat(e.target.value) || 0.75 } })}
+                          />
+                        </div>
+                        <span className="field-hint">死亡率过低或过高的地块不会成为分化候选</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 右侧说明 */}
+                <div className="memory-stats">
+                  <h4>📝 分化机制说明</h4>
+                  <div className="info-list">
+                    <div className="info-item">
+                      <span className="info-icon">🌍</span>
+                      <div>
+                        <strong>地理隔离</strong>
+                        <p>物理分隔导致的分化，是最主要的分化途径</p>
+                      </div>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-icon">🌿</span>
+                      <div>
+                        <strong>生态隔离</strong>
+                        <p>同区域内因资源/环境差异导致的分化</p>
+                      </div>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-icon">☀️</span>
+                      <div>
+                        <strong>辐射演化</strong>
+                        <p>繁荣物种的自然分化，概率较低但持续进行</p>
+                      </div>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-icon">⚖️</span>
+                      <div>
+                        <strong>早期优化</strong>
+                        <p>游戏前期使用更宽松的条件，帮助建立多样性</p>
+                      </div>
+                    </div>
+                    <div className="info-item">
+                      <span className="info-icon">💀</span>
+                      <div>
+                        <strong>自然淘汰</strong>
+                        <p>分化多不等于存活多，不适应环境的物种会灭绝</p>
                       </div>
                     </div>
                   </div>

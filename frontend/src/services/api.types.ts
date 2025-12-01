@@ -304,6 +304,49 @@ export interface CapabilityRouteConfig {
   enable_thinking?: boolean;
 }
 
+// 物种分化配置
+export interface SpeciationConfig {
+  // ========== 基础分化参数 ==========
+  cooldown_turns?: number;              // 分化冷却期（回合数）
+  species_soft_cap?: number;            // 物种密度软上限
+  base_speciation_rate?: number;        // 基础分化概率（0-1）
+  max_offspring_count?: number;         // 最大子种数量
+  
+  // ========== 早期分化优化 ==========
+  early_game_turns?: number;            // 早期回合阈值
+  early_threshold_min_factor?: number;  // 早期门槛折减系数最小值
+  early_threshold_decay_rate?: number;  // 早期门槛折减速率
+  early_skip_cooldown_turns?: number;   // 早期跳过冷却期的回合数
+  
+  // ========== 压力/资源触发阈值 ==========
+  pressure_threshold_late?: number;     // 后期压力阈值
+  pressure_threshold_early?: number;    // 早期压力阈值
+  resource_threshold_late?: number;     // 后期资源阈值
+  resource_threshold_early?: number;    // 早期资源阈值
+  evo_potential_threshold_late?: number;   // 后期演化潜力阈值
+  evo_potential_threshold_early?: number;  // 早期演化潜力阈值
+  
+  // ========== 候选地块筛选 ==========
+  candidate_tile_min_pop?: number;          // 候选地块最小种群
+  candidate_tile_death_rate_min?: number;   // 候选地块死亡率下限
+  candidate_tile_death_rate_max?: number;   // 候选地块死亡率上限
+  
+  // ========== 辐射演化 ==========
+  radiation_base_chance?: number;         // 辐射演化基础概率
+  radiation_early_bonus?: number;         // 早期辐射演化额外加成
+  radiation_pop_ratio_early?: number;     // 早期辐射演化种群比例要求
+  radiation_pop_ratio_late?: number;      // 后期辐射演化种群比例要求
+  radiation_max_chance_early?: number;    // 早期辐射演化概率上限
+  radiation_max_chance_late?: number;     // 后期辐射演化概率上限
+  no_isolation_penalty_early?: number;    // 早期无隔离惩罚系数
+  no_isolation_penalty_late?: number;     // 后期无隔离惩罚系数
+  
+  // ========== 门槛乘数 ==========
+  threshold_multiplier_no_isolation?: number;      // 无隔离时门槛乘数
+  threshold_multiplier_high_overlap?: number;      // 高生态位重叠时门槛乘数
+  threshold_multiplier_high_saturation?: number;   // 高资源饱和时门槛乘数
+}
+
 export interface UIConfig {
   // 1. 服务商库
   providers: Record<string, ProviderConfig>;
@@ -341,6 +384,9 @@ export interface UIConfig {
   
   // 9. 回合报告 LLM 开关（与物种叙事分开）
   turn_report_llm_enabled?: boolean;  // 是否启用 LLM 生成回合总结（默认开启）
+  
+  // 10. 物种分化配置
+  speciation?: SpeciationConfig;
 
   // --- Legacy Fields (For backward compatibility types) ---
   ai_provider?: string | null;

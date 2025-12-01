@@ -3,14 +3,17 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Iterable, Sequence, Callable, Awaitable, Any
 
 from ...models.species import LineageEvent, Species
+from ...models.config import SpeciationConfig
 from ...ai.model_router import staggered_gather
 
 logger = logging.getLogger(__name__)
 from ...repositories.genus_repository import genus_repository
 from ...repositories.species_repository import species_repository
+from ...repositories.environment_repository import environment_repository
 from ...schemas.responses import BranchingEvent
 from .gene_library import GeneLibraryService
 from .genetic_distance import GeneticDistanceCalculator
@@ -23,6 +26,17 @@ from ...core.config import get_settings
 
 # 获取配置
 _settings = get_settings()
+
+
+def _load_speciation_config() -> SpeciationConfig:
+    """从 UI 配置加载分化配置，如果失败则返回默认配置"""
+    try:
+        ui_config_path = Path(_settings.ui_config_path)
+        ui_config = environment_repository.load_ui_config(ui_config_path)
+        return ui_config.speciation
+    except Exception as e:
+        logger.warning(f"[分化配置] 加载UI配置失败，使用默认值: {e}")
+        return SpeciationConfig()
 
 
 class SpeciationService:
@@ -157,16 +171,19 @@ class SpeciationService:
         # 生成食物链状态描述（用于AI）
         self._food_chain_summary = self._summarize_food_chain_status(trophic_interactions)
         
+        # ========== 加载分化配置 ==========
+        spec_config = _load_speciation_config()
+        is_early_game = turn_index < spec_config.early_game_turns
+        
         # 动态分化限制 (Dynamic Speciation Limiting)
         # 【优化】收紧限制，依赖淘汰机制来控制物种数量
         current_species_count = len(mortality_results)
-        # 软上限从配置读取，默认60
-        soft_cap = _settings.species_soft_cap
+        soft_cap = spec_config.species_soft_cap
         
-        # 【早期分化优化】前10回合不做密度衰减，鼓励多分化
-        if turn_index < 10:
+        # 【早期分化优化】早期不做密度衰减，鼓励多分化
+        if is_early_game:
             density_damping = 1.0
-            logger.debug(f"[早期分化] turn={turn_index} < 10，跳过密度衰减")
+            logger.debug(f"[早期分化] turn={turn_index} < {spec_config.early_game_turns}，跳过密度衰减")
         else:
             density_damping = 1.0 / (1.0 + max(0, current_species_count - soft_cap) / float(soft_cap))
         
@@ -244,11 +261,12 @@ class SpeciationService:
                 clusters = []
                 
                 # 如果有地块数据，尝试筛选候选地块
-                # 【早期分化优化】放宽筛选条件：pop >= 50（原100），死亡率 0.02-0.75（原0.03-0.70）
+                # 使用配置中的筛选条件
                 if tile_populations and tile_mortality:
                     for tile_id, pop in tile_populations.items():
                         rate = tile_mortality.get(tile_id, 0.5)
-                        if pop >= 50 and 0.02 <= rate <= 0.75:
+                        if (pop >= spec_config.candidate_tile_min_pop and 
+                            spec_config.candidate_tile_death_rate_min <= rate <= spec_config.candidate_tile_death_rate_max):
                             candidate_tiles.add(tile_id)
                     if candidate_tiles:
                         candidate_population = int(sum(tile_populations.get(t, 0) for t in candidate_tiles))
@@ -296,19 +314,19 @@ class SpeciationService:
             speciation_pressure = species.morphology_stats.get("speciation_pressure", 0.0) or 0.0
             
             # 【新增】分化冷却期检查
-            # 【早期分化优化】turn < 5 时跳过冷却期，鼓励早期多分化
-            cooldown = _settings.speciation_cooldown_turns
+            # 早期跳过冷却期，鼓励早期多分化
+            cooldown = spec_config.cooldown_turns
             last_speciation_turn = species.morphology_stats.get("last_speciation_turn", -999)
             turns_since_speciation = turn_index - last_speciation_turn
             
-            if turn_index >= 5 and turns_since_speciation < cooldown:
+            if turn_index >= spec_config.early_skip_cooldown_turns and turns_since_speciation < cooldown:
                 logger.debug(
                     f"[分化冷却] {species.common_name} 仍在冷却期 "
                     f"({turns_since_speciation}/{cooldown}回合)"
                 )
                 continue
-            elif turn_index < 5 and turns_since_speciation < cooldown:
-                logger.debug(f"[早期分化] turn={turn_index} < 5，跳过冷却期检查")
+            elif turn_index < spec_config.early_skip_cooldown_turns and turns_since_speciation < cooldown:
+                logger.debug(f"[早期分化] turn={turn_index} < {spec_config.early_skip_cooldown_turns}，跳过冷却期检查")
             
             # 【平衡优化v4】几乎所有物种都有分化潜力
             # 演化潜力≥0.15 或 累积分化压力≥0.10
@@ -339,16 +357,15 @@ class SpeciationService:
             niche_overlap = result.niche_overlap
             niche_saturation = getattr(result, 'niche_saturation', 0.0)
             
-            # 【早期分化优化】前10回合使用更低的压力阈值
-            is_early_game = turn_index < 10
+            # 根据回合阶段使用不同的阈值（从配置读取）
             if is_early_game:
-                pressure_threshold = 0.4  # 早期：0.4（原0.7）
-                resource_threshold = 0.35  # 早期：0.35（原0.6）
-                evo_threshold = 0.5  # 早期：0.5（原0.7）
+                pressure_threshold = spec_config.pressure_threshold_early
+                resource_threshold = spec_config.resource_threshold_early
+                evo_threshold = spec_config.evo_potential_threshold_early
             else:
-                pressure_threshold = 0.7
-                resource_threshold = 0.6
-                evo_threshold = 0.7
+                pressure_threshold = spec_config.pressure_threshold_late
+                resource_threshold = spec_config.resource_threshold_late
+                evo_threshold = spec_config.evo_potential_threshold_late
             
             # 地理隔离时条件宽松
             if is_isolated:
@@ -400,25 +417,24 @@ class SpeciationService:
                         )
             
             # 自然辐射演化（繁荣物种分化）
-            # 【一揽子修改】辐射演化为低概率兜底
-            # 基线 0.05~0.10，加成后最高 0.25，无隔离再乘 0.5
-            # 【早期分化优化】早期（turn<10）额外 +0.10 加成
+            # 辐射演化为低概率兜底，使用配置参数
             if not has_pressure:
                 # 需要种群远超门槛 AND 资源饱和/竞争高
                 pop_ratio = survivors / min_population if min_population > 0 else 0
                 
-                # 基础概率
-                radiation_base = 0.05
+                # 基础概率（从配置）
+                radiation_base = spec_config.radiation_base_chance
                 
-                # 【早期分化优化】早期额外加成
+                # 早期额外加成（从配置）
                 early_bonus = 0.0
-                if is_early_game and pop_ratio >= 1.2:  # 早期种群超过门槛1.2倍
-                    early_bonus = 0.15  # 早期 +15% 加成
+                min_pop_ratio_for_bonus = spec_config.radiation_pop_ratio_early if is_early_game else spec_config.radiation_pop_ratio_late
+                if is_early_game and pop_ratio >= min_pop_ratio_for_bonus:
+                    early_bonus = spec_config.radiation_early_bonus
                 
                 # 种群因子：只有远超门槛（2倍以上）才有显著加成
                 if pop_ratio >= 2.0:
                     pop_factor = min(0.10, (pop_ratio - 2.0) * 0.02)  # 最多+0.10
-                elif is_early_game and pop_ratio >= 1.2:
+                elif is_early_game and pop_ratio >= min_pop_ratio_for_bonus:
                     pop_factor = min(0.08, (pop_ratio - 1.0) * 0.04)  # 早期更宽松
                 else:
                     pop_factor = 0.0
@@ -437,17 +453,17 @@ class SpeciationService:
                 if is_plant:
                     radiation_chance += 0.03
                 
-                # 硬性上限：早期 0.35，后期 0.25
-                max_radiation = 0.35 if is_early_game else 0.25
+                # 硬性上限（从配置）
+                max_radiation = spec_config.radiation_max_chance_early if is_early_game else spec_config.radiation_max_chance_late
                 radiation_chance = min(max_radiation, radiation_chance)
                 
-                # 【关键】无隔离惩罚：早期 0.8，后期 0.5
-                no_isolation_penalty = 0.8 if is_early_game else 0.5
+                # 无隔离惩罚（从配置）
+                no_isolation_penalty = spec_config.no_isolation_penalty_early if is_early_game else spec_config.no_isolation_penalty_late
                 if not is_isolated:
                     radiation_chance *= no_isolation_penalty
                 
-                # 需要种群超过门槛（早期1.2倍，后期1.5倍）
-                min_pop_ratio = 1.2 if is_early_game else 1.5
+                # 需要种群超过门槛
+                min_pop_ratio = spec_config.radiation_pop_ratio_early if is_early_game else spec_config.radiation_pop_ratio_late
                 if survivors >= min_population * min_pop_ratio and random.random() < radiation_chance:
                     has_pressure = True
                     speciation_type = "辐射演化"
@@ -2746,11 +2762,14 @@ class SpeciationService:
             * trophic_factor
         )
         
-        # 【早期分化优化】早期折减系数
-        # turn < 10 时门槛明显降低，10回合后收敛到 30% 上限（即最低 0.3 倍）
-        # 公式：factor = max(0.3, 1 - 0.07 * turn_index)
-        # turn=0: 1.0 (100%), turn=5: 0.65 (65%), turn=10+: 0.3 (30%)
-        early_factor = max(0.3, 1.0 - 0.07 * turn_index)
+        # 早期折减系数（从配置读取）
+        # turn < early_game_turns 时门槛明显降低
+        # 公式：factor = max(min_factor, 1 - decay_rate * turn_index)
+        spec_config = _load_speciation_config()
+        early_factor = max(
+            spec_config.early_threshold_min_factor, 
+            1.0 - spec_config.early_threshold_decay_rate * turn_index
+        )
         threshold = int(threshold * early_factor)
         
         # 确保在合理范围内

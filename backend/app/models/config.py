@@ -36,6 +36,79 @@ class CapabilityRouteConfig(BaseModel):
     enable_thinking: bool = False   # 是否开启思考模式（如DeepSeek-R1/SiliconFlow）
 
 
+class SpeciationConfig(BaseModel):
+    """物种分化配置 - 控制分化行为的所有参数"""
+    model_config = ConfigDict(extra="ignore")
+    
+    # ========== 基础分化参数 ==========
+    # 分化冷却期（回合数）：分化后多少回合内不能再次分化
+    cooldown_turns: int = 0
+    # 物种密度软上限：超过此数量后分化概率开始衰减
+    species_soft_cap: int = 60
+    # 基础分化概率（0-1）
+    base_speciation_rate: float = 0.50
+    # 最大子种数量
+    max_offspring_count: int = 6
+    
+    # ========== 早期分化优化 ==========
+    # 早期回合阈值：低于此回合数时使用更宽松的条件
+    early_game_turns: int = 10
+    # 早期门槛折减系数的最小值（0.3 = 最低降到 30%）
+    early_threshold_min_factor: float = 0.3
+    # 早期门槛折减速率（每回合降低多少）
+    early_threshold_decay_rate: float = 0.07
+    # 早期跳过冷却期的回合数
+    early_skip_cooldown_turns: int = 5
+    
+    # ========== 压力/资源触发阈值 ==========
+    # 后期压力阈值
+    pressure_threshold_late: float = 0.7
+    # 早期压力阈值
+    pressure_threshold_early: float = 0.4
+    # 后期资源阈值
+    resource_threshold_late: float = 0.6
+    # 早期资源阈值
+    resource_threshold_early: float = 0.35
+    # 后期演化潜力阈值
+    evo_potential_threshold_late: float = 0.7
+    # 早期演化潜力阈值
+    evo_potential_threshold_early: float = 0.5
+    
+    # ========== 候选地块筛选 ==========
+    # 候选地块最小种群
+    candidate_tile_min_pop: int = 50
+    # 候选地块死亡率下限
+    candidate_tile_death_rate_min: float = 0.02
+    # 候选地块死亡率上限
+    candidate_tile_death_rate_max: float = 0.75
+    
+    # ========== 辐射演化 ==========
+    # 辐射演化基础概率
+    radiation_base_chance: float = 0.05
+    # 早期辐射演化额外加成
+    radiation_early_bonus: float = 0.15
+    # 早期辐射演化种群比例要求
+    radiation_pop_ratio_early: float = 1.2
+    # 后期辐射演化种群比例要求
+    radiation_pop_ratio_late: float = 1.5
+    # 早期辐射演化概率上限
+    radiation_max_chance_early: float = 0.35
+    # 后期辐射演化概率上限
+    radiation_max_chance_late: float = 0.25
+    # 早期无隔离惩罚系数
+    no_isolation_penalty_early: float = 0.8
+    # 后期无隔离惩罚系数
+    no_isolation_penalty_late: float = 0.5
+    
+    # ========== 门槛乘数 ==========
+    # 无隔离时门槛乘数
+    threshold_multiplier_no_isolation: float = 1.8
+    # 高生态位重叠时门槛乘数
+    threshold_multiplier_high_overlap: float = 1.2
+    # 高资源饱和时门槛乘数（无隔离情况下）
+    threshold_multiplier_high_saturation: float = 1.2
+
+
 class UIConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -75,6 +148,9 @@ class UIConfig(BaseModel):
     
     # 9. 回合报告 LLM 开关（与物种叙事分开）
     turn_report_llm_enabled: bool = True  # 是否启用 LLM 生成回合总结（默认开启）
+    
+    # 10. 物种分化配置
+    speciation: SpeciationConfig = Field(default_factory=SpeciationConfig)
     
     # --- Legacy Fields (Keep for migration) ---
     ai_provider: str | None = None

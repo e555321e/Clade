@@ -1579,6 +1579,74 @@
   display: block;
 }
 
+/* ========== Speciation Settings ========== */
+.speciation-section {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: var(--sd-section-bg, rgba(0, 0, 0, 0.1));
+  border-radius: 12px;
+  border: 1px solid var(--sd-border);
+}
+
+.speciation-section h4 {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  color: var(--accent-color);
+  font-weight: 600;
+}
+
+.speciation-section .tip-box {
+  margin-bottom: 1rem;
+  font-size: 0.8rem;
+}
+
+/* Two-column layout for threshold settings */
+.form-fields.two-column {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.form-fields.two-column .column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.form-field.compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.form-field.compact .field-label {
+  font-size: 0.8rem;
+  margin-bottom: 0;
+}
+
+.form-field.compact .field-input {
+  width: 80px;
+  text-align: center;
+}
+
+/* Range inputs for min-max values */
+.range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.range-inputs .field-input.small {
+  width: 70px;
+  text-align: center;
+}
+
+.range-separator {
+  color: var(--sd-text-muted);
+  font-weight: 500;
+}
+
 /* ========== Footer ========== */
 .settings-footer {
   margin-top: auto;
