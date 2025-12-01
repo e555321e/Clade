@@ -160,9 +160,15 @@ class SpeciationService:
         # 动态分化限制 (Dynamic Speciation Limiting)
         # 【优化】收紧限制，依赖淘汰机制来控制物种数量
         current_species_count = len(mortality_results)
-        # 软上限从配置读取，默认40
+        # 软上限从配置读取，默认60
         soft_cap = _settings.species_soft_cap
-        density_damping = 1.0 / (1.0 + max(0, current_species_count - soft_cap) / float(soft_cap))
+        
+        # 【早期分化优化】前10回合不做密度衰减，鼓励多分化
+        if turn_index < 10:
+            density_damping = 1.0
+            logger.debug(f"[早期分化] turn={turn_index} < 10，跳过密度衰减")
+        else:
+            density_damping = 1.0 / (1.0 + max(0, current_species_count - soft_cap) / float(soft_cap))
         
         # 1. 准备阶段：筛选候选并生成任务
         entries: list[dict[str, Any]] = []
@@ -199,7 +205,8 @@ class SpeciationService:
                 
                 # 【一揽子修改】候选簇人口检查
                 # 要求候选簇内人口 >= 基础门槛的 60%，避免极度分散的小簇触发
-                base_threshold_for_cluster = self._calculate_speciation_threshold(species)
+                # 【早期分化优化】传入 turn_index 用于早期折减
+                base_threshold_for_cluster = self._calculate_speciation_threshold(species, turn_index)
                 min_cluster_pop = int(base_threshold_for_cluster * 0.6)
                 
                 # 检查每个簇的人口
@@ -237,10 +244,11 @@ class SpeciationService:
                 clusters = []
                 
                 # 如果有地块数据，尝试筛选候选地块
+                # 【早期分化优化】放宽筛选条件：pop >= 50（原100），死亡率 0.02-0.75（原0.03-0.70）
                 if tile_populations and tile_mortality:
                     for tile_id, pop in tile_populations.items():
                         rate = tile_mortality.get(tile_id, 0.5)
-                        if pop >= 100 and 0.03 <= rate <= 0.70:
+                        if pop >= 50 and 0.02 <= rate <= 0.75:
                             candidate_tiles.add(tile_id)
                     if candidate_tiles:
                         candidate_population = int(sum(tile_populations.get(t, 0) for t in candidate_tiles))
@@ -255,7 +263,8 @@ class SpeciationService:
             
             # 条件1：计算该物种的动态分化门槛
             # 【一揽子修改】根据隔离状态和生态条件动态调整门槛
-            base_threshold = self._calculate_speciation_threshold(species)
+            # 【早期分化优化】传入 turn_index 用于早期折减
+            base_threshold = self._calculate_speciation_threshold(species, turn_index)
             
             # 基础门槛修正
             threshold_multiplier = 1.0
@@ -287,15 +296,19 @@ class SpeciationService:
             speciation_pressure = species.morphology_stats.get("speciation_pressure", 0.0) or 0.0
             
             # 【新增】分化冷却期检查
+            # 【早期分化优化】turn < 5 时跳过冷却期，鼓励早期多分化
             cooldown = _settings.speciation_cooldown_turns
             last_speciation_turn = species.morphology_stats.get("last_speciation_turn", -999)
             turns_since_speciation = turn_index - last_speciation_turn
-            if turns_since_speciation < cooldown:
+            
+            if turn_index >= 5 and turns_since_speciation < cooldown:
                 logger.debug(
                     f"[分化冷却] {species.common_name} 仍在冷却期 "
                     f"({turns_since_speciation}/{cooldown}回合)"
                 )
                 continue
+            elif turn_index < 5 and turns_since_speciation < cooldown:
+                logger.debug(f"[早期分化] turn={turn_index} < 5，跳过冷却期检查")
             
             # 【平衡优化v4】几乎所有物种都有分化潜力
             # 演化潜力≥0.15 或 累积分化压力≥0.10
@@ -308,10 +321,14 @@ class SpeciationService:
                 continue
             
             # 记录通过初步检查的物种
+            # 【早期分化优化】添加详细日志，便于验证早期分化效果
             logger.info(
                 f"[分化候选] {species.common_name}: "
-                f"种群={candidate_population:,}, 门槛={min_population:,}, "
-                f"演化潜力={evo_potential:.2f}, 累积压力={speciation_pressure:.2f}"
+                f"turn={turn_index}, 种群={candidate_population:,}, 门槛={min_population:,} "
+                f"(base={base_threshold:,}, multiplier={threshold_multiplier:.2f}), "
+                f"演化潜力={evo_potential:.2f}, 累积压力={speciation_pressure:.2f}, "
+                f"avg_pressure={average_pressure:.2f}, resource_pressure={resource_pressure:.2f}, "
+                f"is_isolated={is_isolated}, early_game={turn_index < 10}"
             )
             
             # 条件3：压力或资源饱和
@@ -322,17 +339,33 @@ class SpeciationService:
             niche_overlap = result.niche_overlap
             niche_saturation = getattr(result, 'niche_saturation', 0.0)
             
+            # 【早期分化优化】前10回合使用更低的压力阈值
+            is_early_game = turn_index < 10
+            if is_early_game:
+                pressure_threshold = 0.4  # 早期：0.4（原0.7）
+                resource_threshold = 0.35  # 早期：0.35（原0.6）
+                evo_threshold = 0.5  # 早期：0.5（原0.7）
+            else:
+                pressure_threshold = 0.7
+                resource_threshold = 0.6
+                evo_threshold = 0.7
+            
             # 地理隔离时条件宽松
             if is_isolated:
                 has_pressure = True
             # 无隔离时需高压力 AND 高资源饱和
-            elif (average_pressure >= 0.7 or resource_pressure >= 0.6):
-                # 还需要资源竞争信号
-                if resource_pressure >= 0.5 or niche_saturation > 0.6:
+            elif (average_pressure >= pressure_threshold or resource_pressure >= resource_threshold):
+                # 早期：两者同时满足（更宽松）；后期：还需要资源竞争信号
+                if is_early_game:
+                    # 早期只需满足压力或资源条件
                     has_pressure = True
                 else:
-                    has_pressure = False
-            elif evo_potential >= 0.7:  # 只有极高演化潜力才能单独触发
+                    # 后期还需要资源竞争信号
+                    if resource_pressure >= 0.5 or niche_saturation > 0.6:
+                        has_pressure = True
+                    else:
+                        has_pressure = False
+            elif evo_potential >= evo_threshold:  # 高演化潜力可单独触发
                 has_pressure = True
             else:
                 has_pressure = False
@@ -369,16 +402,24 @@ class SpeciationService:
             # 自然辐射演化（繁荣物种分化）
             # 【一揽子修改】辐射演化为低概率兜底
             # 基线 0.05~0.10，加成后最高 0.25，无隔离再乘 0.5
+            # 【早期分化优化】早期（turn<10）额外 +0.10 加成
             if not has_pressure:
                 # 需要种群远超门槛 AND 资源饱和/竞争高
                 pop_ratio = survivors / min_population if min_population > 0 else 0
                 
-                # 基础概率大幅降低：0.05~0.10
+                # 基础概率
                 radiation_base = 0.05
+                
+                # 【早期分化优化】早期额外加成
+                early_bonus = 0.0
+                if is_early_game and pop_ratio >= 1.2:  # 早期种群超过门槛1.2倍
+                    early_bonus = 0.15  # 早期 +15% 加成
                 
                 # 种群因子：只有远超门槛（2倍以上）才有显著加成
                 if pop_ratio >= 2.0:
                     pop_factor = min(0.10, (pop_ratio - 2.0) * 0.02)  # 最多+0.10
+                elif is_early_game and pop_ratio >= 1.2:
+                    pop_factor = min(0.08, (pop_ratio - 1.0) * 0.04)  # 早期更宽松
                 else:
                     pop_factor = 0.0
                 
@@ -390,27 +431,31 @@ class SpeciationService:
                 # 累积压力加成（保留但降低权重）
                 pressure_factor = speciation_pressure * 0.20
                 
-                radiation_chance = radiation_base + pop_factor + saturation_factor + pressure_factor
+                radiation_chance = radiation_base + early_bonus + pop_factor + saturation_factor + pressure_factor
                 
                 # 植物小幅加成
                 if is_plant:
                     radiation_chance += 0.03
                 
-                # 硬性上限 0.25
-                radiation_chance = min(0.25, radiation_chance)
+                # 硬性上限：早期 0.35，后期 0.25
+                max_radiation = 0.35 if is_early_game else 0.25
+                radiation_chance = min(max_radiation, radiation_chance)
                 
-                # 【关键】无隔离再乘 0.5 抑制
+                # 【关键】无隔离惩罚：早期 0.8，后期 0.5
+                no_isolation_penalty = 0.8 if is_early_game else 0.5
                 if not is_isolated:
-                    radiation_chance *= 0.5
+                    radiation_chance *= no_isolation_penalty
                 
-                # 需要种群远超门槛（至少1.5倍）
-                if survivors >= min_population * 1.5 and random.random() < radiation_chance:
+                # 需要种群超过门槛（早期1.2倍，后期1.5倍）
+                min_pop_ratio = 1.2 if is_early_game else 1.5
+                if survivors >= min_population * min_pop_ratio and random.random() < radiation_chance:
                     has_pressure = True
                     speciation_type = "辐射演化"
                     logger.info(
                         f"[辐射演化] {species.common_name} 触发辐射演化 "
-                        f"(种群:{survivors:,}/{min_population:,}, 饱和度:{niche_saturation:.1%}, "
-                        f"概率:{radiation_chance:.1%})"
+                        f"(种群:{survivors:,}/{min_population:,}={pop_ratio:.1f}x, "
+                        f"饱和度:{niche_saturation:.1%}, 概率:{radiation_chance:.1%}, "
+                        f"早期={is_early_game})"
                     )
                 else:
                     continue
@@ -2596,7 +2641,7 @@ class SpeciationService:
         
         return [all_tiles.copy() for _ in range(num_offspring)]
     
-    def _calculate_speciation_threshold(self, species: Species) -> int:
+    def _calculate_speciation_threshold(self, species: Species, turn_index: int = 0) -> int:
         """计算物种的分化门槛 - 基于多维度生态学指标。
         
         综合考虑：
@@ -2604,6 +2649,11 @@ class SpeciationService:
         2. 繁殖策略（世代时间、繁殖速度） - r/K策略
         3. 代谢率 - 能量周转速度
         4. 营养级 - 从描述推断
+        5. 【新增】早期折减 - 前10回合门槛降低，鼓励早期分化
+        
+        Args:
+            species: 物种对象
+            turn_index: 当前回合索引（用于早期折减计算）
         
         Returns:
             最小种群数量（需要达到此数量才能分化）
@@ -2611,24 +2661,25 @@ class SpeciationService:
         import math
         
         # 1. 基于体型的基础门槛
+        # 【早期分化优化】整体下调 5-10 倍，让早期更容易分化
         body_length_cm = species.morphology_stats.get("body_length_cm", 1.0)
         body_weight_g = species.morphology_stats.get("body_weight_g", 1.0)
         
         # 使用体长作为主要指标（更直观）
         if body_length_cm < 0.01:  # <0.1mm - 细菌级别
-            base_threshold = 2_000_000  # 200万
+            base_threshold = 200_000   # 原200万 -> 20万
         elif body_length_cm < 0.1:  # 0.1mm-1mm - 原生动物
-            base_threshold = 1_000_000  # 100万
+            base_threshold = 100_000   # 原100万 -> 10万
         elif body_length_cm < 1.0:  # 1mm-1cm - 小型无脊椎动物
-            base_threshold = 100_000   # 10万
+            base_threshold = 20_000    # 原10万 -> 2万
         elif body_length_cm < 10.0:  # 1cm-10cm - 昆虫、小鱼
-            base_threshold = 10_000    # 1万
+            base_threshold = 2_000     # 原1万 -> 2千
         elif body_length_cm < 50.0:  # 10cm-50cm - 中型脊椎动物
-            base_threshold = 2_000     # 2千
+            base_threshold = 600       # 原2千 -> 600
         elif body_length_cm < 200.0:  # 50cm-2m - 大型哺乳动物
-            base_threshold = 500       # 500
+            base_threshold = 200       # 原500 -> 200
         else:  # >2m - 超大型动物（大象、鲸鱼）
-            base_threshold = 100       # 100
+            base_threshold = 80        # 原100 -> 80
         
         # 体重修正（提供额外验证）
         # 1g以下：微小生物
@@ -2695,10 +2746,17 @@ class SpeciationService:
             * trophic_factor
         )
         
+        # 【早期分化优化】早期折减系数
+        # turn < 10 时门槛明显降低，10回合后收敛到 30% 上限（即最低 0.3 倍）
+        # 公式：factor = max(0.3, 1 - 0.07 * turn_index)
+        # turn=0: 1.0 (100%), turn=5: 0.65 (65%), turn=10+: 0.3 (30%)
+        early_factor = max(0.3, 1.0 - 0.07 * turn_index)
+        threshold = int(threshold * early_factor)
+        
         # 确保在合理范围内
-        # 最小：50（濒危大型动物也需要一定基数）
-        # 最大：500万（即使是细菌也不需要无限大）
-        threshold = max(50, min(threshold, 5_000_000))
+        # 最小：30（进一步降低，让早期小种群也能分化）
+        # 最大：200万（降低上限）
+        threshold = max(30, min(threshold, 2_000_000))
         
         return threshold
     

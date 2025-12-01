@@ -66,7 +66,8 @@ class Settings(BaseSettings):
     
     # ========== 物种分化平衡参数 ==========
     # 分化冷却期（回合数）：分化后多少回合内不能再次分化
-    speciation_cooldown_turns: int = Field(default=1, alias="SPECIATION_COOLDOWN_TURNS")
+    # 【早期分化优化】改为 0，允许连续分化（代码中 turn<5 时额外跳过冷却）
+    speciation_cooldown_turns: int = Field(default=0, alias="SPECIATION_COOLDOWN_TURNS")
     # 物种密度软上限：超过此数量后分化概率开始衰减
     species_soft_cap: int = Field(default=60, alias="SPECIES_SOFT_CAP")
     # 基础分化概率（0-1）- 50万年/回合尺度下应很高
