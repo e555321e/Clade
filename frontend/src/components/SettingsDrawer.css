@@ -73,20 +73,17 @@
   --sd-nav-width-collapsed: 60px;
 }
 
-/* ========== 主容器 - 更大尺寸 ========== */
+/* ========== 主容器 - 合理大小 ========== */
+/* 注意：使用 !important 覆盖 GamePanel 的内联样式 */
 .settings-drawer {
-  width: calc(100vw - 48px);
-  max-width: 1600px;
-  height: calc(100vh - 48px);
-  max-height: none;
-}
-
-/* 全屏模式 */
-.settings-drawer.fullscreen {
-  width: 100vw;
-  max-width: 100vw;
-  height: 100vh;
-  border-radius: 0 !important;
+  /* 宽度：适中大小，留有呼吸空间 */
+  width: 85vw !important;
+  max-width: 1400px !important;
+  min-width: 900px !important;
+  /* 高度：根据屏幕分辨率自适应 */
+  height: 85vh !important;
+  max-height: calc(100vh - 60px) !important;
+  min-height: 500px !important;
 }
 
 .settings-drawer .game-panel-content {
@@ -102,13 +99,16 @@
   display: flex;
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   height: 100%;
+  width: 100%;
 }
 
 /* ========== 侧边导航 - 紧凑型 ========== */
 .settings-nav {
   width: var(--sd-nav-width);
+  min-width: 150px;
   flex-shrink: 0;
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0.18) 100%);
   border-right: 1px solid var(--sd-border);
@@ -258,7 +258,7 @@
 /* ========== 内容区 - 优化滚动 ========== */
 .settings-content {
   flex: 1;
-  padding: var(--sd-space-5) var(--sd-space-6);
+  padding: var(--sd-space-4) var(--sd-space-5);
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -267,7 +267,6 @@
   overflow-x: hidden;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
-  /* 确保内容可以完全滚动 */
   scroll-behavior: smooth;
 }
 
@@ -308,6 +307,8 @@
   animation: fadeSlideIn 0.25s ease;
   flex: 1;
   min-height: 0;
+  /* 确保内容不会被截断 */
+  overflow: visible;
 }
 
 /* Connection section 特殊处理 - 需要填满空间 */
@@ -315,6 +316,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 400px;
 }
 
 @keyframes fadeSlideIn {
@@ -333,7 +335,8 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: var(--sd-space-4);
+  flex-wrap: wrap;
+  gap: var(--sd-space-3);
   padding-bottom: var(--sd-space-3);
   border-bottom: 1px solid var(--sd-border);
   margin-bottom: var(--sd-space-3);
@@ -402,10 +405,11 @@
 }
 
 .section-card .section-content {
-  padding: var(--sd-space-4);
+  padding: var(--sd-space-3);
   display: flex;
   flex-direction: column;
-  gap: var(--sd-space-3);
+  gap: var(--sd-space-2);
+  overflow: visible;
 }
 
 .section-card .section-actions {
@@ -737,11 +741,20 @@
   display: flex;
   flex-direction: column;
   gap: var(--sd-space-2);
-  margin-bottom: var(--sd-space-4);
+  margin-bottom: var(--sd-space-3);
+  min-width: 0; /* 防止内容溢出 */
 }
 
 .form-group:last-child {
   margin-bottom: 0;
+}
+
+/* 表单组内的输入框溢出处理 */
+.form-group input,
+.form-group select,
+.form-group textarea {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .form-group label {
@@ -775,6 +788,20 @@
 
 .form-group input::placeholder {
   color: var(--sd-text-muted);
+}
+
+/* 表单字段提示 */
+.field-hint {
+  font-size: 0.75rem;
+  color: var(--sd-text-muted);
+  margin-top: var(--sd-space-1);
+  line-height: 1.4;
+}
+
+.field-warning {
+  font-size: 0.75rem;
+  color: var(--sd-warning);
+  margin-top: var(--sd-space-1);
 }
 
 /* API Key 输入 */
@@ -1296,39 +1323,26 @@
   }
 }
 
-/* ========== PC 端响应式 - 仅大屏适配 ========== */
+/* ========== PC 端响应式 - 合理大小 ========== */
 
-/* 超大屏幕 - 更宽敞的布局 */
-@media (min-width: 1800px) {
+/* 超大屏幕 (2K+) */
+@media (min-width: 1920px) {
   .settings-drawer {
-    max-width: 1800px;
+    width: 1600px !important;
+    height: 85vh !important;
+    max-height: 900px !important;
   }
   
   .settings-nav {
-    width: 260px;
+    width: 240px;
   }
   
   .settings-content {
-    padding: var(--sd-space-8) var(--sd-space-8);
+    padding: var(--sd-space-5) var(--sd-space-6);
   }
   
   .connection-layout {
-    grid-template-columns: 400px 1fr;
-  }
-  
-  .capabilities-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-/* 中等屏幕 */
-@media (max-width: 1400px) {
-  .settings-drawer {
-    width: calc(100vw - 32px);
-  }
-  
-  .settings-nav {
-    width: 200px;
+    grid-template-columns: 340px 1fr;
   }
   
   .capabilities-grid {
@@ -1336,15 +1350,55 @@
   }
 }
 
-/* 较小的桌面屏幕 */
-@media (max-width: 1100px) {
+/* 大屏幕 (1600px - 1919px) */
+@media (min-width: 1600px) and (max-width: 1919px) {
   .settings-drawer {
-    width: calc(100vw - 24px);
-    height: calc(100vh - 24px);
+    width: 1400px !important;
+    height: 85vh !important;
   }
   
   .settings-nav {
-    width: 180px;
+    width: 230px;
+  }
+  
+  .connection-layout {
+    grid-template-columns: 320px 1fr;
+  }
+  
+  .capabilities-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* 标准屏幕 (1366px - 1599px) */
+@media (min-width: 1366px) and (max-width: 1599px) {
+  .settings-drawer {
+    width: 1200px !important;
+    height: 85vh !important;
+  }
+  
+  .settings-nav {
+    width: 210px;
+  }
+  
+  .connection-layout {
+    grid-template-columns: 300px 1fr;
+  }
+  
+  .capabilities-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* 中等屏幕 (1200px - 1365px) */
+@media (min-width: 1200px) and (max-width: 1365px) {
+  .settings-drawer {
+    width: 1100px !important;
+    height: 85vh !important;
+  }
+  
+  .settings-nav {
+    width: 190px;
   }
   
   .nav-desc {
@@ -1353,6 +1407,41 @@
   
   .connection-layout {
     grid-template-columns: 280px 1fr;
+  }
+  
+  .capabilities-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* 较小屏幕 (1024px - 1199px) */
+@media (min-width: 1024px) and (max-width: 1199px) {
+  .settings-drawer {
+    width: 95vw !important;
+    height: 90vh !important;
+    max-width: 1050px !important;
+  }
+  
+  .settings-nav {
+    width: 170px;
+    padding: var(--sd-space-2) var(--sd-space-1);
+  }
+  
+  .nav-label {
+    font-size: 0.75rem;
+  }
+  
+  .nav-desc {
+    display: none;
+  }
+  
+  .settings-content {
+    padding: var(--sd-space-4) var(--sd-space-4);
+  }
+  
+  .connection-layout {
+    grid-template-columns: 250px 1fr;
+    gap: var(--sd-space-3);
   }
   
   .feature-grid {
@@ -1369,6 +1458,24 @@
   
   .mechanism-list {
     grid-template-columns: 1fr;
+  }
+}
+
+/* 小屏幕 (<1024px) - 启用横向滚动 */
+@media (max-width: 1023px) {
+  .settings-drawer {
+    width: 95vw !important;
+    height: 90vh !important;
+    min-width: 900px !important;
+    overflow-x: auto;
+  }
+  
+  .settings-nav {
+    width: 150px;
+  }
+  
+  .nav-desc {
+    display: none;
   }
 }
 
@@ -1462,10 +1569,11 @@
 /* ========== ConnectionSection 左右分栏布局 ========== */
 .connection-layout {
   display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: var(--sd-space-5);
+  grid-template-columns: minmax(240px, 280px) minmax(350px, 1fr);
+  gap: var(--sd-space-4);
   min-height: 0;
   flex: 1;
+  overflow: visible;
 }
 
 .provider-panel {
@@ -1474,10 +1582,12 @@
   gap: var(--sd-space-3);
   background: rgba(0, 0, 0, 0.2);
   border-radius: var(--sd-radius-lg);
-  padding: var(--sd-space-4);
+  padding: var(--sd-space-3);
   border: 1px solid var(--sd-border);
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 100%;
 }
 
 .provider-panel .panel-header {
@@ -1599,11 +1709,13 @@
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%);
   border: 1px solid var(--sd-border);
   border-radius: var(--sd-radius-lg);
-  padding: var(--sd-space-5);
+  padding: var(--sd-space-4);
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 100%;
 }
 
 .edit-header {
@@ -1662,7 +1774,7 @@
 /* API 类型选择器 */
 .api-type-selector {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: var(--sd-space-2);
 }
 
@@ -1728,8 +1840,9 @@
 
 .intro-card {
   display: flex;
-  gap: var(--sd-space-4);
-  padding: var(--sd-space-5);
+  flex-wrap: wrap;
+  gap: var(--sd-space-3);
+  padding: var(--sd-space-4);
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(34, 211, 238, 0.05) 100%);
   border: 1px solid rgba(99, 102, 241, 0.25);
   border-radius: var(--sd-radius-lg);
@@ -1759,9 +1872,9 @@
 
 .feature-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--sd-space-4);
-  margin-bottom: var(--sd-space-5);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--sd-space-3);
+  margin-bottom: var(--sd-space-4);
 }
 
 .feature-card {
@@ -1794,8 +1907,9 @@
   background: rgba(0, 0, 0, 0.2);
   border: 1px solid var(--sd-border);
   border-radius: var(--sd-radius-lg);
-  padding: var(--sd-space-5);
-  margin-bottom: var(--sd-space-5);
+  padding: var(--sd-space-4);
+  margin-bottom: var(--sd-space-4);
+  overflow: visible;
 }
 
 .config-header {
@@ -1862,8 +1976,8 @@
 
 .model-cards {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--sd-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--sd-space-3);
 }
 
 .model-card {
@@ -2050,7 +2164,7 @@
 
 .preset-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: var(--sd-space-3);
 }
 
@@ -2090,8 +2204,8 @@
 
 .mechanism-list {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--sd-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--sd-space-3);
 }
 
 .mechanism-item {
@@ -2156,8 +2270,8 @@
 
 .global-config-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
-  gap: var(--sd-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--sd-space-3);
   align-items: end;
 }
 
@@ -2251,7 +2365,7 @@
 
 .capabilities-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: var(--sd-space-3);
 }
 

@@ -96,3 +96,4 @@ export function connectToEventStream(onEvent: (event: GameEvent) => void): Event
   return createEventSource<GameEvent>("/api/events/stream", handler);
 }
 
+

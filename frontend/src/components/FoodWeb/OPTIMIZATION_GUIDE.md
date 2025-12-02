@@ -311,3 +311,4 @@ const measureRender = () => {
 | `GET /ecosystem/food-web/summary` | 仪表盘摘要 | 无（轻量级） |
 | `GET /ecosystem/food-web/analysis` | 健康分析 | `detail_level` |
 
+

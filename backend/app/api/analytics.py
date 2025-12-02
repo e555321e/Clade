@@ -375,7 +375,6 @@ def get_map_overview(
 ):
     """获取地图概览"""
     from ..schemas.responses import MapOverview, MapTileInfo, HabitatEntry
-    from ..services.species.habitat_manager import habitat_manager
     
     env_repo = container.environment_repository
     map_manager = container.map_manager
@@ -456,17 +455,18 @@ def get_map_overview(
         all_species = species_repo.list_species()
         species_map = {sp.id: sp for sp in all_species}
         
-        habitat_data = habitat_manager.get_all_habitats()
-        for (tile_id, species_id), pop in habitat_data.items():
-            sp = species_map.get(species_id)
-            if sp and pop > 0:
+        # 使用 environment_repository 获取最新栖息地数据
+        habitat_records = env_repo.latest_habitats(per_species_latest=True)
+        for hp in habitat_records:
+            sp = species_map.get(hp.species_id)
+            if sp and hp.population > 0:
                 habitats.append(HabitatEntry(
-                    species_id=species_id,
+                    species_id=hp.species_id,
                     lineage_code=sp.lineage_code,
                     common_name=sp.common_name,
                     latin_name=sp.latin_name,
-                    tile_id=tile_id,
-                    population=pop,
+                    tile_id=hp.tile_id,
+                    population=hp.population,
                     suitability=0.5,  # 简化
                 ))
     except Exception as e:

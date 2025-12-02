@@ -123,3 +123,4 @@ export function formatChangePercent(current: number, previous: number | undefine
   return `${sign}${percent.toFixed(1)}%`;
 }
 
+

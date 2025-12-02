@@ -43,3 +43,4 @@ export async function fetchErosionMap(): Promise<Float32Array> {
   return new Float32Array(buffer);
 }
 
+

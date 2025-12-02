@@ -135,3 +135,4 @@ export async function updateWatchlist(lineageCodes: string[]): Promise<void> {
   await http.post("/api/watchlist", { lineage_codes: lineageCodes });
 }
 
+

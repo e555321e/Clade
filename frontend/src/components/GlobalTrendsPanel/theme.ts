@@ -100,3 +100,4 @@ export const TAB_CONFIG = {
 // 面板尺寸
 export const PANEL_WIDTH = "min(98vw, 1480px)";
 
+

@@ -212,3 +212,4 @@ def analyze_extinction_impact(
         "impact": impact,
     }
 
+

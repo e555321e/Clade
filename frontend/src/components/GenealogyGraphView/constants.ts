@@ -111,3 +111,4 @@ export function getStateColor(state: string): number {
   return state === "alive" ? COLORS.ALIVE : COLORS.EXTINCT;
 }
 
+

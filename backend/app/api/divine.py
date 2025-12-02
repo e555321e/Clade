@@ -174,20 +174,11 @@ def get_game_hints(
     
     species_repo = container.species_repository
     all_species = species_repo.list_species()
+    current_turn = container.simulation_engine.turn_counter
     
-    # 收集游戏状态
-    context = {
-        "turn": container.simulation_engine.turn_counter,
-        "alive_species": sum(1 for sp in all_species if sp.status == "alive"),
-        "extinct_species": sum(1 for sp in all_species if sp.status == "extinct"),
-        "total_population": sum(
-            sp.morphology_stats.get("population", 0) or 0
-            for sp in all_species if sp.status == "alive"
-        ),
-    }
-    
-    hints = game_hints_service.get_hints(context)
-    return {"hints": hints}
+    # 调用 generate_hints 并转换为 dict
+    hints = game_hints_service.generate_hints(all_species, current_turn)
+    return {"hints": [h.to_dict() for h in hints]}
 
 
 @router.post("/hints/clear", tags=["hints"])

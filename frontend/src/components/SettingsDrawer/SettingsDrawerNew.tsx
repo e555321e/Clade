@@ -10,7 +10,7 @@
  * - 更好的滚动和内容显示
  */
 
-import { useReducer, useCallback, useEffect, useState } from "react";
+import { useReducer, useCallback, useEffect } from "react";
 import type { UIConfig } from "@/services/api.types";
 import { GamePanel } from "../common/GamePanel";
 import { ConfirmDialog } from "../common/ConfirmDialog";
@@ -61,7 +61,6 @@ const TABS: { id: SettingsTab; label: string; icon: string; desc?: string; group
 
 export function SettingsDrawer({ config, onClose, onSave }: Props) {
   const [state, dispatch] = useReducer(settingsReducer, config, createInitialState);
-  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // 同步外部配置变化
   useEffect(() => {
@@ -85,24 +84,19 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
   // 键盘快捷键
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // F11 或 Ctrl+Shift+F 切换全屏
-      if (e.key === "F11" || (e.ctrlKey && e.shiftKey && e.key === "F")) {
-        e.preventDefault();
-        setIsFullscreen(prev => !prev);
-      }
       // Ctrl+S 保存
       if (e.ctrlKey && e.key === "s") {
         e.preventDefault();
         handleSave();
       }
-      // Escape 关闭（非全屏时）
-      if (e.key === "Escape" && !isFullscreen) {
+      // Escape 关闭
+      if (e.key === "Escape") {
         onClose();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isFullscreen, onClose, handleSave]);
+  }, [onClose, handleSave]);
 
   // 确认对话框
   const handleConfirmClose = useCallback(() => {
@@ -226,21 +220,14 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
         </span>
       }
       onClose={onClose}
-      className={`settings-drawer ${isFullscreen ? 'fullscreen' : ''}`}
+      className="settings-drawer"
       footer={
         <div className="settings-footer">
           <div className="footer-left">
             <span className="shortcut-hint">Ctrl+S 保存</span>
-            <span className="shortcut-hint">F11 全屏</span>
+            <span className="shortcut-hint">Esc 关闭</span>
           </div>
           <div className="footer-buttons">
-            <button 
-              className="btn secondary" 
-              onClick={() => setIsFullscreen(!isFullscreen)}
-              title={isFullscreen ? "退出全屏" : "全屏模式"}
-            >
-              {isFullscreen ? "⛶ 退出全屏" : "⛶ 全屏"}
-            </button>
             <button className="btn secondary" onClick={onClose}>
               取消
             </button>

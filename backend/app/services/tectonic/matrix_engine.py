@@ -391,3 +391,4 @@ class TectonicMatrixEngine:
     def tectonic_activity(self) -> np.ndarray | None:
         return self._tectonic_activity
 
+
