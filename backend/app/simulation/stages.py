@@ -1817,6 +1817,7 @@ class AutoHybridizationStage(BaseStage):
         base_chance = spec_config.auto_hybridization_chance  # 基础杂交概率
         success_rate = spec_config.hybridization_success_rate  # 杂交成功率
         max_hybrids = spec_config.max_hybrids_per_turn  # 每回合最多杂交数
+        min_pop_for_hybrid = spec_config.min_population_for_hybridization  # 杂交所需最小种群
         
         # 获取所有存活物种
         alive_species = [sp for sp in ctx.species_batch if sp.status == "alive"]
@@ -1824,10 +1825,10 @@ class AutoHybridizationStage(BaseStage):
             logger.debug("[自动杂交] 物种数量不足，跳过")
             return
         
-        # 筛选种群足够大的物种
+        # 筛选种群足够大的物种（使用配置中的门槛）
         candidate_species = [
             sp for sp in alive_species
-            if (sp.morphology_stats.get("population", 0) or 0) >= self.MIN_POPULATION_FOR_HYBRIDIZATION
+            if (sp.morphology_stats.get("population", 0) or 0) >= min_pop_for_hybrid
         ]
         
         if len(candidate_species) < 2:

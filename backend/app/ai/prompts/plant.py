@@ -390,16 +390,10 @@ PLANT_PROMPTS = {
 === 全局环境背景 ===
 环境压力强度：{average_pressure:.2f}/10
 压力来源：{pressure_summary}
-重大事件：{major_events}
+重大事件：{major_events_summary}
 
 === 待分化植物列表 ===
 {species_list}
-
-每个植物条目包含：
-- 基本信息（名称、阶段、特质）
-- 器官约束（当前器官阶段）
-- 里程碑准备度
-- 竞争和食草压力
 
 === 🌱 植物演化硬性约束 ===
 
@@ -417,34 +411,16 @@ PLANT_PROMPTS = {
 - 必须有增有减！
 
 【3. 里程碑必需器官】
-- 登陆: 必须获得"角质层"和"假根"
-- 真根: 必须获得"原始根"和"维管束"
-- 种子: 必须获得"胚珠"
-- 开花: 必须获得"花"和"果实"
-- 成为树木: 必须获得"乔木干"
+- 登陆: 角质层 + 假根
+- 真根: 原始根 + 维管束
+- 种子: 胚珠
+- 开花: 花 + 果实
+- 成为树木: 乔木干
 
 【4. 器官类别】
-- photosynthetic: 光合器官（叶绿体→类囊体膜→真叶→阔叶）
-- root_system: 根系（假根→原始根→须根系→直根系）
-- stem: 茎（匍匐茎→草本茎→木质茎→乔木干）
-- reproductive: 繁殖（孢子囊→胚珠→球果→花→果实）
-- protection: 保护（粘液层→角质层→蜡质表皮→树皮）
-- vascular: 维管（原始维管束→维管束→次生木质部）
-- storage: 储存（块根、块茎等）
-- defense: 防御（刺、毒腺等）
-
-【5. 权衡代价】
-- 增强光合效率 → 降低耐旱性
-- 增加木质化 → 降低繁殖速度
-- 发展根系 → 降低散布能力
-- 增强防御 → 降低生长速度
-
-=== 🏷️ 植物命名规则 ===
-名字要有依据、自然、像真实植物。可自由组合词根创造！
-【拉丁学名】词根参考：alpina(高山)、littoricola(沿岸)、paludosa(沼泽)、arenaria(沙生)、crassifolia(厚叶)、spinosa(多刺)、argentea(银)、rubra(红)...
-【中文俗名】有画面感：[环境:霜岭/潮岩/暗渊]+[形态:银毛/厚叶/细丝]+[类群:苔/藻/蕨]
-- 示例：霜岭银毛苔、潮岩先锋藻、热泉厚垫苔
-- ❌ 避免搞笑/无意义组合
+- photosynthetic: 光合器官 | root_system: 根系 | stem: 茎
+- reproductive: 繁殖 | protection: 保护 | vascular: 维管
+- storage: 储存 | defense: 防御
 
 === 输出格式 ===
 {{
@@ -463,12 +439,7 @@ PLANT_PROMPTS = {
             "morphology_changes": {{"body_length_cm": 0.8-1.3倍}},
             "new_organs": ["新器官名称"],
             "organ_changes": [
-                {{
-                    "category": "器官类别",
-                    "change_type": "new/enhance",
-                    "organ_name": "器官名",
-                    "parameters": {{"参数": 值}}
-                }}
+                {{"category": "器官类别", "change_type": "new/enhance", "organ_name": "器官名", "parameters": {{"参数": 值}}}}
             ],
             "milestone_triggered": "里程碑ID或null",
             "event_description": "30-50字分化摘要",
@@ -477,34 +448,26 @@ PLANT_PROMPTS = {
     ]
 }}
 
-=== 示例（阶段2群体藻类准备登陆）===
-{{
-    "results": [
-        {{
-            "request_id": "req_001",
-            "latin_name": "Bryophytella littoricola",
-            "common_name": "潮岩先锋苔",
-            "description": "首批登陆的植物先驱，从潮间带向内陆扩展。发展出原始角质层减少水分散失，假根固着于岩石缝隙。光合效率略降，但获得陆地生存的关键能力。",
-            "life_form_stage": 3,
-            "growth_form": "moss",
-            "habitat_type": "coastal",
-            "trophic_level": 1.0,
-            "key_innovations": ["首次登陆陆地", "角质层保水"],
-            "trait_changes": {{"保水能力": "+1.0", "耐旱性": "+0.8", "光合效率": "-0.5", "繁殖速度": "-0.3"}},
-            "morphology_changes": {{"body_length_cm": 1.2}},
-            "new_organs": ["角质层", "假根"],
-            "organ_changes": [
-                {{"category": "protection", "change_type": "new", "organ_name": "角质层", "parameters": {{"uv_resist": 1.0, "drought_resist": 0.8}}}},
-                {{"category": "root_system", "change_type": "new", "organ_name": "假根", "parameters": {{"depth_cm": 0.5, "absorption": 0.3}}}}
-            ],
-            "milestone_triggered": "first_land_plant",
-            "event_description": "群体藻类成功登陆，成为苔藓类先驱",
-            "rationale": "潮间带干湿交替环境促进保水结构演化"
-        }}
-    ]
-}}
+=== 命名规则 ===
+名字要像真实植物，自然、有依据。可自由组合创造！
 
-只返回JSON对象，不要返回markdown。
+【拉丁学名】常用词根组合：
+- 地理/栖息地：alpina(高山)、littoricola(沿岸)、paludosa(沼泽)、arenaria(沙生)、rupestris(岩生)、aquatica(水生)、sylvatica(林生)
+- 叶片特征：crassifolia(厚叶)、tenuifolia(细叶)、latifolia(阔叶)、acutifolia(尖叶)、rotundifolia(圆叶)
+- 形态特征：spinosa(多刺)、glabra(光滑)、tomentosa(绒毛)、gigantea(巨大)、nana(矮小)、procumbens(匍匐)
+- 颜色：argentea(银)、rubra(红)、viridis(绿)、purpurea(紫)、alba(白)、aurea(金)
+- 人名后缀：-ii/-i(属格，如hookeri胡克的)、-iana(纪念某人)、-ae(女性属格)
+- 地名化：sinensis(中国)、japonica(日本)、americana(美洲)、indica(印度)
+
+【中文俗名】多种风格可选：
+- 环境+形态+类群：霜岭银毛苔、潮岩先锋藻、热泉厚垫藓
+- 人名+氏+类群：胡氏藻、李氏蕨、张氏苔（纪念发现者/科学家）
+- 地名+类群：澄江藻、热河蕨、辽西松
+- 特征直译：厚叶苔、银丝藻、刺茎蕨
+- 生态习性：附生兰、浮游藻、攀援蔓
+- ❌ 避免搞笑/卡通化/无意义组合
+
+只返回JSON对象。
 """,
 
     # ==================== 里程碑叙事生成Prompt ====================

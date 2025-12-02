@@ -676,7 +676,7 @@ class AIPressureResponseService:
             return fallback_result
     
     # 状态评估批次大小（每批最多处理几个物种）
-    STATUS_EVAL_BATCH_SIZE = 4
+    STATUS_EVAL_BATCH_SIZE = 3
     
     # 超时配置（可通过 set_timeout_config 方法动态设置）
     SPECIES_EVAL_TIMEOUT = 60  # 单物种评估超时（秒）
@@ -685,9 +685,9 @@ class AIPressureResponseService:
     
     def set_timeout_config(
         self,
-        species_eval_timeout: int = 60,
+        species_eval_timeout: int = 90,
         batch_eval_timeout: int = 180,
-        narrative_timeout: int = 60,
+        narrative_timeout: int = 90,
     ) -> None:
         """设置超时配置（从UIConfig读取）"""
         self.SPECIES_EVAL_TIMEOUT = species_eval_timeout
@@ -800,9 +800,9 @@ class AIPressureResponseService:
         batch_results = await staggered_gather(
             [process_batch(batch) for batch in batches],
             interval=0.5,  # 批次间隔0.5秒
-            max_concurrent=4,  # 最多同时4个批次（即16个并发评估）
+            max_concurrent=4,  # 最多同时4个批次（即12个并发评估）
             task_name="状态评估批次",
-            task_timeout=45.0,  # 单批次超时45秒
+            task_timeout=60.0,  # 单批次超时60秒
         )
         
         # 合并结果
@@ -1033,7 +1033,7 @@ class AIPressureResponseService:
     # ==================== 【新】物种叙事生成 ====================
     
     # 叙事生成批次大小阈值
-    NARRATIVE_BATCH_SIZE = 4  # 【优化】减小批量，提高并发
+    NARRATIVE_BATCH_SIZE = 3  # 【优化】减小批量，降低超时风险
     
     # 【优化】叙事物种数量上限（节省tokens）
     MAX_CRITICAL_NARRATIVES = 3   # Critical物种最多3个
@@ -1116,7 +1116,7 @@ class AIPressureResponseService:
             interval=1.5,  
             max_concurrent=4,  
             task_name="叙事批次",
-            task_timeout=45.0,  # 【优化】缩短超时到45秒
+            task_timeout=60.0,  # 单批次超时60秒
         )
         
         # 合并结果

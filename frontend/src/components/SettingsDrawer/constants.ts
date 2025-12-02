@@ -163,6 +163,11 @@ export const DEFAULT_SPECIATION_CONFIG: SpeciationConfig = {
   resource_threshold_early: 0.35,
   evo_potential_threshold_late: 0.7,
   evo_potential_threshold_early: 0.5,
+  // 种群数量门槛（按生物量 kg 计算）
+  min_population_for_speciation: 50000,
+  min_offspring_population: 5000,
+  background_speciation_penalty: 0.3,
+  // 候选地块筛选
   candidate_tile_min_pop: 50,
   candidate_tile_death_rate_min: 0.02,
   candidate_tile_death_rate_max: 0.75,
@@ -181,6 +186,7 @@ export const DEFAULT_SPECIATION_CONFIG: SpeciationConfig = {
   auto_hybridization_chance: 0.08,
   hybridization_success_rate: 0.35,
   max_hybrids_per_turn: 2,
+  min_population_for_hybridization: 20000,
 };
 
 export const DEFAULT_REPRODUCTION_CONFIG: ReproductionConfig = {

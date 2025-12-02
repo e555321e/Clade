@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Application, Container, Graphics, Text, BlurFilter, FederatedPointerEvent } from "pixi.js";
 import * as d3 from "d3";
 import type { LineageNode } from "@/services/api.types";
@@ -8,6 +8,24 @@ interface Props {
   spacingX?: number;
   spacingY?: number;
   onNodeClick?: (node: LineageNode) => void;
+}
+
+// 稳定化 nodes 数组的 key，避免不必要的重渲染
+function useStableNodes(nodes: LineageNode[]): LineageNode[] {
+  const prevNodesRef = useRef<LineageNode[]>([]);
+  const prevKeyRef = useRef<string>("");
+  
+  // 生成简单的key来检测实际变化
+  const currentKey = useMemo(() => {
+    return nodes.map(n => `${n.lineage_code}:${n.state}:${n.common_name}`).join('|');
+  }, [nodes]);
+  
+  if (currentKey !== prevKeyRef.current) {
+    prevNodesRef.current = nodes;
+    prevKeyRef.current = currentKey;
+  }
+  
+  return prevNodesRef.current;
 }
 
 // Enhanced Colors
@@ -79,7 +97,10 @@ interface FlowParticle {
 const ROOT_NAME = "始祖物种";
 const ROOT_CODE = "ROOT";
 
-export function GenealogyGraphView({ nodes, spacingX = 160, spacingY = 120, onNodeClick }: Props) {
+export function GenealogyGraphView({ nodes: rawNodes, spacingX = 160, spacingY = 120, onNodeClick }: Props) {
+  // 稳定化 nodes，避免父组件每次渲染都触发图形重建
+  const nodes = useStableNodes(rawNodes);
+  
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   
@@ -94,7 +115,17 @@ export function GenealogyGraphView({ nodes, spacingX = 160, spacingY = 120, onNo
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
   const [showAllHybridLinks, setShowAllHybridLinks] = useState(false);  // 是否显示所有杂交连线
   const [focusedLineage, setFocusedLineage] = useState<string | null>(null);  // 聚焦的谱系物种代码
-  const [compactMode, setCompactMode] = useState(false);  // 概要模式（大量节点时简化显示）
+  const [compactMode, setCompactMode] = useState(false);  // 概要模式（仅手动控制）
+  
+  // 使用 ref 存储 onNodeClick 避免依赖变化导致重渲染
+  const onNodeClickRef = useRef(onNodeClick);
+  onNodeClickRef.current = onNodeClick;
+  
+  // 稳定化 collapsedNodes 的字符串表示，用于依赖检测
+  const collapsedKey = useMemo(() => 
+    Array.from(collapsedNodes).sort().join(','), 
+    [collapsedNodes]
+  );
 
   // CK3风格：垂直布局，初始相机位置调整到顶部中央
   const cameraRef = useRef({ x: 400, y: 80, zoom: 0.7 }); 
@@ -466,16 +497,49 @@ export function GenealogyGraphView({ nodes, spacingX = 160, spacingY = 120, onNo
      }
   };
 
+  // 用于防止频繁重建的 ref
+  const buildGraphTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastBuildKeyRef = useRef<string>("");
+  
   // Build Graph with Collapse Support
   useEffect(() => {
     if (!pixiReady || !appRef.current || !stageRef.current) return;
     
-    const stage = stageRef.current;
+    // 生成构建 key 来检测是否真的需要重建
+    const buildKey = `${nodes.length}|${collapsedKey}|${focusedLineage || ''}|${compactMode}`;
     
-    stage.removeChildren();
-    particlesRef.current = [];
-    nodeVisualsRef.current.clear();
-    linkVisualsRef.current = [];
+    // 如果 key 相同，跳过重建（避免不必要的闪烁）
+    if (buildKey === lastBuildKeyRef.current && nodeVisualsRef.current.size > 0) {
+      return;
+    }
+    
+    // 清除之前的延迟重建
+    if (buildGraphTimeoutRef.current) {
+      clearTimeout(buildGraphTimeoutRef.current);
+    }
+    
+    // 使用微延迟来批量处理快速连续的更新请求
+    buildGraphTimeoutRef.current = setTimeout(() => {
+      if (!stageRef.current) return;
+      
+      lastBuildKeyRef.current = buildKey;
+      const stage = stageRef.current;
+    
+      stage.removeChildren();
+      particlesRef.current = [];
+      nodeVisualsRef.current.clear();
+      linkVisualsRef.current = [];
+      
+      buildGraphContent(stage);
+    }, 16); // ~1帧的延迟
+    
+    return () => {
+      if (buildGraphTimeoutRef.current) {
+        clearTimeout(buildGraphTimeoutRef.current);
+      }
+    };
+    
+    function buildGraphContent(stage: Container) {
     
     if (nodes.length === 0) {
         const text = new Text({ text: "等待物种数据...", style: { fill: 0x64748b, fontSize: 24, fontFamily: 'system-ui, sans-serif' } });
@@ -485,8 +549,8 @@ export function GenealogyGraphView({ nodes, spacingX = 160, spacingY = 120, onNo
     }
 
     // 自动启用概要模式（当节点数超过阈值时）
-    const autoCompactThreshold = 100;
-    const useCompact = compactMode || nodes.length > autoCompactThreshold;
+    // 概要模式（仅通过手动控制，不再自动启用，避免物种多时自动变成圆球）
+    const useCompact = compactMode;
 
     // 绘制背景网格
     const gridLayer = new Container();
@@ -567,7 +631,7 @@ export function GenealogyGraphView({ nodes, spacingX = 160, spacingY = 120, onNo
                 clickTimer = setTimeout(() => {
                   clickCount = 0;
                   setSelectedNode(node.data.lineage_code);
-                  onNodeClick?.(node.data);
+                  onNodeClickRef.current?.(node.data);
                 }, 250);
               } else if (clickCount === 2) {
                 // 双击：聚焦该谱系
@@ -975,8 +1039,11 @@ export function GenealogyGraphView({ nodes, spacingX = 160, spacingY = 120, onNo
             }
         }
     });
+    } // 关闭 buildGraphContent 函数
 
-  }, [nodes, spacingX, spacingY, pixiReady, collapsedNodes, toggleCollapse, onNodeClick, focusedLineage, compactMode]);
+  // 依赖: collapsedKey 替代 collapsedNodes 以避免 Set 引用变化触发重渲染
+  // onNodeClick 使用 ref 存储，不放入依赖数组
+  }, [nodes, spacingX, spacingY, pixiReady, collapsedKey, collapsedNodes, toggleCollapse, focusedLineage, compactMode]);
 
   // State Updates
   useEffect(() => {

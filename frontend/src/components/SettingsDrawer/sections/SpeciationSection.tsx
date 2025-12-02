@@ -5,7 +5,7 @@
 import { memo, type Dispatch } from "react";
 import type { SpeciationConfig } from "@/services/api.types";
 import type { SettingsAction } from "../types";
-import { SectionHeader, Card, ConfigGroup, SliderRow, NumberInput, ActionButton, InfoBox } from "../common/Controls";
+import { SectionHeader, Card, ConfigGroup, SliderRow, NumberInput, ActionButton, InfoBox, ToggleRow } from "../common/Controls";
 import { DEFAULT_SPECIATION_CONFIG } from "../constants";
 
 interface Props {
@@ -87,6 +87,55 @@ export const SpeciationSection = memo(function SpeciationSection({
         </div>
       </Card>
 
+      {/* 种群数量门槛 */}
+      <Card title="生物量门槛" icon="📊" desc="控制分化和杂交的最小生物量要求，防止产生过小的物种">
+        <InfoBox>
+          在真实演化中，过小的种群很难分化出新物种——基因库太小会导致近亲繁殖、遗传多样性不足。这些参数以生物量（kg）为单位，确保只有达到一定规模的种群才能参与分化和杂交。开局物种通常在 2-20万 kg，几回合后可达百万级。
+        </InfoBox>
+        <div className="card-grid">
+          <NumberInput
+            label="分化生物量门槛"
+            desc="物种的总生物量（kg）必须达到此值才能触发分化检查。低于此门槛的物种将被跳过。建议设置为3-10万kg，根据模拟规模调整。"
+            value={c.min_population_for_speciation ?? 50000}
+            min={1000}
+            max={500000}
+            step={5000}
+            onChange={(v) => handleUpdate({ min_population_for_speciation: v })}
+            suffix="kg"
+          />
+          <NumberInput
+            label="新物种最小生物量"
+            desc="分化产生的每个新物种的初始生物量不能低于此值。如果总生物量不足以满足这个要求，会减少子代数量或取消分化。建议设置为3000-10000kg。"
+            value={c.min_offspring_population ?? 5000}
+            min={500}
+            max={100000}
+            step={500}
+            onChange={(v) => handleUpdate({ min_offspring_population: v })}
+            suffix="kg"
+          />
+          <SliderRow
+            label="背景物种惩罚"
+            desc="背景物种（低关注度的小型物种）的分化概率会乘以这个系数。例如×0.3表示背景物种的分化概率只有普通物种的30%。这防止大量小物种继续分裂。"
+            value={c.background_speciation_penalty ?? 0.3}
+            min={0}
+            max={1}
+            step={0.05}
+            onChange={(v) => handleUpdate({ background_speciation_penalty: v })}
+            formatValue={(v) => `×${v.toFixed(2)}`}
+          />
+          <NumberInput
+            label="杂交生物量门槛"
+            desc="参与杂交的每个亲本物种的生物量必须达到此值。生物量过小的物种不会被考虑为杂交候选。建议设置为1-5万kg。"
+            value={c.min_population_for_hybridization ?? 20000}
+            min={1000}
+            max={200000}
+            step={1000}
+            onChange={(v) => handleUpdate({ min_population_for_hybridization: v })}
+            suffix="kg"
+          />
+        </div>
+      </Card>
+
       {/* 后代数量限制 */}
       <Card title="后代数量限制" icon="🌳" desc="限制单一物种产生的直接后代数量，使演化更像一条主线而非扇形爆发">
         <InfoBox>
@@ -103,22 +152,12 @@ export const SpeciationSection = memo(function SpeciationSection({
             onChange={(v) => handleUpdate({ max_direct_offspring: v })}
             suffix="种"
           />
-          <div className="toggle-row">
-            <div className="toggle-info">
-              <span className="toggle-label">只计存活后代</span>
-              <span className="toggle-desc">
-                开启：只有存活的后代计入上限，已灭绝的后代不算，这样祖先物种可以「补充」后代。关闭：所有历史后代都计入上限，更严格地限制分化。
-              </span>
-            </div>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={c.count_only_alive_offspring ?? true}
-                onChange={(e) => handleUpdate({ count_only_alive_offspring: e.target.checked })}
-              />
-              <span className="toggle-slider" />
-            </label>
-          </div>
+          <ToggleRow
+            label="只计存活后代"
+            desc="开启：只有存活的后代计入上限，已灭绝的后代不算。关闭：所有历史后代都计入上限，更严格地限制分化。"
+            checked={c.count_only_alive_offspring ?? true}
+            onChange={(v) => handleUpdate({ count_only_alive_offspring: v })}
+          />
         </div>
       </Card>
 

@@ -692,56 +692,80 @@
 }
 
 .card-body {
-  padding: 18px;
+  padding: 16px;
 }
 
-/* 卡片网格布局 */
+/* 卡片网格布局 - 强制单列 */
 .card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-/* ==================== 表单行布局 ==================== */
+/* 禁用双列布局，全部改为单列 */
+.card-grid-2col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ==================== 表单行布局 - 垂直排列版 ==================== */
 .form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: var(--s-radius-md);
+  margin-bottom: 10px;
+  transition: all var(--s-duration-fast) var(--s-ease);
+}
+
+.form-row:hover {
+  background: rgba(0, 0, 0, 0.22);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.form-row:last-child {
+  margin-bottom: 0;
+}
+
+.form-row-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  min-height: 52px;
-}
-
-.form-row:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.form-row:first-child {
-  padding-top: 0;
 }
 
 .form-label {
   flex: 1;
   min-width: 0;
-  max-width: 300px;
 }
 
 .form-label-text {
-  font-size: 0.85rem;
-  font-weight: 500;
+  font-size: 0.92rem;
+  font-weight: 600;
   color: var(--s-text);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+
+.form-label-text::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  background: var(--s-primary);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--s-primary);
 }
 
 .form-label-desc {
-  font-size: 0.75rem;
-  color: var(--s-text-muted);
-  margin-top: 3px;
-  line-height: 1.4;
+  font-size: 0.8rem;
+  color: var(--s-text-secondary);
+  line-height: 1.6;
+  margin-top: 4px;
 }
 
 .form-control {
@@ -751,25 +775,39 @@
   flex-shrink: 0;
 }
 
-/* ==================== 滑块控件 ==================== */
+/* 紧凑型表单行（用于开关等简单控件） */
+.form-row-compact {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.form-row-compact .form-label {
+  flex: 1;
+}
+
+.form-row-compact .form-control {
+  padding-top: 2px;
+}
+
+/* ==================== 滑块控件 - 全宽版 ==================== */
 .slider-control {
   display: flex;
   align-items: center;
   gap: 14px;
-  min-width: 220px;
+  width: 100%;
 }
 
 .slider-track {
   flex: 1;
-  min-width: 120px;
-  max-width: 180px;
   height: 6px;
   appearance: none;
   background: rgba(255, 255, 255, 0.1);
   border-radius: 3px;
   cursor: pointer;
   transition: all var(--s-duration-fast) var(--s-ease);
-  border: 1px solid var(--s-border);
+  border: none;
 }
 
 .slider-track:hover {
@@ -789,35 +827,35 @@
 }
 
 .slider-track::-webkit-slider-thumb:hover {
-  transform: scale(1.15);
-  box-shadow: 0 4px 16px var(--s-primary-glow);
+  transform: scale(1.1);
+  box-shadow: 0 4px 14px var(--s-primary-glow);
 }
 
 .slider-track::-webkit-slider-thumb:active {
   cursor: grabbing;
-  transform: scale(1.1);
+  transform: scale(1.05);
   background: linear-gradient(135deg, var(--s-accent-light), var(--s-accent));
 }
 
 .slider-value {
-  min-width: 60px;
+  min-width: 64px;
   padding: 6px 10px;
-  background: #1e293b;
-  border: 1px solid var(--s-accent);
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(56, 189, 248, 0.5);
   border-radius: var(--s-radius-sm);
-  font-size: 0.82rem;
+  font-size: 0.85rem;
   font-weight: 600;
   font-family: var(--s-font-mono);
   color: var(--s-accent);
   text-align: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
 }
 
 /* ==================== 开关控件 ==================== */
 .switch {
   position: relative;
-  width: 52px;
-  height: 28px;
+  width: 48px;
+  height: 26px;
   flex-shrink: 0;
 }
 
@@ -830,9 +868,9 @@
 .switch-track {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.5);
   border: 1px solid var(--s-border);
-  border-radius: 28px;
+  border-radius: 26px;
   cursor: pointer;
   transition: all var(--s-duration-normal) var(--s-ease);
 }
@@ -841,22 +879,22 @@
   position: absolute;
   top: 3px;
   left: 3px;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   background: linear-gradient(135deg, #fff, #e2e8f0);
   border-radius: 50%;
   transition: all var(--s-duration-normal) var(--s-ease-bounce);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
 .switch input:checked + .switch-track {
   background: linear-gradient(135deg, var(--s-primary), var(--s-primary-dark));
   border-color: var(--s-primary);
-  box-shadow: 0 0 16px var(--s-primary-glow);
+  box-shadow: 0 0 12px var(--s-primary-glow);
 }
 
 .switch input:checked + .switch-track .switch-thumb {
-  transform: translateX(24px);
+  transform: translateX(22px);
 }
 
 .switch:hover .switch-track {
@@ -864,14 +902,14 @@
 }
 
 .switch:hover .switch-thumb {
-  transform: scale(1.05);
+  transform: scale(1.08);
 }
 
 .switch input:checked:hover + .switch-track .switch-thumb {
-  transform: translateX(24px) scale(1.05);
+  transform: translateX(22px) scale(1.08);
 }
 
-/* ==================== 数字输入 ==================== */
+/* ==================== 数字输入 - 改进版 ==================== */
 .number-input {
   display: flex;
   align-items: center;
@@ -879,15 +917,15 @@
 }
 
 .number-input input {
-  width: 80px;
+  width: 120px;
   padding: 8px 12px;
-  background: var(--s-bg-deep);
+  background: rgba(12, 12, 14, 0.7);
   border: 1px solid var(--s-border);
   border-radius: var(--s-radius-sm);
   color: var(--s-text);
-  font-size: 0.88rem;
+  font-size: 0.9rem;
   font-family: var(--s-font-mono);
-  text-align: center;
+  text-align: right;
   transition: all var(--s-duration-fast) var(--s-ease);
 }
 
@@ -898,8 +936,9 @@
 }
 
 .number-input-suffix {
-  font-size: 0.82rem;
-  color: var(--s-text-muted);
+  font-size: 0.85rem;
+  color: var(--s-text-secondary);
+  min-width: 32px;
 }
 
 /* ==================== 下拉选择 ==================== */
@@ -935,13 +974,13 @@
   cursor: not-allowed;
 }
 
-/* ==================== 分组容器 ==================== */
+/* ==================== 分组容器 - 改进版 ==================== */
 .config-group {
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid var(--s-border);
+  background: rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: var(--s-radius-md);
-  padding: 14px 16px;
-  margin-top: 12px;
+  padding: 16px;
+  margin-top: 16px;
 }
 
 .config-group:first-child {
@@ -952,75 +991,105 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-size: 0.8rem;
+  font-weight: 700;
   color: var(--s-text-accent);
   margin-bottom: 12px;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .config-group-title::before {
   content: '';
   width: 3px;
-  height: 12px;
-  background: var(--s-primary);
+  height: 14px;
+  background: linear-gradient(180deg, var(--s-primary), var(--s-accent));
   border-radius: 2px;
-}
-
-.config-group-title::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: linear-gradient(90deg, var(--s-border), transparent);
 }
 
 .config-group-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 8px 20px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
 }
 
-/* ==================== 信息提示框 ==================== */
+/* 单列模式（用于需要全宽的设置） */
+.config-group-grid.single-column {
+  grid-template-columns: 1fr;
+}
+
+/* 分组内的表单行样式调整 */
+.config-group .form-row {
+  background: rgba(0, 0, 0, 0.2);
+  margin-bottom: 0;
+  width: 100%;
+}
+
+/* 小屏幕强制单列 */
+@media (max-width: 1199px) {
+  .config-group-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ==================== 信息提示框 - 改进版 ==================== */
 .info-box {
   display: flex;
-  gap: 14px;
-  padding: 16px;
-  background: linear-gradient(135deg, var(--s-info-bg), rgba(96, 165, 250, 0.05));
-  border: 1px solid rgba(96, 165, 250, 0.25);
+  gap: 12px;
+  padding: 12px 14px;
+  background: rgba(56, 189, 248, 0.06);
+  border: 1px solid rgba(96, 165, 250, 0.2);
   border-left: 3px solid var(--s-info);
   border-radius: var(--s-radius-md);
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .info-box-icon {
-  font-size: 1.4rem;
+  font-size: 1.1rem;
   flex-shrink: 0;
+  opacity: 0.8;
 }
 
 .info-box-content h4 {
-  margin: 0 0 6px;
-  font-size: 0.92rem;
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
   color: var(--s-text);
 }
 
 .info-box-content p {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   color: var(--s-text-secondary);
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .info-box.warning {
-  background: linear-gradient(135deg, var(--s-warning-bg), rgba(251, 191, 36, 0.05));
-  border-color: rgba(251, 191, 36, 0.25);
+  background: rgba(251, 191, 36, 0.06);
+  border-color: rgba(251, 191, 36, 0.2);
   border-left-color: var(--s-warning);
 }
 
 .info-box.success {
-  background: linear-gradient(135deg, var(--s-success-bg), rgba(52, 211, 153, 0.05));
-  border-color: rgba(52, 211, 153, 0.25);
+  background: rgba(52, 211, 153, 0.06);
+  border-color: rgba(52, 211, 153, 0.2);
   border-left-color: var(--s-success);
+}
+
+/* 紧凑模式的提示框（卡片内使用） */
+.card-body .info-box {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 0.78rem;
+}
+
+.card-body .info-box-icon {
+  font-size: 1rem;
+}
+
+.card-body .info-box-content p {
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 
 /* ==================== 特性网格 ==================== */
@@ -1539,10 +1608,6 @@
     padding: 16px 20px;
   }
   
-  .card-grid {
-    grid-template-columns: 1fr;
-  }
-  
   .connection-layout {
     grid-template-columns: 240px 1fr;
     gap: 16px;
@@ -1621,14 +1686,18 @@
     padding: 14px;
   }
   
-  .card-grid {
-    grid-template-columns: 1fr;
+  .form-row {
+    padding: 12px;
   }
   
-  .form-row {
+  .form-row-compact {
     flex-direction: column;
     align-items: flex-start;
-    gap: 10px;
+    gap: 12px;
+  }
+  
+  .form-row-compact .form-control {
+    align-self: flex-start;
   }
   
   .form-label {

@@ -237,6 +237,17 @@ class SpeciationService:
                 )
                 continue
             
+            # ========== 【种群数量门槛检查】==========
+            # 整体种群低于最小门槛的物种不允许分化
+            global_population = int(species.morphology_stats.get("population", 0) or 0)
+            min_pop_for_speciation = spec_config.min_population_for_speciation
+            if global_population < min_pop_for_speciation:
+                logger.debug(
+                    f"[分化跳过-种群门槛] {species.common_name}: "
+                    f"全局种群{global_population:,} < 门槛{min_pop_for_speciation:,}"
+                )
+                continue
+            
             # ========== 【基于地块的分化检查】==========
             # 优先使用预筛选的分化候选数据
             candidate_data = self._speciation_candidates.get(lineage_code)
@@ -746,6 +757,18 @@ class SpeciationService:
                     speciation_type = "AI辅助" + speciation_type
                 logger.info(f"[AI分化] {species.common_name}: AI 分化信号加成 +{ai_boost:.0%}")
             
+            # 【新增】背景物种分化惩罚
+            # 背景物种（is_background=True）的分化概率大幅降低
+            background_penalty = 1.0
+            is_background = getattr(species, 'is_background', False)
+            if is_background:
+                background_penalty = spec_config.background_speciation_penalty
+                speciation_chance *= background_penalty
+                logger.debug(
+                    f"[背景物种惩罚] {species.common_name}: "
+                    f"分化概率×{background_penalty:.0%} (背景物种)"
+                )
+            
             # 记录分化概率计算详情
             ai_info = f" + AI={ai_boost:.1%}" if ai_boost > 0 else ""
             logger.info(
@@ -1096,9 +1119,9 @@ class SpeciationService:
         logger.info(f"[分化] 开始批量处理 {len(active_batch)} 个分化任务 (剩余排队 {len(self._deferred_requests)})")
         
         # 【优化】小批次 + 高并发策略
-        # 每批 4 个物种，token 更少，单次响应更快
+        # 每批 3 个物种，减少单次 prompt token，降低超时风险
         # 同时 4 个批次并行，提高整体吞吐量
-        batch_size = 4
+        batch_size = 3
         
         # 分割成多个批次
         batches = []
@@ -1426,7 +1449,7 @@ class SpeciationService:
             stream_callback: 流式回调（用于心跳）
             entries: 原始entries列表，用于判断是否为植物批次
         """
-        from ...ai.streaming_helper import invoke_with_heartbeat
+        from ...ai.streaming_helper import stream_invoke_with_heartbeat
         import asyncio
         
         # 【植物混合模式】检测是否为纯植物批次
@@ -1446,7 +1469,7 @@ class SpeciationService:
                     payload["organ_categories_info"] = plant_evolution_service.get_organ_category_info_for_prompt(current_stage)
                 logger.debug(f"[分化批量] 使用植物专用Prompt，批次大小: {len(entries)}")
         
-        # 【优化】使用带心跳的调用
+        # 【优化】使用流式调用 + 智能空闲超时（只要AI在输出就不会超时）
         def heartbeat_callback(event_type: str, message: str, category: str):
             if stream_callback:
                 try:
@@ -1458,17 +1481,17 @@ class SpeciationService:
         
         try:
             batch_size = len(entries) if entries else 0
-            response = await invoke_with_heartbeat(
+            response = await stream_invoke_with_heartbeat(
                 router=self.router,
                 capability=prompt_name,
                 payload=payload,
                 task_name=f"分化[{batch_type}×{batch_size}]",
-                timeout=60,
+                idle_timeout=90,  # 智能空闲超时：90秒无输出才超时
                 heartbeat_interval=2.0,
                 event_callback=heartbeat_callback if stream_callback else None,
             )
         except asyncio.TimeoutError:
-            logger.warning("[分化批量] AI请求超时（60秒），将使用规则fallback")
+            logger.warning("[分化批量] AI请求空闲超时（90秒无输出），将使用规则fallback")
             return {"_timeout": True, "_use_fallback": True}
         except Exception as e:
             logger.error(f"[分化批量] 请求异常: {e}，将使用规则fallback")
@@ -1792,13 +1815,39 @@ class SpeciationService:
         return codes
     
     def _allocate_offspring_population(self, total_population: int, num_offspring: int) -> list[int]:
-        """随机划分子代种群，并确保每个子种至少拥有1个体。"""
+        """随机划分子代种群，并确保每个子种至少拥有最小种群门槛。
+        
+        【优化】使用配置中的 min_offspring_population 作为每个子种的最小种群，
+        避免分化出过小的种群（只有几百个体的"微型物种"）。
+        """
         import random
         
         if num_offspring <= 0:
             return []
         if total_population <= 0:
             return [0] * num_offspring
+        
+        # 获取配置中的最小子代种群
+        min_offspring_pop = self._config.min_offspring_population
+        
+        # 检查总种群是否足够分配
+        required_minimum = min_offspring_pop * num_offspring
+        if total_population < required_minimum:
+            # 种群不足以满足最小门槛，尝试减少子代数量
+            feasible_offspring = total_population // min_offspring_pop
+            if feasible_offspring <= 0:
+                # 完全不够，返回空列表（由调用方处理）
+                logger.warning(
+                    f"[种群分配] 总种群{total_population:,} 不足以产生任何子种 "
+                    f"(最小门槛={min_offspring_pop:,})"
+                )
+                return []
+            # 使用可行的子代数量
+            num_offspring = feasible_offspring
+            logger.info(
+                f"[种群分配] 总种群{total_population:,} 不足以产生{num_offspring}个子种，"
+                f"调整为{feasible_offspring}个 (最小门槛={min_offspring_pop:,})"
+            )
         
         splits: list[int] = []
         remaining = total_population
@@ -1808,14 +1857,23 @@ class SpeciationService:
             if slots_left == 1:
                 allocation = remaining
             else:
-                min_allow = 1
-                max_allow = remaining - (slots_left - 1)
-                avg_share = remaining / slots_left
-                lower_bound = max(min_allow, int(avg_share * 0.6))
-                upper_bound = min(max_allow, max(lower_bound, int(avg_share * 1.4)))
-                if upper_bound < lower_bound:
-                    upper_bound = lower_bound
-                allocation = random.randint(lower_bound, upper_bound)
+                # 确保每个子种至少获得 min_offspring_pop 的种群
+                # 同时确保留给后续子种的种群也够分配
+                min_allow = min_offspring_pop
+                reserved_for_others = min_offspring_pop * (slots_left - 1)
+                max_allow = remaining - reserved_for_others
+                
+                if max_allow < min_allow:
+                    # 安全检查：如果计算出错，使用最小值
+                    allocation = min_allow
+                else:
+                    avg_share = remaining / slots_left
+                    lower_bound = max(min_allow, int(avg_share * 0.6))
+                    upper_bound = min(max_allow, max(lower_bound, int(avg_share * 1.4)))
+                    if upper_bound < lower_bound:
+                        upper_bound = lower_bound
+                    allocation = random.randint(lower_bound, upper_bound)
+            
             splits.append(allocation)
             remaining -= allocation
         

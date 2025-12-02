@@ -527,8 +527,8 @@ SPECIES_PROMPTS = {
 **必须返回JSON格式，包含所有请求物种的分化结果。**
 
 === 环境背景 ===
-压力强度：{average_pressure:.2f}/10 | 压力：{pressure_summary}
-地形：{map_changes_summary} | 事件：{major_events_summary}
+压力强度：{average_pressure:.2f}/10 | 压力来源：{pressure_summary}
+地形变化：{map_changes_summary} | 重大事件：{major_events_summary}
 
 === 待分化物种 ===
 {species_list}
@@ -543,14 +543,14 @@ SPECIES_PROMPTS = {
 
 【器官演化】⚠️ 最常见错误！
 - current_stage 必须与【器官约束】中给出的当前阶段一致
-- 新器官只能：current_stage=0 → target_stage=1
+- 新器官：current_stage=0 → target_stage=1
 - 已有器官：target_stage ≤ current_stage + 2
 - ✅ 父系sensory=1 → {{"current_stage": 1, "target_stage": 2}}
 - ❌ 父系sensory=1 → {{"current_stage": 4}} 会被修正
 
 【分化策略】
-- 高压区域（死亡率>50%）：演化抗逆性
-- 低压区域（死亡率<30%）：演化竞争性
+- 高压区域（死亡率>50%）：演化抗逆性特征
+- 低压区域（死亡率<30%）：演化竞争性特征
 - 地理隔离：不同区域应有性状分歧
 
 === 输出格式 ===
@@ -564,44 +564,35 @@ SPECIES_PROMPTS = {
             "habitat_type": "marine/coastal/freshwater/terrestrial/aerial",
             "trophic_level": 父代±0.5,
             "key_innovations": ["创新点"],
-            "trait_changes": {{"增强": "+值", "减弱": "-值"}},
+            "trait_changes": {{"增强属性": "+值", "减弱属性": "-值"}},
             "morphology_changes": {{"body_length_cm": 0.8-1.3倍}},
             "event_description": "30字分化摘要",
             "reason": "分化原因",
             "organ_evolution": [
-                {{"category": "器官类别", "action": "enhance/initiate", "current_stage": 当前阶段, "target_stage": 目标阶段, "structure_name": "结构名", "description": "变化"}}
+                {{"category": "器官类别", "action": "enhance/initiate", "current_stage": 当前阶段, "target_stage": 目标阶段, "structure_name": "结构名", "description": "变化描述"}}
             ]
         }}
     ]
 }}
 
-=== 🏷️ 命名规则 ===
-名字要有依据、自然、像真实物种。可自由组合创造！
-【拉丁学名】用词根组合：地理(borealis/montanus/abyssalis)、形态(longus/spinosus/pinnatus)、颜色(ruber/aureus/niger)、生态(thermalis/glacialis/noctis)、行为(velox/vorax/natans)
-【中文俗名】有画面感：[环境意象]+[形态/行为]+[类群]，如"风崖长鳍鱼"、"玄渊盲螈"、"霜岭游鹿"
+=== 命名规则 ===
+名字要像真实物种，自然、有依据。可自由组合创造！
+
+【拉丁学名】常用词根组合：
+- 地理/栖息地：borealis(北方)、australis(南方)、orientalis(东方)、montanus(山地)、abyssalis(深渊)、littoralis(沿岸)、pelagicus(远洋)
+- 形态特征：longus(长)、brevis(短)、magnus(大)、spinosus(多刺)、pinnatus(有鳍)、cornutus(有角)、armatus(有甲)、dentatus(有齿)
+- 颜色：niger(黑)、albus(白)、ruber(红)、aureus(金)、viridis(绿)、caeruleus(蓝)
+- 生态/习性：thermalis(热泉)、glacialis(冰川)、noctis(夜行)、velox(快速)、vorax(贪食)、ferox(凶猛)
+- 人名后缀：-i(属格，如darwini达尔文的)、-orum(复数属格)、-ae(女性属格)
+- 地名化：sinensis(中国)、japonicus(日本)、americanus(美洲)
+
+【中文俗名】多种风格可选：
+- 环境+形态+类群：风崖长鳍鱼、玄渊盲螈、霜脊游龙
+- 人名+氏+类群：邓氏鱼、李氏螈、陈氏虫（纪念发现者/科学家）
+- 地名+类群：澄江虫、热河鸟、辽西龙
+- 特征直译：三叶虫、盾皮鱼、棘皮动物
+- 行为/习性：伏击蟹、滤食贝、穴居蛇
 - ❌ 避免搞笑/卡通化/无意义组合
-
-=== 示例（父系sensory=1, locomotion=0）===
-{{
-    "results": [
-        {{
-            "request_id": "0",
-            "latin_name": "Protoflagella oculocava",
-            "common_name": "碧潭凹眼虫",
-            "description": "浅海光照促使感光点内陷形成眼凹结构，繁殖速度下降以维持感觉器官。",
-            "habitat_type": "marine",
-            "trophic_level": 2.0,
-            "key_innovations": ["眼凹结构"],
-            "trait_changes": {{"光照需求": "+1.5", "繁殖速度": "-1.0"}},
-            "morphology_changes": {{"body_length_cm": 1.05}},
-            "event_description": "浅海光照促进感光器官发展",
-            "reason": "光感知优势带来生存收益",
-            "organ_evolution": [
-                {{"category": "sensory", "action": "enhance", "current_stage": 1, "target_stage": 2, "structure_name": "眼凹", "description": "感光点内陷"}}
-            ]
-        }}
-    ]
-}}
 
 只返回JSON。
 """,

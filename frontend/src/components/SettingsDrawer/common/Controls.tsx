@@ -71,7 +71,7 @@ export const ToggleRow = memo(function ToggleRow({
   disabled = false,
 }: ToggleRowProps) {
   return (
-    <div className="form-row">
+    <div className="form-row form-row-compact">
       <div className="form-label">
         <div className="form-label-text">{label}</div>
         {desc && <div className="form-label-desc">{desc}</div>}

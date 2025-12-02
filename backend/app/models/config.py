@@ -115,6 +115,18 @@ class SpeciationConfig(BaseModel):
     # 高资源饱和时门槛乘数
     threshold_multiplier_high_saturation: float = 1.1
     
+    # ========== 种群数量门槛（按生物量 kg 计算）==========
+    # 物种分化所需的最小生物量（低于此值不允许分化）
+    # 考虑到开局物种通常在 20k-200k kg，几回合后达到百万级
+    # 设为 50,000 kg 确保只有中等规模以上的种群才能分化
+    min_population_for_speciation: int = 50000
+    # 新物种的最小生物量（分化后子物种生物量不能低于此值）
+    # 设为 5,000 kg 确保新物种有足够的初始规模
+    min_offspring_population: int = 5000
+    # 背景物种分化概率惩罚系数（0-1，越小惩罚越重）
+    # 例如 0.3 表示背景物种的分化概率降低到普通物种的 30%
+    background_speciation_penalty: float = 0.3
+    
     # ========== 杂交参数 ==========
     # 自动杂交检测概率（每回合检测同域近缘物种杂交的概率）
     auto_hybridization_chance: float = 0.08
@@ -122,6 +134,9 @@ class SpeciationConfig(BaseModel):
     hybridization_success_rate: float = 0.35
     # 每回合最多杂交数量
     max_hybrids_per_turn: int = 2
+    # 杂交所需的最小生物量（每个亲本物种，kg）
+    # 设为 20,000 kg 确保双亲都有足够规模
+    min_population_for_hybridization: int = 20000
     
     # ========== 距离型隔离判定 ==========
     # 距离隔离阈值（六边形步数）：候选地块跨度超过此值视为隔离（降低以更容易触发）

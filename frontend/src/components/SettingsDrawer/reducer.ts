@@ -28,6 +28,7 @@ export function createDefaultConfig(): UIConfig {
       base_url: preset.base_url,
       api_key: "",
       models: [...preset.models],
+      selected_models: [],
     };
   });
   return {
@@ -56,6 +57,8 @@ export function getInitialProviders(config: UIConfig): Record<string, ProviderCo
     updated[id] = {
       ...p,
       provider_type: p.provider_type || (p.type as ProviderType) || "openai",
+      selected_models: Array.isArray(p.selected_models) ? p.selected_models : (p.selected_models ? [p.selected_models] : []),
+      disabled_models: p.disabled_models || [],
     };
   }
   return updated;

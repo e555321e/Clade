@@ -286,7 +286,13 @@ if ($needInstallFrontend) {
     if (Test-Path "node_modules") {
         Remove-Item -Recurse -Force "node_modules" -ErrorAction SilentlyContinue
     }
-    & npm install --no-fund --no-audit
+    # 使用 npm.cmd 完整名称避免潜在的命令解析问题
+    $npmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if ($npmCmd) {
+        & npm.cmd install --no-fund --no-audit
+    } else {
+        & npm install --no-fund --no-audit
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Status $lang.error "Frontend install failed!" $cError
         Write-Host "  Try manually: cd frontend && npm install" -ForegroundColor $cInfo
@@ -343,7 +349,7 @@ $feCmd = @"
 Set-Location -LiteralPath '$frontendPath'
 `$env:BACKEND_PORT='$BACKEND_PORT'
 `$env:FRONTEND_PORT='$FRONTEND_PORT'
-npx vite --port $FRONTEND_PORT --config vite.config.ts
+npx.cmd vite --port $FRONTEND_PORT --config vite.config.ts
 "@
 Start-Process powershell -ArgumentList "-NoExit", "-Command", $feCmd -WorkingDirectory $frontendPath
 

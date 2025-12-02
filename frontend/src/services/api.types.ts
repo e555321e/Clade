@@ -304,6 +304,7 @@ export interface ProviderConfig {
   api_key?: string | null;
   models: string[];  // 收藏的模型列表
   disabled_models?: string[];  // 禁用的模型列表（收藏但不启用）
+  selected_models?: string[] | null; // 优先使用的模型（首个视为默认）
 }
 
 export interface CapabilityRouteConfig {
@@ -340,6 +341,11 @@ export interface SpeciationConfig {
   evo_potential_threshold_late?: number;   // 后期演化潜力阈值
   evo_potential_threshold_early?: number;  // 早期演化潜力阈值
   
+  // ========== 种群数量门槛 ==========
+  min_population_for_speciation?: number;   // 物种分化所需的最小种群数量
+  min_offspring_population?: number;        // 新物种的最小种群数量
+  background_speciation_penalty?: number;   // 背景物种分化概率惩罚系数（0-1）
+  
   // ========== 候选地块筛选 ==========
   candidate_tile_min_pop?: number;          // 候选地块最小种群
   candidate_tile_death_rate_min?: number;   // 候选地块死亡率下限
@@ -364,6 +370,7 @@ export interface SpeciationConfig {
   auto_hybridization_chance?: number;   // 自动杂交检测概率
   hybridization_success_rate?: number;  // 杂交成功率
   max_hybrids_per_turn?: number;        // 每回合最多杂交数量
+  min_population_for_hybridization?: number;  // 杂交所需的最小种群数量
 }
 
 /**

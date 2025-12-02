@@ -2,7 +2,7 @@
  * ConnectionSection - 服务商连接配置 (全新设计)
  */
 
-import { memo, useCallback, useState, type Dispatch } from "react";
+import { memo, useCallback, useEffect, useState, type Dispatch } from "react";
 import type { ProviderConfig, ProviderType } from "@/services/api.types";
 import type { SettingsAction, TestResult } from "../types";
 import { testApiConnection, fetchProviderModels, type ModelInfo } from "@/services/api";
@@ -29,10 +29,61 @@ export const ConnectionSection = memo(function ConnectionSection({
 }: Props) {
   const providerList = Object.values(providers);
   const selectedProvider = selectedProviderId ? providers[selectedProviderId] : null;
+  const selectedProviderDefaultModel = selectedProvider?.selected_models?.[0] || "";
 
   const [fetchingModels, setFetchingModels] = useState<string | null>(null);
   const [providerModels, setProviderModels] = useState<Record<string, ModelInfo[]>>({});
   const [modelFetchError, setModelFetchError] = useState<Record<string, string>>({});
+
+  const handleDefaultModelChange = useCallback(
+    (providerId: string, value: string) => {
+      const trimmed = value.trim();
+      dispatch({
+        type: "UPDATE_PROVIDER",
+        id: providerId,
+        field: "selected_models",
+        value: trimmed ? [trimmed] : [],
+      });
+    },
+    [dispatch],
+  );
+
+  useEffect(() => {
+    if (!selectedProvider) return;
+    const models = selectedProvider.models || [];
+    const selected = selectedProvider.selected_models || [];
+
+    if (models.length === 1 && selected[0] !== models[0]) {
+      handleDefaultModelChange(selectedProvider.id, models[0]);
+    } else if (selected.length && !models.includes(selected[0])) {
+      handleDefaultModelChange(selectedProvider.id, "");
+    }
+  }, [selectedProvider, handleDefaultModelChange]);
+
+  const removeModel = useCallback(
+    (provider: ProviderConfig, modelId: string) => {
+      dispatch({
+        type: "UPDATE_PROVIDER",
+        id: provider.id,
+        field: "models",
+        value: (provider.models || []).filter((m) => m !== modelId),
+      });
+
+      if ((provider.disabled_models || []).includes(modelId)) {
+        dispatch({
+          type: "UPDATE_PROVIDER",
+          id: provider.id,
+          field: "disabled_models",
+          value: (provider.disabled_models || []).filter((m) => m !== modelId),
+        });
+      }
+
+      if ((provider.selected_models || [])[0] === modelId) {
+        handleDefaultModelChange(provider.id, "");
+      }
+    },
+    [dispatch, handleDefaultModelChange],
+  );
 
   // 添加自定义服务商
   const handleAddCustom = useCallback((apiType: ProviderType, typeName: string) => {
@@ -424,6 +475,7 @@ export const ConnectionSection = memo(function ConnectionSection({
                     }}>
                       {(selectedProvider.models || []).map((modelId) => {
                         const isEnabled = !(selectedProvider.disabled_models || []).includes(modelId);
+                        const isDefault = selectedProviderDefaultModel === modelId;
                         return (
                           <div
                             key={modelId}
@@ -482,36 +534,44 @@ export const ConnectionSection = memo(function ConnectionSection({
                             </button>
                             
                             {/* 模型名称 */}
-                            <span style={{
-                              flex: 1,
-                              fontSize: "0.82rem",
-                              color: isEnabled ? "var(--s-text)" : "var(--s-text-muted)",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}>
-                              {modelId}
+                            <span
+                              style={{
+                                flex: 1,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                fontSize: "0.82rem",
+                                color: isEnabled ? "var(--s-text)" : "var(--s-text-muted)",
+                                overflow: "hidden",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {modelId}
+                              </span>
+                              {isDefault && (
+                                <span
+                                  style={{
+                                    fontSize: "0.68rem",
+                                    color: "var(--s-warning)",
+                                    background: "rgba(251, 191, 36, 0.15)",
+                                    borderRadius: "999px",
+                                    padding: "2px 6px",
+                                  }}
+                                >
+                                  默认
+                                </span>
+                              )}
                             </span>
                             
                             {/* 删除按钮 */}
                             <button
-                              onClick={() => {
-                                dispatch({
-                                  type: "UPDATE_PROVIDER",
-                                  id: selectedProvider.id,
-                                  field: "models",
-                                  value: (selectedProvider.models || []).filter(m => m !== modelId),
-                                });
-                                // 同时从禁用列表中移除
-                                if ((selectedProvider.disabled_models || []).includes(modelId)) {
-                                  dispatch({
-                                    type: "UPDATE_PROVIDER",
-                                    id: selectedProvider.id,
-                                    field: "disabled_models",
-                                    value: (selectedProvider.disabled_models || []).filter(m => m !== modelId),
-                                  });
-                                }
-                              }}
+                              onClick={() => removeModel(selectedProvider, modelId)}
                               style={{
                                 width: "24px",
                                 height: "24px",
@@ -595,6 +655,54 @@ export const ConnectionSection = memo(function ConnectionSection({
                     >
                       添加
                     </button>
+                  </div>
+                </div>
+
+                {/* 默认模型 */}
+                <div style={{ marginTop: "16px" }}>
+                  <div className="form-label-text" style={{ marginBottom: "8px" }}>
+                    默认模型
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <input
+                      type="text"
+                      list={`default-model-options-${selectedProvider.id}`}
+                      value={selectedProviderDefaultModel}
+                      onChange={(e) => handleDefaultModelChange(selectedProvider.id, e.target.value)}
+                      placeholder="未设置则使用全局默认"
+                      style={{
+                        flex: 1,
+                        padding: "8px 12px",
+                        background: "var(--s-bg-deep)",
+                        border: "1px solid var(--s-border)",
+                        borderRadius: "var(--s-radius-sm)",
+                        color: "var(--s-text)",
+                        fontSize: "0.82rem",
+                        fontFamily: "var(--s-font-mono)",
+                      }}
+                    />
+                    <button
+                      onClick={() => handleDefaultModelChange(selectedProvider.id, "")}
+                      disabled={!selectedProviderDefaultModel}
+                      style={{
+                        padding: "8px 12px",
+                        border: "1px solid var(--s-border)",
+                        background: "var(--s-bg-deep)",
+                        borderRadius: "var(--s-radius-sm)",
+                        color: selectedProviderDefaultModel ? "var(--s-text)" : "var(--s-text-muted)",
+                        cursor: selectedProviderDefaultModel ? "pointer" : "not-allowed",
+                      }}
+                    >
+                      清除
+                    </button>
+                  </div>
+                  <datalist id={`default-model-options-${selectedProvider.id}`}>
+                    {(selectedProvider.models || []).map((m) => (
+                      <option key={m} value={m} />
+                    ))}
+                  </datalist>
+                  <div style={{ fontSize: "0.72rem", color: "var(--s-text-muted)", marginTop: "6px" }}>
+                    将优先作为该服务商的默认调用模型，未设置时退回全局默认。
                   </div>
                 </div>
 
@@ -686,21 +794,17 @@ export const ConnectionSection = memo(function ConnectionSection({
                               onClick={() => {
                                 const currentModels = selectedProvider.models || [];
                                 if (isAdded) {
-                                  // 移除模型
-                                  dispatch({
-                                    type: "UPDATE_PROVIDER",
-                                    id: selectedProvider.id,
-                                    field: "models",
-                                    value: currentModels.filter((m) => m !== model.id),
-                                  });
+                                  removeModel(selectedProvider, model.id);
                                 } else {
-                                  // 添加模型
                                   dispatch({
                                     type: "UPDATE_PROVIDER",
                                     id: selectedProvider.id,
                                     field: "models",
                                     value: [...currentModels, model.id],
                                   });
+                                  if (!(selectedProvider.selected_models || []).length) {
+                                    handleDefaultModelChange(selectedProvider.id, model.id);
+                                  }
                                 }
                               }}
                               style={{
