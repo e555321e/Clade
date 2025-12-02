@@ -4,9 +4,10 @@
  * 独立的 Embedding 配置页面，提供详细的说明和配置选项
  */
 
-import { memo, type Dispatch } from "react";
+import { memo, useState, useCallback, type Dispatch } from "react";
 import type { ProviderConfig } from "@/services/api.types";
-import type { SettingsAction } from "../types";
+import type { SettingsAction, TestResult } from "../types";
+import { testApiConnection } from "@/services/api";
 import { getProviderLogo } from "../reducer";
 import { EMBEDDING_PRESETS } from "../constants";
 
@@ -27,6 +28,44 @@ export const EmbeddingSection = memo(function EmbeddingSection({
 }: EmbeddingSectionProps) {
   const providerList = Object.values(providers).filter((p) => p.api_key);
   const selectedProvider = embeddingProvider ? providers[embeddingProvider] : null;
+
+  // 测试状态
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
+
+  // 测试 Embedding 连接
+  const handleTest = useCallback(async () => {
+    if (!selectedProvider?.base_url || !selectedProvider?.api_key) {
+      setTestResult({
+        success: false,
+        message: "请先选择服务商并确保已配置 API Key",
+      });
+      return;
+    }
+
+    const model = embeddingModel || "Qwen/Qwen3-Embedding-4B";
+
+    setTesting(true);
+    setTestResult(null);
+
+    try {
+      const result = await testApiConnection({
+        type: "embedding",
+        base_url: selectedProvider.base_url,
+        api_key: selectedProvider.api_key,
+        model: model,
+        provider_type: selectedProvider.provider_type || "openai",
+      });
+      setTestResult(result);
+    } catch (err: unknown) {
+      setTestResult({
+        success: false,
+        message: err instanceof Error ? err.message : "测试失败",
+      });
+    } finally {
+      setTesting(false);
+    }
+  }, [selectedProvider, embeddingModel]);
   
   const handleProviderChange = (providerId: string) => {
     dispatch({ type: "UPDATE_GLOBAL", field: "embedding_provider", value: providerId || null });
@@ -169,6 +208,29 @@ export const EmbeddingSection = memo(function EmbeddingSection({
                 />
                 <p className="field-hint">常见维度：1536 (OpenAI), 1024 (BGE-M3), 4096 (Qwen)</p>
               </div>
+
+              {/* 测试按钮 */}
+              <div className="form-actions">
+                <button
+                  className="btn primary"
+                  onClick={handleTest}
+                  disabled={testing || !selectedProvider}
+                >
+                  {testing ? "测试中..." : "🧬 测试向量服务"}
+                </button>
+              </div>
+
+              {testResult && (
+                <div className={`test-result ${testResult.success ? "success" : "error"}`}>
+                  <span className="result-icon">
+                    {testResult.success ? "✓" : "✗"}
+                  </span>
+                  <span>{testResult.message}</span>
+                  {testResult.details && (
+                    <p className="result-details">{testResult.details}</p>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

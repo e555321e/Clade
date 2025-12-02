@@ -10,10 +10,11 @@
  * - 更好的滚动和内容显示
  */
 
-import { useReducer, useCallback, useEffect } from "react";
+import { useReducer, useCallback, useEffect, useRef } from "react";
 import type { UIConfig } from "@/services/api.types";
 import { GamePanel } from "../common/GamePanel";
 import { ConfirmDialog } from "../common/ConfirmDialog";
+import { createDefaultConfig } from "./reducer";
 
 // 模块化组件
 import {
@@ -97,6 +98,97 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose, handleSave]);
+
+  // 文件输入引用
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 导出配置
+  const handleExport = useCallback(() => {
+    const exportData = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      config: state.form,
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `clade-settings-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [state.form]);
+
+  // 导入配置
+  const handleImport = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (data.config && data.config.providers) {
+          dispatch({
+            type: "SET_CONFIRM_DIALOG",
+            dialog: {
+              isOpen: true,
+              title: "导入配置",
+              message: "导入将覆盖当前所有设置，确定要继续吗？",
+              variant: "warning",
+              onConfirm: () => {
+                dispatch({ type: "SET_FORM", form: data.config });
+              },
+            },
+          });
+        } else {
+          dispatch({
+            type: "SET_CONFIRM_DIALOG",
+            dialog: {
+              isOpen: true,
+              title: "导入失败",
+              message: "无效的配置文件格式",
+              variant: "danger",
+              onConfirm: () => {},
+            },
+          });
+        }
+      } catch (err) {
+        dispatch({
+          type: "SET_CONFIRM_DIALOG",
+          dialog: {
+            isOpen: true,
+            title: "导入失败",
+            message: "解析文件失败: " + String(err),
+            variant: "danger",
+            onConfirm: () => {},
+          },
+        });
+      }
+    };
+    reader.readAsText(file);
+    // 重置 input 以允许重复选择同一文件
+    e.target.value = "";
+  }, []);
+
+  // 重置为默认配置
+  const handleReset = useCallback(() => {
+    dispatch({
+      type: "SET_CONFIRM_DIALOG",
+      dialog: {
+        isOpen: true,
+        title: "重置为默认",
+        message: "这将清除所有自定义配置并恢复默认设置，确定要继续吗？",
+        variant: "danger",
+        onConfirm: () => {
+          dispatch({ type: "SET_FORM", form: createDefaultConfig() });
+        },
+      },
+    });
+  }, []);
 
   // 确认对话框
   const handleConfirmClose = useCallback(() => {
@@ -188,7 +280,9 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
       case "autosave":
         return (
           <AutosaveSection
-            config={state.form.gameplay || {}}
+            autosaveEnabled={state.form.autosave_enabled ?? true}
+            autosaveInterval={state.form.autosave_interval ?? 5}
+            autosaveMaxSlots={state.form.autosave_max_slots ?? 3}
             dispatch={dispatch}
           />
         );
@@ -226,6 +320,17 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
           <div className="footer-left">
             <span className="shortcut-hint">Ctrl+S 保存</span>
             <span className="shortcut-hint">Esc 关闭</span>
+            <div className="footer-actions">
+              <button className="btn text-btn" onClick={handleExport} title="导出配置到文件">
+                📤 导出
+              </button>
+              <button className="btn text-btn" onClick={handleImport} title="从文件导入配置">
+                📥 导入
+              </button>
+              <button className="btn text-btn danger" onClick={handleReset} title="恢复默认配置">
+                ↻ 重置
+              </button>
+            </div>
           </div>
           <div className="footer-buttons">
             <button className="btn secondary" onClick={onClose}>
@@ -239,6 +344,14 @@ export function SettingsDrawer({ config, onClose, onSave }: Props) {
               {state.saving ? "保存中..." : state.saveSuccess ? "✓ 已保存" : "💾 保存配置"}
             </button>
           </div>
+          {/* 隐藏的文件输入 */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            style={{ display: "none" }}
+            onChange={handleFileChange}
+          />
         </div>
       }
     >

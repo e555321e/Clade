@@ -3,20 +3,23 @@
  */
 
 import { memo, type Dispatch } from "react";
-import type { UIConfig } from "@/services/api.types";
 import type { SettingsAction } from "../types";
 import { SectionCard, ToggleRow, NumberInput } from "../common";
 
 interface AutosaveSectionProps {
-  config: UIConfig;
+  autosaveEnabled: boolean;
+  autosaveInterval: number;
+  autosaveMaxSlots: number;
   dispatch: Dispatch<SettingsAction>;
 }
 
 export const AutosaveSection = memo(function AutosaveSection({
-  config,
+  autosaveEnabled,
+  autosaveInterval,
+  autosaveMaxSlots,
   dispatch,
 }: AutosaveSectionProps) {
-  const handleUpdate = (field: keyof UIConfig, value: unknown) => {
+  const handleUpdate = (field: string, value: unknown) => {
     dispatch({ type: "UPDATE_GLOBAL", field, value });
   };
 
@@ -33,32 +36,32 @@ export const AutosaveSection = memo(function AutosaveSection({
         <ToggleRow
           label="启用自动存档"
           desc="每隔一定回合数自动保存游戏进度"
-          checked={config.autosave_enabled ?? true}
+          checked={autosaveEnabled}
           onChange={(v) => handleUpdate("autosave_enabled", v)}
         />
 
         <NumberInput
           label="存档间隔"
           desc="每隔多少回合自动保存一次"
-          value={config.autosave_interval ?? 5}
+          value={autosaveInterval}
           min={1}
           max={50}
           step={1}
           onChange={(v) => handleUpdate("autosave_interval", v)}
           suffix="回合"
-          disabled={!config.autosave_enabled}
+          disabled={!autosaveEnabled}
         />
 
         <NumberInput
           label="最大存档数"
           desc="保留的自动存档数量，超出后删除最旧的"
-          value={config.autosave_max_slots ?? 3}
+          value={autosaveMaxSlots}
           min={1}
           max={10}
           step={1}
           onChange={(v) => handleUpdate("autosave_max_slots", v)}
           suffix="个"
-          disabled={!config.autosave_enabled}
+          disabled={!autosaveEnabled}
         />
       </SectionCard>
 

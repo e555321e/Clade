@@ -6,10 +6,10 @@
  * - 右侧：选中服务商的编辑表单
  */
 
-import { memo, useCallback, type Dispatch } from "react";
+import { memo, useCallback, useState, type Dispatch } from "react";
 import type { ProviderConfig, ProviderType } from "@/services/api.types";
 import type { SettingsAction, TestResult } from "../types";
-import { testApiConnection } from "@/services/api";
+import { testApiConnection, fetchProviderModels, type ModelInfo } from "@/services/api";
 import { PROVIDER_PRESETS, PROVIDER_API_TYPES } from "../constants";
 import { getProviderLogo, getProviderTypeBadge, generateId } from "../reducer";
 
@@ -32,6 +32,11 @@ export const ConnectionSection = memo(function ConnectionSection({
 }: ConnectionSectionProps) {
   const providerList = Object.values(providers);
   const selectedProvider = selectedProviderId ? providers[selectedProviderId] : null;
+
+  // 模型列表相关状态
+  const [fetchingModels, setFetchingModels] = useState<string | null>(null);
+  const [providerModels, setProviderModels] = useState<Record<string, ModelInfo[]>>({});
+  const [modelFetchError, setModelFetchError] = useState<Record<string, string>>({});
 
   // 添加预设服务商
   const handleAddProvider = useCallback((preset: typeof PROVIDER_PRESETS[0]) => {
@@ -125,6 +130,58 @@ export const ConnectionSection = memo(function ConnectionSection({
       },
     });
   }, [dispatch, selectedProviderId]);
+
+  // 获取服务商的模型列表
+  const handleFetchModels = useCallback(async (provider: ProviderConfig) => {
+    if (!provider.api_key || !provider.base_url) {
+      setModelFetchError((prev) => ({
+        ...prev,
+        [provider.id]: "请先填写 API Key 和 Base URL",
+      }));
+      return;
+    }
+
+    setFetchingModels(provider.id);
+    setModelFetchError((prev) => {
+      const newErrors = { ...prev };
+      delete newErrors[provider.id];
+      return newErrors;
+    });
+
+    try {
+      const result = await fetchProviderModels({
+        base_url: provider.base_url,
+        api_key: provider.api_key,
+        provider_type: provider.provider_type || "openai",
+      });
+
+      if (result.success && result.models.length > 0) {
+        setProviderModels((prev) => ({
+          ...prev,
+          [provider.id]: result.models,
+        }));
+        // 更新 provider 的模型列表
+        dispatch({
+          type: "UPDATE_PROVIDER",
+          id: provider.id,
+          field: "models",
+          value: result.models.map((m) => m.id),
+        });
+      } else {
+        setModelFetchError((prev) => ({
+          ...prev,
+          [provider.id]: result.message || "未获取到模型列表",
+        }));
+      }
+    } catch (err: unknown) {
+      setModelFetchError((prev) => ({
+        ...prev,
+        [provider.id]: err instanceof Error ? err.message : "获取模型列表失败",
+      }));
+    } finally {
+      setFetchingModels(null);
+    }
+  }, [dispatch]);
 
   return (
     <div className="settings-section connection-section">
@@ -366,6 +423,14 @@ export const ConnectionSection = memo(function ConnectionSection({
                   >
                     {testingProviderId === selectedProvider.id ? "测试中..." : "🔍 测试连接"}
                   </button>
+                  <button
+                    className="btn secondary"
+                    onClick={() => handleFetchModels(selectedProvider)}
+                    disabled={fetchingModels !== null || !selectedProvider.api_key || !selectedProvider.base_url}
+                    title="从服务商API自动获取可用模型列表"
+                  >
+                    {fetchingModels === selectedProvider.id ? "获取中..." : "📋 获取模型列表"}
+                  </button>
                 </div>
 
                 {testResults[selectedProvider.id] && (
@@ -376,6 +441,78 @@ export const ConnectionSection = memo(function ConnectionSection({
                       {testResults[selectedProvider.id].success ? "✓" : "✗"}
                     </span>
                     <span>{testResults[selectedProvider.id].message}</span>
+                  </div>
+                )}
+
+                {modelFetchError[selectedProvider.id] && (
+                  <div className="test-result error">
+                    <span className="result-icon">✗</span>
+                    <span>{modelFetchError[selectedProvider.id]}</span>
+                  </div>
+                )}
+
+                {/* 已获取的模型列表 */}
+                {providerModels[selectedProvider.id] && providerModels[selectedProvider.id].length > 0 && (
+                  <div className="fetched-models-section">
+                    <div className="fetched-models-header">
+                      <span className="result-icon">✓</span>
+                      <span>已获取 {providerModels[selectedProvider.id].length} 个模型</span>
+                      <button
+                        className="btn text-btn"
+                        onClick={() => {
+                          // 将所有获取的模型添加到可用模型列表
+                          const allModelIds = providerModels[selectedProvider.id].map(m => m.id);
+                          dispatch({
+                            type: "UPDATE_PROVIDER",
+                            id: selectedProvider.id,
+                            field: "models",
+                            value: allModelIds,
+                          });
+                        }}
+                        title="将所有获取的模型添加到可用模型列表"
+                      >
+                        全部添加
+                      </button>
+                    </div>
+                    <div className="fetched-models-list">
+                      {providerModels[selectedProvider.id].slice(0, 20).map((model) => {
+                        const isAdded = (selectedProvider.models || []).includes(model.id);
+                        return (
+                          <div
+                            key={model.id}
+                            className={`model-item ${isAdded ? "added" : ""}`}
+                            onClick={() => {
+                              if (!isAdded) {
+                                dispatch({
+                                  type: "UPDATE_PROVIDER",
+                                  id: selectedProvider.id,
+                                  field: "models",
+                                  value: [...(selectedProvider.models || []), model.id],
+                                });
+                              }
+                            }}
+                            title={model.description || model.id}
+                          >
+                            <span className="model-name">{model.name || model.id}</span>
+                            {model.context_window && (
+                              <span className="model-context">
+                                {model.context_window >= 1000000
+                                  ? `${(model.context_window / 1000000).toFixed(1)}M`
+                                  : `${Math.round(model.context_window / 1000)}K`}
+                              </span>
+                            )}
+                            <span className="model-action">
+                              {isAdded ? "✓" : "+"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {providerModels[selectedProvider.id].length > 20 && (
+                        <div className="models-more">
+                          还有 {providerModels[selectedProvider.id].length - 20} 个模型...
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

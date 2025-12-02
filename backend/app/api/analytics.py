@@ -371,112 +371,28 @@ def fetch_models(
 @router.get("/map")
 def get_map_overview(
     limit_tiles: int = 0,
+    view_mode: str = "terrain",
+    species_id: int | None = None,
     container: 'ServiceContainer' = Depends(get_container),
 ):
-    """获取地图概览"""
-    from ..schemas.responses import MapOverview, MapTileInfo, HabitatEntry
+    """获取地图概览
     
-    env_repo = container.environment_repository
+    Args:
+        limit_tiles: 限制返回的地块数量（0=不限制）
+        view_mode: 视图模式（terrain/terrain_type/elevation/biodiversity/climate）
+        species_id: 可选，聚焦特定物种的分布
+    """
+    from ..services.geo.map_coloring import ViewMode
+    
     map_manager = container.map_manager
-    species_repo = container.species_repository
     
     # 确保地图已初始化
     map_manager.ensure_initialized()
     
-    # 获取地图全局状态
-    map_state = env_repo.get_state()
-    sea_level = map_state.sea_level if map_state else 0.0
-    
-    # 获取地块列表
-    db_tiles = env_repo.list_tiles(limit=limit_tiles if limit_tiles > 0 else None)
-    
-    if not db_tiles:
-        raise HTTPException(status_code=404, detail="地图未初始化")
-    
-    # 转换为 MapTileInfo
-    tiles = []
-    for t in db_tiles:
-        # 计算地形类型
-        relative_elev = t.elevation - sea_level
-        if relative_elev < -3000:
-            terrain_type = "海沟"
-        elif relative_elev < -200:
-            terrain_type = "深海"
-        elif relative_elev < 0:
-            terrain_type = "浅海"
-        elif relative_elev < 50:
-            terrain_type = "海岸" if t.biome in ("浅海", "海岸") else "平原"
-        elif relative_elev < 500:
-            terrain_type = "平原"
-        elif relative_elev < 1500:
-            terrain_type = "丘陵"
-        elif relative_elev < 3000:
-            terrain_type = "山地"
-        elif relative_elev < 5000:
-            terrain_type = "高山"
-        else:
-            terrain_type = "极高山"
-        
-        # 计算气候带
-        if t.temperature > 20:
-            climate_zone = "热带"
-        elif t.temperature > 10:
-            climate_zone = "亚热带"
-        elif t.temperature > 0:
-            climate_zone = "温带"
-        elif t.temperature > -10:
-            climate_zone = "寒带"
-        else:
-            climate_zone = "极地"
-        
-        tiles.append(MapTileInfo(
-            id=t.id,
-            x=t.x,
-            y=t.y,
-            q=t.q,
-            r=t.r,
-            biome=t.biome,
-            cover=t.cover,
-            temperature=t.temperature,
-            humidity=t.humidity,
-            resources=t.resources,
-            neighbors=[],  # 简化，不计算邻居
-            elevation=relative_elev,
-            terrain_type=terrain_type,
-            climate_zone=climate_zone,
-            color="#808080",  # 默认灰色
-            salinity=t.salinity,
-            is_lake=t.is_lake,
-        ))
-    
-    # 获取栖息地数据
-    habitats = []
-    try:
-        all_species = species_repo.list_species()
-        species_map = {sp.id: sp for sp in all_species}
-        
-        # 使用 environment_repository 获取最新栖息地数据
-        habitat_records = env_repo.latest_habitats(per_species_latest=True)
-        for hp in habitat_records:
-            sp = species_map.get(hp.species_id)
-            if sp and hp.population > 0:
-                habitats.append(HabitatEntry(
-                    species_id=hp.species_id,
-                    lineage_code=sp.lineage_code,
-                    common_name=sp.common_name,
-                    latin_name=sp.latin_name,
-                    tile_id=hp.tile_id,
-                    population=hp.population,
-                    suitability=0.5,  # 简化
-                ))
-    except Exception as e:
-        logger.warning(f"获取栖息地数据失败: {e}")
-    
-    return MapOverview(
-        tiles=tiles,
-        habitats=habitats,
-        sea_level=sea_level,
-        global_avg_temperature=map_state.global_avg_temperature if map_state else 15.0,
-        turn_index=map_state.turn_index if map_state else 0,
+    # 直接使用 map_manager 的 get_overview，它包含完整的颜色计算逻辑
+    return map_manager.get_overview(
+        tile_limit=limit_tiles if limit_tiles > 0 else None,
+        view_mode=view_mode,  # type: ignore
+        species_id=species_id,
     )
 
