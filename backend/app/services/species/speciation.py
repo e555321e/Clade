@@ -152,7 +152,7 @@ class SpeciationService:
         major_events: list = None,
         pressures: Sequence = None,  # ParsedPressure 列表
         trophic_interactions: dict[str, float] = None,  # 营养级互动信息
-        stream_callback: Callable[[str], Awaitable[None] | None] | None = None,
+        stream_callback: Callable[[str, str, str], None] | None = None,  # (event_type, message, category)
         speciation_candidates: set[str] | None = None,  # AI 识别的高分化信号物种
     ) -> list[BranchingEvent]:
         """处理物种分化 (异步并发版)
@@ -1147,7 +1147,8 @@ class SpeciationService:
             coroutines,
             interval=1.5,  # 每1.5秒启动一个批次（批次更小，间隔可以更短）
             max_concurrent=4,  # 最多同时4个批次（每批4个物种，总共最多16个并行）
-            task_name="分化批次"
+            task_name="分化批次",
+            event_callback=stream_callback,  # 【新增】传递心跳回调
         )
         
         # 合并所有批次的结果
@@ -1423,12 +1424,18 @@ class SpeciationService:
         
         species_list = "\n".join(species_list_parts)
         
+        # 【修复】转义 species_list 中的花括号，防止 format() 时误替换
+        # 物种描述等字段可能包含 {xxx} 格式的文本，会导致 KeyError
+        species_list_escaped = species_list.replace("{", "{{").replace("}", "}}")
+        
         return {
             "average_pressure": average_pressure,
             "pressure_summary": pressure_summary,
             "map_changes_summary": self._summarize_map_changes(map_changes) if map_changes else "无显著地形变化",
             "major_events_summary": self._summarize_major_events(major_events) if major_events else "无重大事件",
-            "species_list": species_list,
+            # 【修复】同时提供 major_events 字段，兼容可能使用旧 key 的 Prompt
+            "major_events": self._summarize_major_events(major_events) if major_events else "无重大事件",
+            "species_list": species_list_escaped,
             "batch_size": len(entries),
         }
     
@@ -1470,10 +1477,11 @@ class SpeciationService:
                 logger.debug(f"[分化批量] 使用植物专用Prompt，批次大小: {len(entries)}")
         
         # 【优化】使用流式调用 + 智能空闲超时（只要AI在输出就不会超时）
+        # 【修复】正确传递 event_type 和 category，不再丢失事件类型
         def heartbeat_callback(event_type: str, message: str, category: str):
             if stream_callback:
                 try:
-                    result = stream_callback(message)
+                    result = stream_callback(event_type, message, category)
                     if asyncio.iscoroutine(result):
                         asyncio.create_task(result)
                 except Exception:
@@ -1624,7 +1632,7 @@ class SpeciationService:
         
         return results
 
-    async def _call_ai_wrapper(self, payload: dict, stream_callback: Callable[[str], Awaitable[None] | None] | None) -> dict:
+    async def _call_ai_wrapper(self, payload: dict, stream_callback: Callable[[str], Awaitable[None] | None] | Callable[[str, str, str], None] | None) -> dict:
         """AI调用包装器（带心跳检测）"""
         from ...ai.streaming_helper import invoke_with_heartbeat
         import asyncio
@@ -1632,11 +1640,20 @@ class SpeciationService:
         def heartbeat_callback(event_type: str, message: str, category: str):
             if stream_callback:
                 try:
-                    result = stream_callback(message)
+                    # 尝试以3参数方式调用 (event_type, message, category)
+                    # 这是为了兼容 SpeciationStage 传入的完整事件回调
+                    try:
+                        result = stream_callback(event_type, message, category)
+                    except TypeError:
+                        # 如果失败，回退到1参数方式 (message only)
+                        # 用于兼容旧的仅接收消息的回调
+                        result = stream_callback(message)
+                    
                     if asyncio.iscoroutine(result):
                         asyncio.create_task(result)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # 避免回调错误中断主流程，但记录日志
+                    logger.warning(f"[Speciation] 心跳回调失败: {e}")
         
         try:
             response = await invoke_with_heartbeat(

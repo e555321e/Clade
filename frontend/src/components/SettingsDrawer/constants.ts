@@ -153,8 +153,8 @@ export const DEFAULT_SPECIATION_CONFIG: SpeciationConfig = {
   max_offspring_count: 2,
   max_direct_offspring: 3,
   count_only_alive_offspring: true,
-  early_game_turns: 10,
-  early_threshold_min_factor: 0.3,
+  early_game_turns: 15,
+  early_threshold_min_factor: 0.5,
   early_threshold_decay_rate: 0.07,
   early_skip_cooldown_turns: 5,
   pressure_threshold_late: 0.7,
@@ -164,9 +164,9 @@ export const DEFAULT_SPECIATION_CONFIG: SpeciationConfig = {
   evo_potential_threshold_late: 0.7,
   evo_potential_threshold_early: 0.5,
   // 种群数量门槛（按生物量 kg 计算）
-  min_population_for_speciation: 50000,
-  min_offspring_population: 5000,
-  background_speciation_penalty: 0.3,
+  min_population_for_speciation: 100000,
+  min_offspring_population: 20000,
+  background_speciation_penalty: 0.2,
   // 候选地块筛选
   candidate_tile_min_pop: 50,
   candidate_tile_death_rate_min: 0.02,
@@ -187,6 +187,18 @@ export const DEFAULT_SPECIATION_CONFIG: SpeciationConfig = {
   hybridization_success_rate: 0.35,
   max_hybrids_per_turn: 2,
   min_population_for_hybridization: 20000,
+  // 灭绝阈值
+  extinction_population_threshold: 100,
+  extinction_death_rate_threshold: 0.95,
+  minimum_viable_population: 1000,
+  mvp_warning_turns: 3,
+  mvp_extinction_turns: 5,
+  competition_disadvantage_ratio: 0.05,
+  competition_extinction_ratio: 0.01,
+  inbreeding_depression_threshold: 5000,
+  inbreeding_depression_coefficient: 0.15,
+  consecutive_decline_extinction_turns: 8,
+  decline_detection_threshold: 0.1,
 };
 
 export const DEFAULT_REPRODUCTION_CONFIG: ReproductionConfig = {

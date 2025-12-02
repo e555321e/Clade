@@ -112,9 +112,29 @@ class DispersalEngine:
         """将物种偏好转换为特征向量
         
         用于与地块矩阵计算适宜度
+        【修复v9】增强水生物种识别
         """
         traits = species.abstract_traits or {}
-        habitat_type = getattr(species, 'habitat_type', 'terrestrial')
+        habitat_type = (getattr(species, 'habitat_type', 'terrestrial') or 'terrestrial').lower()
+        growth_form = (getattr(species, 'growth_form', '') or '').lower()
+        trophic = getattr(species, 'trophic_level', 1.0) or 1.0
+        caps = getattr(species, 'capabilities', []) or []
+        caps_set = set(c.lower() for c in caps) | set(caps)
+        
+        # 判断物种实际类型
+        is_aquatic = habitat_type in ('marine', 'deep_sea', 'freshwater', 'hydrothermal')
+        is_terrestrial = habitat_type in ('terrestrial', 'aerial')
+        is_coastal = habitat_type in ('coastal', 'amphibious')
+        
+        # 从 growth_form 判断水生
+        if growth_form == 'aquatic' and trophic < 2.0:
+            is_aquatic = True
+            is_terrestrial = False
+        
+        # 从能力判断
+        if 'chemosynthesis' in caps_set or '化能合成' in caps_set:
+            is_aquatic = True
+            is_terrestrial = False
         
         # 温度偏好
         heat_pref = traits.get("耐热性", 5) / 10.0  # 0-1
@@ -129,13 +149,12 @@ class DispersalEngine:
         elevation_pref = 0.0
         
         # 资源需求（基于营养级）
-        trophic = getattr(species, 'trophic_level', 1.0)
         resource_pref = min(1.0, trophic / 3.0)
         
-        # 栖息地类型偏好
-        land_pref = 1.0 if habitat_type in ('terrestrial', 'aerial') else 0.0
-        sea_pref = 1.0 if habitat_type in ('marine', 'deep_sea') else 0.0
-        coastal_pref = 1.0 if habitat_type in ('coastal', 'amphibious') else 0.0
+        # 栖息地类型偏好（使用实际判断结果）
+        land_pref = 1.0 if is_terrestrial else 0.0
+        sea_pref = 1.0 if is_aquatic else 0.0
+        coastal_pref = 1.0 if is_coastal else 0.0
         
         return np.array([
             temp_pref, humidity_pref, elevation_pref, resource_pref,

@@ -293,12 +293,15 @@ class SuitabilityService:
         is_aquatic_species = False
         is_deep_sea = False
         is_freshwater = False
+        is_hydrothermal = False  # 热泉生物
         
         # 1. 从 habitat_type 判断
-        if habitat in ("marine", "deep_sea", "freshwater", "coastal"):
+        # 【修复】添加 hydrothermal（热泉）类型的识别
+        if habitat in ("marine", "deep_sea", "freshwater", "coastal", "hydrothermal"):
             is_aquatic_species = True
-            is_deep_sea = habitat == "deep_sea"
+            is_deep_sea = habitat in ("deep_sea", "hydrothermal")  # 热泉也是深海环境
             is_freshwater = habitat == "freshwater"
+            is_hydrothermal = habitat == "hydrothermal"
         
         # 2. 从 growth_form 判断 (水生植物)
         if growth == "aquatic" and trophic < 2.0:
@@ -308,7 +311,7 @@ class SuitabilityService:
         aquatic_keywords = ["藻", "浮游", "海洋", "深海", "水生", "海", "鱼", "虾", "蟹", "贝", 
                           "珊瑚", "水母", "海星", "海胆", "鲸", "鲨", "细菌"]
         freshwater_keywords = ["淡水", "河", "湖", "溪"]
-        deep_keywords = ["深海", "热泉", "硫", "化能"]
+        deep_keywords = ["深海", "热泉", "硫", "化能", "热液", "喷口"]
         
         for kw in aquatic_keywords:
             if kw in common_name or kw in desc:
@@ -327,10 +330,19 @@ class SuitabilityService:
                 is_aquatic_species = True
                 break
         
-        # 4. 从能力判断
-        if "chemosynthesis" in caps:
+        # 4. 从能力判断（同时检查中英文）
+        caps_lower = [c.lower() for c in caps] if caps else []
+        caps_set = set(caps_lower + list(caps if caps else []))
+        if "chemosynthesis" in caps_set or "化能合成" in caps_set:
             is_deep_sea = True
             is_aquatic_species = True
+            is_hydrothermal = True
+        
+        # 5. 【新增】从 diet_type 判断
+        diet_type = (getattr(species, 'diet_type', '') or '').lower()
+        if diet_type == "autotroph" and is_deep_sea:
+            # 深海自养生物 = 化能自养
+            is_hydrothermal = True
         
         # D0: 热量偏好 (0=极寒, 0.5=温和, 1=极热)
         heat = traits.get('耐热性', 5)
@@ -391,20 +403,22 @@ class SuitabilityService:
             depth_pref = 0.0
         
         # D7: 光照需求 (0=喜暗, 1=需光)
-        if "photosynthesis" in caps:
+        if "photosynthesis" in caps_set or "光合作用" in caps_set:
             light_pref = 0.95  # 光合作用必须有光
-        elif "chemosynthesis" in caps or "bioluminescence" in caps:
-            light_pref = 0.2   # 化能/发光生物适应黑暗
+        elif is_hydrothermal or "chemosynthesis" in caps_set or "化能合成" in caps_set or "bioluminescence" in caps_set:
+            light_pref = 0.1   # 热泉/化能生物适应黑暗
         elif is_deep_sea:
-            light_pref = 0.1
+            light_pref = 0.15
         elif is_aquatic_species:
             light_pref = 0.5  # 一般水生物种
         else:
             light_pref = 0.6
         
         # D8: 地热偏好
-        if "chemosynthesis" in caps or is_deep_sea:
-            volcanic_pref = 0.8  # 深海/化能合成物种喜欢地热
+        if is_hydrothermal or "chemosynthesis" in caps_set or "化能合成" in caps_set:
+            volcanic_pref = 0.95  # 热泉/化能合成物种非常依赖地热
+        elif is_deep_sea:
+            volcanic_pref = 0.7  # 深海物种偏好地热
         else:
             volcanic_pref = 0.3
         
@@ -567,6 +581,128 @@ class SuitabilityService:
             volcanic_val, stability, vegetation, river
         ])
     
+    # ============ 硬约束检查 ============
+    
+    def _check_habitat_compatibility(
+        self, 
+        species: "Species", 
+        tile: "MapTile"
+    ) -> tuple[float, str]:
+        """检查物种与地块的栖息地兼容性（硬约束）
+        
+        【改进】使用特征向量中的水域性维度作为主要判断依据，不依赖关键词
+        
+        返回: (惩罚系数, 原因说明)
+        - 惩罚系数 1.0 = 无惩罚
+        - 惩罚系数 0.0 = 完全不兼容（致命）
+        - 惩罚系数 0.0-1.0 = 部分惩罚
+        """
+        lineage_code = getattr(species, 'lineage_code', '')
+        tile_id = getattr(tile, 'id', 0)
+        
+        # ========== 使用特征向量判断（最可靠的方式）==========
+        # 获取或计算物种特征向量
+        if lineage_code and lineage_code in self._species_feature_cache:
+            sp_features = self._species_feature_cache[lineage_code]
+        else:
+            sp_features = self._extract_species_features(species)
+        
+        # 获取或计算地块特征向量
+        if tile_id and tile_id in self._tile_feature_cache:
+            tile_features = self._tile_feature_cache[tile_id]
+        else:
+            tile_features = self._extract_tile_features(tile)
+        
+        # 提取水域性维度 (D5: aquatic, index=5)
+        # 物种水域性: 0=纯陆生, 0.5=两栖, 1=纯水生
+        # 地块水域性: 0=陆地, 1=水域
+        species_aquatic = sp_features[5]  # 物种的水域性偏好
+        tile_aquatic = tile_features[5]    # 地块是否为水域
+        
+        # 提取深度维度 (D6: depth, index=6)
+        species_depth = sp_features[6]     # 物种的深度偏好 (0=浅/陆, 1=深海)
+        tile_depth = tile_features[6]      # 地块深度 (0=陆地, 0.3-1=水深)
+        
+        # 提取地热维度 (D8: volcanic, index=8)
+        species_volcanic = sp_features[8]  # 物种的地热偏好
+        tile_volcanic = tile_features[8]   # 地块地热程度
+        
+        # ========== 定义阈值 ==========
+        AQUATIC_THRESHOLD = 0.6       # 物种水域性 > 此值 = 水生物种
+        TERRESTRIAL_THRESHOLD = 0.3   # 物种水域性 < 此值 = 陆生物种
+        DEEP_SEA_THRESHOLD = 0.7      # 物种深度偏好 > 此值 = 深海物种
+        HYDROTHERMAL_THRESHOLD = 0.8  # 物种地热偏好 > 此值 = 热泉物种
+        
+        WATER_TILE_THRESHOLD = 0.5    # 地块水域性 > 此值 = 水域地块
+        DEEP_WATER_THRESHOLD = 0.6    # 地块深度 > 此值 = 深水区
+        VOLCANIC_THRESHOLD = 0.5      # 地块地热 > 此值 = 地热区
+        
+        # ========== 判断物种和地块类型 ==========
+        is_aquatic_species = species_aquatic > AQUATIC_THRESHOLD
+        is_terrestrial_species = species_aquatic < TERRESTRIAL_THRESHOLD
+        is_amphibious = TERRESTRIAL_THRESHOLD <= species_aquatic <= AQUATIC_THRESHOLD
+        is_deep_sea_species = species_depth > DEEP_SEA_THRESHOLD
+        is_hydrothermal_species = species_volcanic > HYDROTHERMAL_THRESHOLD
+        
+        is_water_tile = tile_aquatic > WATER_TILE_THRESHOLD
+        is_land_tile = tile_aquatic < WATER_TILE_THRESHOLD
+        is_deep_water_tile = tile_depth > DEEP_WATER_THRESHOLD
+        is_volcanic_area = tile_volcanic > VOLCANIC_THRESHOLD
+        
+        # ========== 应用硬约束 ==========
+        
+        # 规则1: 水生物种（水域性 > 0.6）不能在陆地生存
+        if is_aquatic_species and is_land_tile:
+            # 两栖物种（0.3-0.6）有一定适应性
+            if is_amphibious:
+                return (0.4, "两栖物种在陆地受限")
+            # 深海/热泉物种在陆地完全无法生存
+            if is_deep_sea_species or is_hydrothermal_species:
+                return (0.0, "深海/热泉物种无法在陆地生存")
+            # 一般水生物种
+            # 水域性越高，惩罚越重
+            penalty = max(0.02, 0.15 * (1 - species_aquatic))
+            return (penalty, "水生物种无法在陆地生存")
+        
+        # 规则2: 陆生物种（水域性 < 0.3）不能在水中生存
+        if is_terrestrial_species and is_water_tile:
+            # 如果是浅水区（深度 < 0.4），给一点点机会
+            if tile_depth < 0.4:
+                # 水域性越低，惩罚越重
+                penalty = max(0.1, 0.3 * species_aquatic)
+                return (penalty, "陆生物种在浅水区受限")
+            # 深水区完全无法生存
+            return (0.0, "陆生物种无法在水中生存")
+        
+        # 规则3: 深海物种（深度偏好 > 0.7）需要深水环境
+        if is_deep_sea_species and is_water_tile and not is_deep_water_tile:
+            # 热泉物种需要火山活动区
+            if is_hydrothermal_species and not is_volcanic_area:
+                return (0.1, "热泉物种需要地热环境")
+            # 深海物种在浅水也受限，但不是完全无法生存
+            penalty = max(0.2, 0.5 * (1 - species_depth))
+            return (penalty, "深海物种在浅水区受限")
+        
+        # 规则4: 热泉物种在非地热的陆地上无法生存
+        if is_hydrothermal_species and is_land_tile:
+            return (0.0, "热泉物种无法在陆地生存")
+        
+        # 规则5: 使用额外属性进行细化判断（可选）
+        habitat = (getattr(species, 'habitat_type', '') or '').lower()
+        salinity = getattr(tile, 'salinity', 35)
+        is_lake = getattr(tile, 'is_lake', False)
+        
+        # 淡水物种不能在高盐度环境
+        if habitat == "freshwater" and is_water_tile and salinity > 20:
+            return (0.1, "淡水物种无法适应高盐度")
+        
+        # 海洋物种不能在淡水环境
+        if habitat == "marine" and is_water_tile and (is_lake or salinity < 10):
+            return (0.15, "海洋物种无法适应淡水")
+        
+        # 无硬约束，正常计算
+        return (1.0, "")
+    
     # ============ 核心计算 ============
     
     def compute_suitability(
@@ -579,6 +715,9 @@ class SuitabilityService:
         
         lineage_code = getattr(species, 'lineage_code', '')
         tile_id = getattr(tile, 'id', 0)
+        
+        # 【新增】首先检查硬约束
+        penalty, penalty_reason = self._check_habitat_compatibility(species, tile)
         
         # 获取/生成特征向量
         if lineage_code not in self._species_feature_cache:
@@ -648,8 +787,14 @@ class SuitabilityService:
         else:
             total = feature_score
         
-        # 确保范围
-        total = max(0.1, min(1.0, total))
+        # 【新增】应用硬约束惩罚
+        if penalty < 1.0:
+            total = total * penalty
+            if penalty_reason:
+                logger.debug(f"[SuitabilityService] 硬约束惩罚: {lineage_code} 在地块 {tile_id}: {penalty_reason} (系数={penalty:.2f})")
+        
+        # 确保范围（允许极低值，用于硬约束）
+        total = max(0.01, min(1.0, total))
         
         return SuitabilityResult(
             total=round(total, 3),
@@ -765,8 +910,18 @@ class SuitabilityService:
         else:
             suitability_matrix = feature_similarity
         
-        # 确保范围
-        suitability_matrix = np.clip(suitability_matrix, 0.1, 1.0)
+        # 【新增】应用硬约束惩罚矩阵
+        penalty_matrix = np.ones((N, M), dtype=np.float32)
+        for i, sp in enumerate(species_list):
+            for j, t in enumerate(tiles):
+                penalty, _ = self._check_habitat_compatibility(sp, t)
+                if penalty < 1.0:
+                    penalty_matrix[i, j] = penalty
+        
+        suitability_matrix = suitability_matrix * penalty_matrix
+        
+        # 确保范围（允许极低值）
+        suitability_matrix = np.clip(suitability_matrix, 0.01, 1.0)
         
         # 更新缓存
         self._matrix_cache = suitability_matrix

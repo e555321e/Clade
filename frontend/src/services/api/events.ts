@@ -6,7 +6,8 @@ import { createEventSource, type SSEEventHandler } from "./base";
 
 // ============ 事件类型定义 ============
 
-export type EventType =
+// 基础事件类型（严格类型）
+export type StrictEventType =
   | "turn_started"
   | "turn_completed"
   | "species_created"
@@ -15,10 +16,23 @@ export type EventType =
   | "energy_changed"
   | "error";
 
+// 扩展事件类型（允许任意字符串，用于动态事件）
+export type EventType = StrictEventType | string;
+
 export interface GameEvent {
   type: EventType;
-  data: unknown;
+  data?: unknown;
   timestamp?: string;
+  // 通用字段（后端 SSE 发送的格式）
+  message?: string;
+  category?: string;
+  // AI 相关字段
+  task?: string;
+  chunks?: number;
+  chunks_received?: number;
+  total?: number;
+  completed?: number;
+  current_task?: string;
 }
 
 export interface TurnStartedEvent {

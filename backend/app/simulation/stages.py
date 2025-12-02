@@ -1366,11 +1366,13 @@ class PopulationUpdateStage(BaseStage):
                 species.morphology_stats["population"] = ctx.new_populations[species.lineage_code]
                 species_repository.upsert(species)
         
-        # 更新灭绝状态（使用 ExtinctionChecker）
+        # 更新灭绝状态（使用 ExtinctionChecker，传入配置）
+        spec_config = getattr(engine.speciation, '_config', None)
         extinction_checker = ExtinctionChecker(
             species_repository=species_repository,
             turn_counter=ctx.turn_index,
             event_callback=ctx.emit_event,
+            config=spec_config,  # 传入配置以使用灭绝阈值
         )
         extinction_checker.check_and_apply(ctx.combined_results, ctx.new_populations)
         
@@ -1926,15 +1928,29 @@ class AutoHybridizationStage(BaseStage):
                     pop1 = sp1.morphology_stats.get("population", 0) or 0
                     pop2 = sp2.morphology_stats.get("population", 0) or 0
                     
-                    # 杂交种初始种群 = 两亲本各贡献 5% × 可育性
-                    hybrid_pop = int((pop1 * 0.05 + pop2 * 0.05) * fertility)
-                    hybrid_pop = max(10, min(hybrid_pop, 5000))  # 限制范围
+                    # 杂交种初始种群 = 两亲本各贡献 10% × 可育性
+                    # 亲本各损失 10% × 可育性（零和游戏，不再凭空创造种群）
+                    contribution_rate = 0.10  # 每个亲本贡献10%
+                    
+                    pop1_contribution = int(pop1 * contribution_rate * fertility)
+                    pop2_contribution = int(pop2 * contribution_rate * fertility)
+                    hybrid_pop = pop1_contribution + pop2_contribution
+                    
+                    # 【修复】使用配置中的最小种群门槛，避免产生微型物种
+                    min_hybrid_pop = spec_config.min_offspring_population
+                    if hybrid_pop < min_hybrid_pop:
+                        # 种群不足，放弃杂交
+                        logger.debug(
+                            f"[自动杂交] 种群不足放弃: {sp1.common_name} × {sp2.common_name} "
+                            f"(计算种群={hybrid_pop:,} < 门槛={min_hybrid_pop:,})"
+                        )
+                        continue
                     
                     hybrid.morphology_stats["population"] = hybrid_pop
                     
-                    # 从亲本中减少种群
-                    sp1.morphology_stats["population"] = max(100, pop1 - int(pop1 * 0.03 * fertility))
-                    sp2.morphology_stats["population"] = max(100, pop2 - int(pop2 * 0.03 * fertility))
+                    # 从亲本中减少种群（与贡献相等，零和）
+                    sp1.morphology_stats["population"] = max(100, pop1 - pop1_contribution)
+                    sp2.morphology_stats["population"] = max(100, pop2 - pop2_contribution)
                     
                     # 保存杂交种
                     species_repository.upsert(hybrid)
@@ -2299,6 +2315,12 @@ class SpeciationStage(BaseStage):
             # 【关键修复】执行分化时使用 combined_results 而不是只用 critical + focus
             # 原代码只处理 critical_results + focus_results，导致大量 background 物种无法分化
             # 物种分化不需要 AI 做筛选决策，只需要 AI 生成新物种描述，所以处理全部物种是安全的
+            
+            # 【心跳回调】将 ctx.emit_event 包装为 stream_callback，用于 AI 调用心跳
+            # 【修复】接收 event_type 和 category，正确传递事件类型
+            def speciation_stream_callback(event_type: str, message: str, category: str = "AI"):
+                ctx.emit_event(event_type, message, category)
+            
             ctx.branching_events = await asyncio.wait_for(
                 engine.speciation.process_async(
                     mortality_results=ctx.combined_results,  # 【修复】使用所有物种
@@ -2309,6 +2331,7 @@ class SpeciationStage(BaseStage):
                     major_events=ctx.major_events,
                     pressures=ctx.pressures,
                     trophic_interactions=ctx.trophic_interactions,
+                    stream_callback=speciation_stream_callback,  # 【新增】传递心跳回调
                     speciation_candidates=speciation_candidates if speciation_candidates else None,
                 ),
                 timeout=600

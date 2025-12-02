@@ -3665,9 +3665,10 @@ h1, h2, h3 {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  max-height: 280px;
+  gap: 0.6rem;
+  max-height: 350px;
   padding-right: 0.25rem;
+  padding-bottom: 0.5rem;
 }
 
 .habitat-empty {
@@ -3702,13 +3703,15 @@ h1, h2, h3 {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  min-height: 52px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.25s ease;
   animation: species-card-appear 0.3s ease backwards;
+  flex-shrink: 0;
 }
 
 @keyframes species-card-appear {
@@ -3731,13 +3734,13 @@ h1, h2, h3 {
 }
 
 .species-avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.1rem;
+  font-size: 1rem;
   font-weight: 700;
   color: white;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -3747,6 +3750,7 @@ h1, h2, h3 {
 .species-details {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
 }
 
 .species-name-row {
@@ -3758,11 +3762,12 @@ h1, h2, h3 {
 
 .species-common-name {
   font-weight: 600;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   color: rgba(226, 236, 255, 0.95);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 140px;
 }
 
 .thriving-badge {
@@ -3778,8 +3783,9 @@ h1, h2, h3 {
 .species-meta-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8rem;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  margin-top: 2px;
 }
 
 .species-code-badge {
@@ -3798,8 +3804,8 @@ h1, h2, h3 {
 /* 适宜度仪表 */
 .suitability-meter {
   position: relative;
-  width: 32px;
-  height: 48px;
+  width: 28px;
+  height: 40px;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 6px;
   overflow: hidden;

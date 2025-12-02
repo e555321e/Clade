@@ -213,15 +213,18 @@ async def stream_simulation_events(
 ):
     """Server-Sent Events 端点，实时推送演化事件"""
     import asyncio
+    import json
     from fastapi.responses import StreamingResponse
     
     async def event_generator():
+        # 【修复】发送连接确认事件，让前端从 "连接中" 切换到 "已连接"
+        yield f"data: {json.dumps({'type': 'connected', 'message': '已连接到事件流'}, ensure_ascii=False)}\n\n"
+        
         while True:
             events = session.get_pending_events(max_count=10)
             
             if events:
                 for event in events:
-                    import json
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             else:
                 yield ": keepalive\n\n"

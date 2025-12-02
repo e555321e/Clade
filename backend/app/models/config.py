@@ -59,12 +59,12 @@ class SpeciationConfig(BaseModel):
     
     # ========== 早期分化优化 ==========
     # 早期回合阈值：低于此回合数时使用更宽松的条件
-    early_game_turns: int = 50
-    # 早期门槛折减系数的最小值（0.25 = 最低降到 25%）
-    early_threshold_min_factor: float = 0.25
-    # 早期门槛折减速率（每回合降低多少）
-    early_threshold_decay_rate: float = 0.02
-    # 早期跳过冷却期的回合数
+    early_game_turns: int = 15
+    # 早期门槛折减系数的最小值（0.5 = 最低降到 50%，不要太宽松）
+    early_threshold_min_factor: float = 0.5
+    # 早期门槛折减速率（每回合降低多少，降低折减速度）
+    early_threshold_decay_rate: float = 0.03
+    # 早期跳过冷却期的回合数（只有前2回合跳过冷却）
     early_skip_cooldown_turns: int = 2
     
     # ========== 压力/资源触发阈值 ==========
@@ -118,14 +118,14 @@ class SpeciationConfig(BaseModel):
     # ========== 种群数量门槛（按生物量 kg 计算）==========
     # 物种分化所需的最小生物量（低于此值不允许分化）
     # 考虑到开局物种通常在 20k-200k kg，几回合后达到百万级
-    # 设为 50,000 kg 确保只有中等规模以上的种群才能分化
-    min_population_for_speciation: int = 50000
+    # 设为 100,000 kg (10万) 确保只有较大规模的种群才能分化
+    min_population_for_speciation: int = 100000
     # 新物种的最小生物量（分化后子物种生物量不能低于此值）
-    # 设为 5,000 kg 确保新物种有足够的初始规模
-    min_offspring_population: int = 5000
+    # 设为 20,000 kg (2万) 确保新物种有足够的初始规模，避免微型物种
+    min_offspring_population: int = 20000
     # 背景物种分化概率惩罚系数（0-1，越小惩罚越重）
-    # 例如 0.3 表示背景物种的分化概率降低到普通物种的 30%
-    background_speciation_penalty: float = 0.3
+    # 例如 0.2 表示背景物种的分化概率降低到普通物种的 20%
+    background_speciation_penalty: float = 0.2
     
     # ========== 杂交参数 ==========
     # 自动杂交检测概率（每回合检测同域近缘物种杂交的概率）
@@ -149,6 +149,36 @@ class SpeciationConfig(BaseModel):
     mortality_gradient_threshold: float = 0.08
     # 最小簇间距离（候选块数量>=N且任意两簇间距离>此值也视为隔离）
     min_cluster_gap: int = 2
+    
+    # ========== 灭绝阈值 ==========
+    # 绝对灭绝阈值：种群低于此值直接灭绝（单位：kg 生物量）
+    extinction_population_threshold: int = 100
+    # 死亡率灭绝阈值：单回合死亡率超过此值触发灭绝
+    extinction_death_rate_threshold: float = 0.95
+    
+    # 最小可存活种群 (MVP)：种群长期低于此值会逐渐走向灭绝
+    # 考虑到游戏中生物量单位是 kg，设为 1000 kg
+    minimum_viable_population: int = 1000
+    # MVP 检测窗口：连续多少回合低于 MVP 触发灭绝警告
+    mvp_warning_turns: int = 3
+    # MVP 灭绝回合：连续多少回合低于 MVP 直接灭绝
+    mvp_extinction_turns: int = 5
+    
+    # 竞争劣势阈值：种群低于生态系统平均的此比例时，竞争力下降
+    # 例如 0.1 表示种群低于平均值的 10% 时竞争力下降
+    competition_disadvantage_ratio: float = 0.05
+    # 竞争灭绝阈值：种群低于生态系统平均的此比例时，可能被竞争灭绝
+    competition_extinction_ratio: float = 0.01
+    
+    # 近交衰退阈值：种群低于此值时开始受近交衰退影响（额外死亡率）
+    inbreeding_depression_threshold: int = 5000
+    # 近交衰退系数：低于阈值时的额外死亡率 = (1 - pop/threshold) * coefficient
+    inbreeding_depression_coefficient: float = 0.15
+    
+    # 连续衰退灭绝：连续衰退（种群减少）超过此回合数触发灭绝
+    consecutive_decline_extinction_turns: int = 8
+    # 衰退检测阈值：种群减少超过此比例才算衰退
+    decline_detection_threshold: float = 0.1
 
 
 class ReproductionConfig(BaseModel):

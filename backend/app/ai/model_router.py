@@ -7,7 +7,7 @@ import random
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Callable
 
 import httpx
 
@@ -675,15 +675,17 @@ class ModelRouter:
                         first_chunk = True
                         
                         # 逐行读取，带超时保护
+                        # 使用较长的超时（120秒），让上层的智能空闲超时来控制
                         iterator = response.aiter_lines()
+                        chunk_read_timeout = 120.0  # 单个 chunk 读取超时
                         while True:
                             try:
-                                line = await asyncio.wait_for(iterator.__anext__(), timeout=60.0)
+                                line = await asyncio.wait_for(iterator.__anext__(), timeout=chunk_read_timeout)
                             except StopAsyncIteration:
                                 break
                             except asyncio.TimeoutError:
-                                logger.error(f"[ModelRouter] Stream read timeout for {capability}")
-                                yield self._stream_error_event(capability, "Read timeout")
+                                logger.error(f"[ModelRouter] Stream read timeout ({chunk_read_timeout}s) for {capability}")
+                                yield self._stream_error_event(capability, f"Read timeout ({chunk_read_timeout}s)")
                                 break
                                 
                             if line.startswith("data: "):
@@ -1384,14 +1386,15 @@ class ModelRouter:
                         first_chunk = True
                         
                         iterator = response.aiter_lines()
+                        chunk_read_timeout = 120.0  # 单个 chunk 读取超时，让上层控制智能超时
                         while True:
                             try:
-                                line = await asyncio.wait_for(iterator.__anext__(), timeout=60.0)
+                                line = await asyncio.wait_for(iterator.__anext__(), timeout=chunk_read_timeout)
                             except StopAsyncIteration:
                                 break
                             except asyncio.TimeoutError:
-                                logger.error(f"[ModelRouter] Stream capability read timeout for {capability}")
-                                yield self._stream_error_event(capability, "Read timeout")
+                                logger.error(f"[ModelRouter] Stream capability read timeout ({chunk_read_timeout}s) for {capability}")
+                                yield self._stream_error_event(capability, f"Read timeout ({chunk_read_timeout}s)")
                                 break
                             
                             if line.startswith("data: "):
@@ -1525,6 +1528,7 @@ async def staggered_gather(
     max_concurrent: int = 3,
     task_name: str = "任务",
     task_timeout: float = 90.0,  # 【新增】单任务超时
+    event_callback: Callable[[str, str, str], None] | None = None,  # 【新增】心跳回调
 ) -> list:
     """
     间隔并行执行协程，避免同时发送过多请求。
@@ -1535,6 +1539,7 @@ async def staggered_gather(
         max_concurrent: 最大同时执行的任务数
         task_name: 任务名称（用于日志）
         task_timeout: 单个任务的超时时间（秒）
+        event_callback: 事件回调函数，签名 (event_type, message, category)
     
     Returns:
         所有任务的结果列表（保持原始顺序）
@@ -1542,10 +1547,19 @@ async def staggered_gather(
     if not coroutines:
         return []
     
+    def emit_event(event_type: str, message: str, category: str = "AI"):
+        if event_callback:
+            try:
+                event_callback(event_type, message, category)
+            except Exception:
+                pass
+    
     results = [None] * len(coroutines)
+    completed_count = 0
     semaphore = asyncio.Semaphore(max_concurrent)
     
     async def run_with_delay(idx: int, coro):
+        nonlocal completed_count
         # 间隔延迟：每个任务按索引递增延迟
         delay = idx * interval
         if delay > 0:
@@ -1554,20 +1568,27 @@ async def staggered_gather(
         async with semaphore:
             start_time = time.time()
             logger.debug(f"[间隔并行] {task_name} {idx + 1}/{len(coroutines)} 开始执行")
+            emit_event("ai_parallel_task_start", f"🚀 {task_name} {idx + 1}/{len(coroutines)} 开始", "AI")
             try:
                 # 【关键修复】为每个任务添加超时保护
                 result = await asyncio.wait_for(coro, timeout=task_timeout)
                 results[idx] = result
+                completed_count += 1
                 elapsed = time.time() - start_time
                 logger.debug(f"[间隔并行] {task_name} {idx + 1}/{len(coroutines)} 完成 (耗时{elapsed:.1f}s)")
+                emit_event("ai_parallel_task_complete", f"✅ {task_name} {idx + 1}/{len(coroutines)} 完成 ({completed_count}/{len(coroutines)})", "AI")
             except asyncio.TimeoutError:
                 elapsed = time.time() - start_time
                 logger.error(f"[间隔并行] ⏱️ {task_name} {idx + 1}/{len(coroutines)} 超时 (超过{task_timeout}s，实际{elapsed:.1f}s)")
                 results[idx] = TimeoutError(f"{task_name} {idx + 1} 超时")
+                completed_count += 1
+                emit_event("ai_parallel_task_timeout", f"⏱️ {task_name} {idx + 1}/{len(coroutines)} 超时 ({completed_count}/{len(coroutines)})", "AI")
             except Exception as e:
                 elapsed = time.time() - start_time
                 logger.warning(f"[间隔并行] {task_name} {idx + 1}/{len(coroutines)} 失败 (耗时{elapsed:.1f}s): {e}")
                 results[idx] = e
+                completed_count += 1
+                emit_event("ai_parallel_task_error", f"❌ {task_name} {idx + 1}/{len(coroutines)} 失败 ({completed_count}/{len(coroutines)})", "AI")
     
     # 创建所有任务
     tasks = [
@@ -1575,14 +1596,35 @@ async def staggered_gather(
         for idx, coro in enumerate(coroutines)
     ]
     
-    # 等待所有任务完成
+    # 发送开始事件
+    emit_event("ai_parallel_batch_start", f"🔄 开始 {len(coroutines)} 个{task_name}（并发{max_concurrent}）", "AI")
     logger.info(f"[间隔并行] 开始执行 {len(coroutines)} 个{task_name}（间隔{interval}s，最大并发{max_concurrent}，单任务超时{task_timeout}s）")
+    
+    # 【新增】心跳任务：定期发送进度
+    heartbeat_task = None
+    if event_callback:
+        async def heartbeat_loop():
+            while completed_count < len(coroutines):
+                await asyncio.sleep(3.0)  # 每3秒发送一次心跳
+                if completed_count < len(coroutines):
+                    emit_event("ai_parallel_heartbeat", f"💓 {task_name} 进度: {completed_count}/{len(coroutines)}", "AI")
+        heartbeat_task = asyncio.create_task(heartbeat_loop())
+    
     await asyncio.gather(*tasks)
+    
+    # 停止心跳
+    if heartbeat_task:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
     
     # 统计结果
     success_count = sum(1 for r in results if r is not None and not isinstance(r, Exception))
     timeout_count = sum(1 for r in results if isinstance(r, TimeoutError))
     error_count = sum(1 for r in results if isinstance(r, Exception) and not isinstance(r, TimeoutError))
     logger.info(f"[间隔并行] 全部 {len(coroutines)} 个{task_name}执行完成 (成功:{success_count} 超时:{timeout_count} 错误:{error_count})")
+    emit_event("ai_parallel_batch_complete", f"✅ 全部 {len(coroutines)} 个{task_name}完成 (成功:{success_count})", "AI")
     
     return results

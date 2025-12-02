@@ -371,6 +371,19 @@ export interface SpeciationConfig {
   hybridization_success_rate?: number;  // 杂交成功率
   max_hybrids_per_turn?: number;        // 每回合最多杂交数量
   min_population_for_hybridization?: number;  // 杂交所需的最小种群数量
+  
+  // ========== 灭绝阈值 ==========
+  extinction_population_threshold?: number;  // 绝对灭绝阈值（种群低于此值直接灭绝）
+  extinction_death_rate_threshold?: number;  // 死亡率灭绝阈值
+  minimum_viable_population?: number;        // 最小可存活种群 (MVP)
+  mvp_warning_turns?: number;                // MVP 警告回合数
+  mvp_extinction_turns?: number;             // MVP 灭绝回合数
+  competition_disadvantage_ratio?: number;   // 竞争劣势阈值（相对平均值比例）
+  competition_extinction_ratio?: number;     // 竞争灭绝阈值
+  inbreeding_depression_threshold?: number;  // 近交衰退阈值
+  inbreeding_depression_coefficient?: number; // 近交衰退系数
+  consecutive_decline_extinction_turns?: number; // 连续衰退灭绝回合数
+  decline_detection_threshold?: number;      // 衰退检测阈值
 }
 
 /**

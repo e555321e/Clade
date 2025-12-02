@@ -800,41 +800,119 @@ class HabitatManager:
     def _calculate_suitability(self, species: Species, tile: MapTile) -> float:
         """计算物种在地块的适宜度
         
-        【修复v8】增加栖息地类型硬约束：
-        - 水生物种（marine/deep_sea/freshwater）不能在陆地生存
-        - 陆生物种（terrestrial/aerial）不能在深海生存
+        【修复v10】使用多维度判断，不仅仅依赖关键词：
+        1. 主要依赖 habitat_type 和 growth_form 字段
+        2. 使用海拔判断水域/陆地（海拔<0 = 水域）
+        3. 综合多个属性判断物种类型
         """
-        # === 【修复v8】首先检查栖息地类型硬约束 ===
-        habitat_type = (getattr(species, 'habitat_type', 'terrestrial') or 'terrestrial').lower()
+        # === 提取物种属性 ===
+        habitat_type = (getattr(species, 'habitat_type', '') or '').lower()
         biome = (tile.biome or '').lower()
+        growth_form = (getattr(species, 'growth_form', '') or '').lower()
+        trophic = getattr(species, 'trophic_level', 1.0) or 1.0
+        caps = getattr(species, 'capabilities', []) or []
+        caps_set = set(c.lower() for c in caps) | set(caps)
+        elevation = getattr(tile, 'elevation', 0)
+        volcanic = getattr(tile, 'volcanic_potential', 0)
+        salinity = getattr(tile, 'salinity', 35)
+        is_lake = getattr(tile, 'is_lake', False)
         
-        # 判断地块类型
-        is_water_tile = any(w in biome for w in ['海', '深海', '浅海', '中层', '湖', '河'])
+        # === 判断地块类型（多维度判断）===
+        # 方法1: 从海拔判断（最可靠）
+        is_underwater = elevation < 0
+        is_deep_water = elevation < -1000
+        
+        # 方法2: 从 biome 名称判断（辅助）
+        water_in_biome = any(w in biome for w in ['海', '深海', '浅海', '中层', '湖', '河', '洋'])
+        
+        # 综合判断
+        is_water_tile = is_underwater or water_in_biome or is_lake
         is_land_tile = not is_water_tile
-        is_deep_sea = '深海' in biome or '深层' in biome
-        is_coastal = '海岸' in biome or '浅海' in biome
+        is_deep_sea = is_deep_water or '深海' in biome or '海沟' in biome
+        is_coastal = (0 <= elevation < 50) or '海岸' in biome or '浅海' in biome
+        is_volcanic_area = volcanic > 0.3
+        is_freshwater_tile = is_lake or (is_water_tile and salinity < 10)
         
-        # 判断物种类型
-        is_aquatic_species = habitat_type in {'marine', 'deep_sea', 'freshwater'}
-        is_terrestrial_species = habitat_type in {'terrestrial', 'aerial'}
-        is_coastal_species = habitat_type in {'coastal', 'amphibious'}
+        # === 判断物种类型（多维度判断）===
+        # 水生栖息地类型
+        AQUATIC_HABITATS = {'marine', 'deep_sea', 'freshwater', 'hydrothermal', 'coastal'}
+        TERRESTRIAL_HABITATS = {'terrestrial', 'aerial'}
+        AMPHIBIOUS_HABITATS = {'amphibious', 'coastal'}
         
-        # 硬约束检查
-        if is_aquatic_species and is_land_tile and not is_coastal:
-            # 水生物种不能在纯陆地生存
+        is_aquatic_species = habitat_type in AQUATIC_HABITATS
+        is_terrestrial_species = habitat_type in TERRESTRIAL_HABITATS
+        is_amphibious = habitat_type in AMPHIBIOUS_HABITATS
+        is_hydrothermal = habitat_type == 'hydrothermal'
+        is_deep_sea_species = habitat_type in {'deep_sea', 'hydrothermal'}
+        
+        # 从 growth_form 判断（水生植物/藻类）
+        if growth_form == 'aquatic':
+            is_aquatic_species = True
+            is_terrestrial_species = False
+        
+        # 从能力判断（化能合成 = 热泉生物）
+        if 'chemosynthesis' in caps_set or '化能合成' in caps_set:
+            is_aquatic_species = True
+            is_hydrothermal = True
+            is_deep_sea_species = True
+            is_terrestrial_species = False
+        
+        # 从能力判断（光合作用但在水中 = 水生植物）
+        if ('photosynthesis' in caps_set or '光合作用' in caps_set) and growth_form == 'aquatic':
+            is_aquatic_species = True
+            is_terrestrial_species = False
+        
+        # 如果 habitat_type 未设置或是默认值，从其他属性推断
+        if not habitat_type or habitat_type == 'unknown':
+            # 使用 growth_form 和 trophic_level 推断
+            if growth_form == 'aquatic':
+                is_aquatic_species = True
+            elif growth_form in {'moss', 'herb', 'shrub', 'tree'}:
+                is_terrestrial_species = True
+        
+        # === 应用硬约束 ===
+        
+        # 规则1: 水生物种不能在陆地生存
+        if is_aquatic_species and is_land_tile:
+            # 两栖/海岸物种在陆地有一定适应性
+            if is_amphibious:
+                return 0.3
+            # 海岸物种在沿海陆地勉强可以
+            if habitat_type == 'coastal' and is_coastal:
+                return 0.4
+            # 深海/热泉物种完全无法在陆地生存
+            if is_deep_sea_species or is_hydrothermal:
+                return 0.0
+            # 一般水生物种
+            return 0.05
+        
+        # 规则2: 陆生物种不能在水中生存
+        if is_terrestrial_species and is_water_tile:
+            # 浅水区有一点点机会
+            if not is_deep_sea and elevation > -50:
+                return 0.15
+            # 深水区完全无法生存
             return 0.0
         
-        if is_terrestrial_species and is_deep_sea:
-            # 陆生物种不能在深海生存
+        # 规则3: 深海物种需要深水环境
+        if is_deep_sea_species and is_water_tile and not is_deep_sea:
+            # 热泉物种需要火山活动区
+            if is_hydrothermal and not is_volcanic_area:
+                return 0.1
+            # 深海物种在浅水受限但不是完全无法生存
+            return 0.25
+        
+        # 规则4: 热泉物种在陆地无法生存
+        if is_hydrothermal and is_land_tile:
             return 0.0
         
-        if habitat_type == 'marine' and is_land_tile:
-            # 海洋物种不能在陆地
-            return 0.0
+        # 规则5: 淡水物种不能在高盐度环境
+        if habitat_type == 'freshwater' and is_water_tile and salinity > 20:
+            return 0.1
         
-        if habitat_type == 'deep_sea' and not is_deep_sea:
-            # 深海物种只能在深海
-            return 0.0 if is_land_tile else 0.3  # 非深海水域有一定适宜度
+        # 规则6: 海洋物种不能在淡水环境
+        if habitat_type == 'marine' and is_freshwater_tile:
+            return 0.15
         
         # === 环境因素评分 ===
         # 温度适应性

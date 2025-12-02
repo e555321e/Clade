@@ -250,10 +250,21 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
     setStartTime(Date.now());
     
     const eventSource = connectToEventStream((event) => {
+      // 【修复】收到任何事件都说明连接已建立
+      // 使用 functional update 避免闭包问题
+      setConnectionStatus(prev => prev === 'connecting' ? 'connected' : prev);
+      
       if (event.type === 'connected') {
         console.log("[事件流] 连接成功");
         setConnectionStatus("connected");
         setCurrentStage("已连接，等待推演开始...");
+        return;
+      }
+      
+      // 【新增】处理推演开始事件
+      if (event.type === 'start' || event.type === 'turn_start') {
+        console.log("[事件流] 推演开始");
+        setConnectionStatus("receiving");
         return;
       }
 
@@ -369,6 +380,45 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
         return;
       }
       
+      // 【新增】处理并行任务事件
+      if (event.type.startsWith('ai_parallel_')) {
+        setLastAIActivity(Date.now());
+        setConnectionStatus("receiving");
+        
+        if (event.type === 'ai_parallel_heartbeat') {
+          setHeartbeatCount(prev => prev + 1);
+          setAIProgress(prev => prev ? {
+            ...prev,
+            current_task: event.message || "并行任务进行中...",
+            last_activity: Date.now()
+          } : {
+            total: 1,
+            completed: 0,
+            current_task: event.message || "并行任务进行中...",
+            last_activity: Date.now()
+          });
+        } else if (event.type === 'ai_parallel_batch_start') {
+          setAIProgress(prev => prev ? {
+            ...prev,
+            current_task: event.message || "开始并行批次",
+            last_activity: Date.now()
+          } : {
+            total: 1,
+            completed: 0,
+            current_task: event.message || "开始并行批次",
+            last_activity: Date.now()
+          });
+        } else if (event.type === 'ai_parallel_batch_complete') {
+          setAIProgress(prev => prev ? {
+            ...prev,
+            completed: prev.completed + 1,
+            current_task: event.message || "批次完成",
+            last_activity: Date.now()
+          } : null);
+        }
+        return;
+      }
+      
       // 【新增】处理智能空闲超时事件
       if (event.type === 'ai_idle_timeout') {
         setConnectionStatus("warning");
@@ -420,6 +470,9 @@ export function TurnProgressOverlay({ message = "推演进行中...", showDetail
       
       // 更新当前阶段
       if (event.type === 'stage') {
+        // 收到 stage 事件说明正在推演
+        setConnectionStatus("receiving");
+        
         // 解析阶段信息
         const parsed = parseStageMessage(eventMessage);
         const stageText = parsed.label.length > 40 ? parsed.label.substring(0, 40) + '...' : parsed.label;

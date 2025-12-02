@@ -96,7 +96,7 @@ export const SpeciationSection = memo(function SpeciationSection({
           <NumberInput
             label="分化生物量门槛"
             desc="物种的总生物量（kg）必须达到此值才能触发分化检查。低于此门槛的物种将被跳过。建议设置为3-10万kg，根据模拟规模调整。"
-            value={c.min_population_for_speciation ?? 50000}
+            value={c.min_population_for_speciation ?? 100000}
             min={1000}
             max={500000}
             step={5000}
@@ -106,7 +106,7 @@ export const SpeciationSection = memo(function SpeciationSection({
           <NumberInput
             label="新物种最小生物量"
             desc="分化产生的每个新物种的初始生物量不能低于此值。如果总生物量不足以满足这个要求，会减少子代数量或取消分化。建议设置为3000-10000kg。"
-            value={c.min_offspring_population ?? 5000}
+            value={c.min_offspring_population ?? 20000}
             min={500}
             max={100000}
             step={500}
@@ -116,7 +116,7 @@ export const SpeciationSection = memo(function SpeciationSection({
           <SliderRow
             label="背景物种惩罚"
             desc="背景物种（低关注度的小型物种）的分化概率会乘以这个系数。例如×0.3表示背景物种的分化概率只有普通物种的30%。这防止大量小物种继续分裂。"
-            value={c.background_speciation_penalty ?? 0.3}
+            value={c.background_speciation_penalty ?? 0.2}
             min={0}
             max={1}
             step={0.05}
@@ -170,7 +170,7 @@ export const SpeciationSection = memo(function SpeciationSection({
           <NumberInput
             label="早期回合数"
             desc="前多少回合被视为「早期」阶段。在此期间，分化条件会更宽松，帮助快速建立初始生态系统。建议设置为5-15回合。"
-            value={c.early_game_turns ?? 10}
+            value={c.early_game_turns ?? 15}
             min={1}
             max={30}
             step={1}
@@ -180,7 +180,7 @@ export const SpeciationSection = memo(function SpeciationSection({
           <SliderRow
             label="早期门槛折减"
             desc="早期阶段，分化所需的压力/资源/演化潜力门槛会乘以这个系数。例如0.3表示门槛降低到正常的30%，更容易触发分化。越接近1表示折扣越小。"
-            value={c.early_threshold_min_factor ?? 0.3}
+            value={c.early_threshold_min_factor ?? 0.5}
             min={0.1}
             max={1}
             step={0.05}

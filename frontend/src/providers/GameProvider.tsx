@@ -213,7 +213,11 @@ export function GameProvider({ children, viewMode, onViewModeChange }: GameProvi
       const status = await fetchQueueStatus();
       setQueueStatus(status);
     } catch (err) {
-      console.error("刷新队列状态失败:", err);
+      // 推演期间超时是正常的，静默处理避免刷屏
+      // 只在非超时错误时打印
+      if (err instanceof Error && !err.message.includes("超时")) {
+        console.warn("刷新队列状态失败:", err);
+      }
     }
   }, []);
 
@@ -243,8 +247,8 @@ export function GameProvider({ children, viewMode, onViewModeChange }: GameProvi
     refreshMap();
     refreshQueue();
 
-    // 队列轮询
-    const interval = setInterval(refreshQueue, 5000);
+    // 队列轮询（间隔延长到 10 秒，减少推演期间的超时错误）
+    const interval = setInterval(refreshQueue, 10000);
     return () => clearInterval(interval);
   }, [scene, refreshMap, refreshQueue]);
 
