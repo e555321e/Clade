@@ -26,15 +26,17 @@ class SpeciesTieringService:
     """按照关注/重点/背景三级策略划分物种。
     
     三层结构：
-    1. Critical（关注层）：玩家主动标记的物种，最多 critical_limit 个（通常3个）
-       - 默认情况下为空，只有玩家主动标记才会有物种
+    1. Critical（关注层/A档）：
+       - 玩家手动关注的物种（watchlist）：无数量限制，全部进入A档
+       - 系统自动评估的高价值物种：最多 critical_limit 个
+       - 两者独立计算，手动关注不占用系统名额
        - 获得最详细的 AI 分析和报告
     
-    2. Focus（重点层）：生态强度最高的物种 + watchlist 中未进入 critical 的物种
+    2. Focus（重点层/B档）：生态强度最高的物种（排除A档物种）
        - 种群规模大、生态角色重要的物种
        - 获得批量 AI 处理
     
-    3. Background（背景层）：种群低于阈值或生态强度低的物种
+    3. Background（背景层/C档）：种群低于阈值或生态强度低的物种
        - 使用规则计算，不消耗 AI 资源
     """
 
@@ -75,36 +77,47 @@ class SpeciesTieringService:
             reverse=True,
         )
 
-        # Critical 层级：只包含玩家主动标记的物种（watchlist），最多 critical_limit 个
-        # 如果 watchlist 为空，critical 就是空的
+        # Critical 层级构造策略：
+        # 1. 包含所有玩家手动关注的物种（watchlist）
+        # 2. 包含系统自动评估的前 N 个高价值物种（不占用手动名额）
+        
         critical: list[Species] = []
+        critical_limit = max(1, self.config.critical_limit)
+
+        # 1. 手动关注物种（无视上限）
+        manual_critical = []
         if watchlist:
-            critical_limit = max(1, self.config.critical_limit)
-            watched_species = [sp for sp in scored if sp.lineage_code in watchlist]
-            # 按生态强度排序，取前 critical_limit 个
-            critical = sorted(
-                watched_species,
+            manual_critical = [sp for sp in scored if sp.lineage_code in watchlist]
+            # 按生态强度排序
+            manual_critical = sorted(
+                manual_critical,
                 key=lambda sp: score_map[sp.lineage_code],
                 reverse=True,
-            )[:critical_limit]
+            )
+        
+        # 2. 系统自动评估物种（填充 critical_limit 名额）
+        # 排除已经在手动列表中的物种
+        auto_candidates = [sp for sp in scored if sp.lineage_code not in watchlist]
+        auto_critical = auto_candidates[:critical_limit]
+        
+        # 合并两部分
+        critical = manual_critical + auto_critical
 
         focus_limit = self.config.focus_batch_size * max(1, self.config.focus_batch_limit)
         focus: list[Species] = []
-        for species in scored:
-            if species in critical:
-                continue
-            if len(focus) >= focus_limit:
-                break
-            focus.append(species)
+        
+        # Focus 层级：从剩余候选中选取
+        # 此时 candidates 已经排除了 auto_critical 中的物种
+        # 但我们需要从原始 scored 中排除掉所有已经进入 critical 的物种
+        critical_codes = {sp.lineage_code for sp in critical}
+        
+        remaining_candidates = [sp for sp in scored if sp.lineage_code not in critical_codes]
+        focus = remaining_candidates[:focus_limit]
 
-        extra_watchers = [
-            species
-            for species in scored
-            if species.lineage_code in watchlist and species not in critical and species not in focus
-        ]
-        focus.extend(extra_watchers)
+        # 原有的 extra_watchers 逻辑已不再需要，因为 watchlist 现在全部进入 critical
+        # 但为了兼容性，我们保留 focus 的排序逻辑
         if len(focus) > focus_limit:
-            focus = sorted(
+             focus = sorted(
                 focus,
                 key=lambda sp: score_map.get(sp.lineage_code, 0.0),
                 reverse=True,

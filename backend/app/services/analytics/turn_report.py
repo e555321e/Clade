@@ -71,6 +71,7 @@ class TurnReportService:
         map_changes: List[Any] | None = None,
         migration_events: List[Any] | None = None,
         stream_callback: Callable[[str], Coroutine[Any, Any, None]] | None = None,
+        all_species: List[Any] | None = None,
     ) -> "TurnReport":
         """构建回合报告
         
@@ -85,6 +86,7 @@ class TurnReportService:
             map_changes: 地图变化
             migration_events: 迁徙事件
             stream_callback: 流式输出回调
+            all_species: 当前所有物种列表（从模拟上下文传入，避免数据库会话问题）
             
         Returns:
             TurnReport
@@ -103,11 +105,12 @@ class TurnReportService:
             if pressure_parts:
                 pressure_summary = ", ".join(pressure_parts)
         
-        # 构建物种数据 - 从族谱获取所有物种，用 mortality_results 补充详细信息
-        from ...repositories.species_repository import species_repository
-        
-        # 获取族谱中的所有物种（包括存活和灭绝的）
-        all_species = species_repository.list_species()
+        # 构建物种数据 - 使用传入的物种列表（避免数据库会话隔离问题）
+        # 如果没有传入，才从数据库查询（向后兼容）
+        if all_species is None:
+            from ...repositories.species_repository import species_repository
+            all_species = species_repository.list_species()
+            logger.warning("[TurnReport] 未传入 all_species，从数据库重新查询（可能数据不完整）")
         
         # 构建 mortality_results 的查找字典
         mortality_lookup: Dict[str, Any] = {}

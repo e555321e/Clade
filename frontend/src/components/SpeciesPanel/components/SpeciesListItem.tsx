@@ -3,7 +3,7 @@
  */
 
 import { memo } from "react";
-import { TrendingUp, TrendingDown, Minus, Skull } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Skull, Star } from "lucide-react";
 import type { SpeciesSnapshot } from "@/services/api.types";
 import type { PopulationTrend } from "../types";
 import { getRoleConfig, STATUS_COLORS, TREND_COLORS } from "../constants";
@@ -14,6 +14,8 @@ interface SpeciesListItemProps {
   trend: PopulationTrend;
   populationChange: number;
   onClick: () => void;
+  isWatched?: boolean;
+  onToggleWatch?: (e: React.MouseEvent) => void;
 }
 
 export const SpeciesListItem = memo(function SpeciesListItem({
@@ -22,6 +24,8 @@ export const SpeciesListItem = memo(function SpeciesListItem({
   trend,
   populationChange,
   onClick,
+  isWatched,
+  onToggleWatch,
 }: SpeciesListItemProps) {
   const role = getRoleConfig(species.ecological_role || "unknown");
   const isExtinct = species.status === "extinct";
@@ -80,6 +84,25 @@ export const SpeciesListItem = memo(function SpeciesListItem({
           </div>
         )}
       </div>
+
+      {/* 关注按钮 */}
+      {onToggleWatch && (
+        <button
+          className={`species-watch-btn ${isWatched ? "active" : ""}`}
+          onClick={onToggleWatch}
+          title={isWatched ? "取消关注 (A档)" : "设为关注 (A档)"}
+          style={{
+            background: "none",
+            border: "none",
+            padding: "4px",
+            cursor: "pointer",
+            color: isWatched ? "#ffd700" : "#666",
+            opacity: isWatched ? 1 : 0.5,
+          }}
+        >
+          <Star size={16} fill={isWatched ? "#ffd700" : "none"} />
+        </button>
+      )}
     </div>
   );
 });

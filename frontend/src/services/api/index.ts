@@ -41,6 +41,7 @@ export {
   compareNiche,
   fetchLineageTree,
   invalidateLineageCache,
+  fetchWatchlist,
   updateWatchlist,
 } from "./species";
 export type { GenerateSpeciesAdvancedParams } from "./species";

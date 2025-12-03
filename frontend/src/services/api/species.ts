@@ -130,6 +130,14 @@ export function invalidateLineageCache(): void {
 // ============ 关注列表 ============
 
 /**
+ * 获取关注列表
+ */
+export async function fetchWatchlist(): Promise<string[]> {
+  const data = await http.get<{ watching: string[] }>("/api/watchlist");
+  return data.watching;
+}
+
+/**
  * 更新关注列表
  */
 export async function updateWatchlist(lineageCodes: string[]): Promise<void> {

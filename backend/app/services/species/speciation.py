@@ -22,6 +22,7 @@ from .trophic import TrophicLevelCalculator
 from .speciation_rules import SpeciationRules, speciation_rules  # 【新增】规则引擎
 from .plant_evolution import plant_evolution_service, PLANT_MILESTONES  # 【植物演化】
 from .plant_competition import plant_competition_calculator  # 【植物竞争】
+from .description_enhancer import DescriptionEnhancerService  # 【描述增强】
 from ...core.config import get_settings
 
 # 获取配置
@@ -49,9 +50,11 @@ class SpeciationService:
         self.genetic_calculator = GeneticDistanceCalculator()
         self.gene_library_service = GeneLibraryService()
         self.rules = speciation_rules  # 【新增】规则引擎实例
+        self.description_enhancer = DescriptionEnhancerService(router)  # 【描述增强】LLM增强规则生成的描述
         self.max_speciation_per_turn = 20
         self.max_deferred_requests = 60
         self._deferred_requests: list[dict[str, Any]] = []
+        self._rule_fallback_species: list[tuple[Species, Species, str]] = []  # [(species, parent, speciation_type)]
         
         # 配置注入 - 如未提供则使用默认值并警告
         if config is None:
@@ -1239,6 +1242,10 @@ class SpeciationService:
             new_species = species_repository.upsert(new_species)
             logger.info(f"[分化] upsert后 {new_species.common_name} created_turn={new_species.created_turn}")
             
+            # 【描述增强】如果使用了规则fallback，将物种加入增强队列
+            if ai_content.get("_is_rule_fallback"):
+                self._rule_fallback_species.append((new_species, ctx["parent"], ctx["speciation_type"]))
+            
             # ⚠️ 关键修复：子代只继承分配给它的地块（基于地理隔离分化）
             # 如果没有分配地块，则继承全部（回退到旧行为）
             assigned_tiles = ctx.get("assigned_tiles", set())
@@ -1307,6 +1314,35 @@ class SpeciationService:
                     reason=reason_text,
                 )
             )
+        
+        # 【描述增强】处理规则fallback物种的描述增强
+        if self._rule_fallback_species:
+            logger.info(f"[描述增强] 开始处理 {len(self._rule_fallback_species)} 个规则生成物种的描述增强")
+            try:
+                # 将物种加入增强队列
+                for species, parent, speciation_type in self._rule_fallback_species:
+                    self.description_enhancer.queue_for_enhancement(
+                        species=species,
+                        parent=parent,
+                        speciation_type=speciation_type,
+                        is_hybrid=False,
+                    )
+                
+                # 批量处理增强队列
+                enhanced_list = await self.description_enhancer.process_queue_async(
+                    max_items=20,  # 每回合最多处理20个
+                    timeout_per_item=25.0,
+                )
+                
+                # 保存增强后的物种描述
+                for enhanced_species in enhanced_list:
+                    species_repository.upsert(enhanced_species)
+                
+                logger.info(f"[描述增强] 完成 {len(enhanced_list)}/{len(self._rule_fallback_species)} 个物种描述增强")
+            except Exception as e:
+                logger.error(f"[描述增强] 处理失败: {e}")
+            finally:
+                self._rule_fallback_species.clear()
             
         return new_species_events
 

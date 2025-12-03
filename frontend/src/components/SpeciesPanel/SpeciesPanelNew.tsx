@@ -9,7 +9,7 @@ import { useState, useEffect, useCallback } from "react";
 import { ArrowLeft, RefreshCw, Edit2, Save, X, ChevronRight, Dna, Activity, Skull, Users } from "lucide-react";
 
 import type { SpeciesDetail, SpeciesSnapshot } from "@/services/api.types";
-import { fetchSpeciesDetail, editSpecies } from "@/services/api";
+import { fetchSpeciesDetail, editSpecies, fetchWatchlist, updateWatchlist } from "@/services/api";
 import { OrganismBlueprint } from "../OrganismBlueprint";
 import { SpeciesAITab } from "../SpeciesAITab";
 
@@ -57,6 +57,29 @@ export function SpeciesPanelNew({
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({ description: "", morphology: "", traits: "" });
   const [isSaving, setIsSaving] = useState(false);
+  const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
+
+  // 加载关注列表
+  useEffect(() => {
+    fetchWatchlist().then((list) => setWatchlist(new Set(list))).catch(console.error);
+  }, [refreshTrigger]);
+
+  // 切换关注状态
+  const handleToggleWatch = useCallback(async (lineageCode: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newWatchlist = new Set(watchlist);
+    if (newWatchlist.has(lineageCode)) {
+      newWatchlist.delete(lineageCode);
+    } else {
+      newWatchlist.add(lineageCode);
+    }
+    setWatchlist(newWatchlist);
+    try {
+      await updateWatchlist(Array.from(newWatchlist));
+    } catch (err) {
+      console.error("更新关注列表失败:", err);
+    }
+  }, [watchlist]);
 
   // 编辑功能
   const handleStartEdit = useCallback(() => {
@@ -138,6 +161,8 @@ export function SpeciesPanelNew({
             trend={getPopulationTrend(species)}
             populationChange={getPopulationChange(species)}
             onClick={() => onSelectSpecies(species.lineage_code)}
+            isWatched={watchlist.has(species.lineage_code)}
+            onToggleWatch={(e) => handleToggleWatch(species.lineage_code, e)}
           />
         ))}
 

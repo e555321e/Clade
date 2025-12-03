@@ -13,7 +13,7 @@ import {
 } from "recharts";
 
 import type { SpeciesDetail, SpeciesSnapshot } from "@/services/api.types";
-import { fetchSpeciesDetail, editSpecies } from "@/services/api";
+import { fetchSpeciesDetail, editSpecies, fetchWatchlist, updateWatchlist } from "@/services/api";
 import { OrganismBlueprint } from "./OrganismBlueprint";
 import { SpeciesAITab } from "./SpeciesAITab";
 
@@ -154,6 +154,31 @@ export function SpeciesPanel({
   const [searchText, setSearchText] = useState("");
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(["stats", "morphology"]));
+  const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
+
+  // 加载关注列表
+  useEffect(() => {
+    fetchWatchlist().then((list) => setWatchlist(new Set(list))).catch(console.error);
+  }, [refreshTrigger]);
+
+  // 切换关注状态
+  const handleToggleWatch = useCallback(async (lineageCode: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newWatchlist = new Set(watchlist);
+    if (newWatchlist.has(lineageCode)) {
+      newWatchlist.delete(lineageCode);
+    } else {
+      newWatchlist.add(lineageCode);
+    }
+    setWatchlist(newWatchlist);
+    try {
+      await updateWatchlist(Array.from(newWatchlist));
+    } catch (err) {
+      console.error("更新关注列表失败:", err);
+      // 简单的回滚逻辑：重新获取
+      fetchWatchlist().then((list) => setWatchlist(new Set(list))).catch(console.error);
+    }
+  }, [watchlist]);
 
   const selectedSnapshot = speciesList.find(s => s.lineage_code === selectedSpeciesId);
 
@@ -291,6 +316,20 @@ export function SpeciesPanel({
 
       {/* 搜索和筛选 */}
       <div className="sp-toolbar">
+        {/* A档关注说明 */}
+        <div className="sp-watch-hint">
+          <div className="sp-watch-hint-icon">
+            <Star size={14} fill="#ffd700" />
+          </div>
+          <div className="sp-watch-hint-text">
+            <span className="sp-watch-hint-title">⭐ 设为A档关注</span>
+            <span className="sp-watch-hint-desc">点击物种卡片右上角的星号，将其设为A档优先推演物种</span>
+          </div>
+          {watchlist.size > 0 && (
+            <span className="sp-watch-count">{watchlist.size} 个已关注</span>
+          )}
+        </div>
+
         <div className="sp-search">
           <Search size={14} />
           <input
@@ -333,6 +372,7 @@ export function SpeciesPanel({
           const isExtinct = s.status === "extinct";
           const isSelected = s.lineage_code === selectedSpeciesId;
           const isHovered = hoveredItem === s.lineage_code;
+          const isWatched = watchlist.has(s.lineage_code);
 
           return (
             <div 
@@ -346,6 +386,33 @@ export function SpeciesPanel({
                 '--role-color': role.color,
               } as React.CSSProperties}
             >
+              {/* 关注按钮 */}
+              <button
+                className={`sp-watch-btn ${isWatched ? "active" : ""}`}
+                onClick={(e) => handleToggleWatch(s.lineage_code, e)}
+                title={isWatched ? "取消关注 (A档)" : "设为关注 (A档)"}
+                style={{
+                  position: 'absolute',
+                  top: '8px',
+                  right: '8px',
+                  background: 'rgba(0, 0, 0, 0.3)',
+                  border: `1px solid ${isWatched ? '#ffd700' : 'rgba(255, 255, 255, 0.1)'}`,
+                  borderRadius: '50%',
+                  padding: '4px',
+                  cursor: 'pointer',
+                  color: isWatched ? '#ffd700' : 'rgba(255, 255, 255, 0.2)',
+                  zIndex: 10,
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '24px',
+                  height: '24px',
+                }}
+              >
+                <Star size={12} fill={isWatched ? "#ffd700" : "none"} />
+              </button>
+
               {/* 背景装饰 */}
               <div className="sp-card-bg" style={{ background: role.bgGradient }} />
               <div className="sp-card-accent" style={{ background: role.gradient }} />
@@ -1130,6 +1197,58 @@ export function SpeciesPanel({
           padding: 0 12px 12px;
         }
 
+        /* A档关注说明 */
+        .sp-watch-hint {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px 14px;
+          background: linear-gradient(135deg, rgba(255, 215, 0, 0.08), rgba(255, 165, 0, 0.05));
+          border: 1px solid rgba(255, 215, 0, 0.2);
+          border-radius: 10px;
+          margin-bottom: 4px;
+        }
+
+        .sp-watch-hint-icon {
+          width: 28px;
+          height: 28px;
+          background: rgba(255, 215, 0, 0.15);
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+
+        .sp-watch-hint-text {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .sp-watch-hint-title {
+          font-size: 0.8rem;
+          font-weight: 600;
+          color: #ffd700;
+        }
+
+        .sp-watch-hint-desc {
+          font-size: 0.7rem;
+          color: rgba(255, 255, 255, 0.5);
+          line-height: 1.3;
+        }
+
+        .sp-watch-count {
+          padding: 4px 10px;
+          background: rgba(255, 215, 0, 0.2);
+          border-radius: 12px;
+          font-size: 0.7rem;
+          font-weight: 600;
+          color: #ffd700;
+          white-space: nowrap;
+        }
+
         .sp-search {
           display: flex;
           align-items: center;
@@ -1287,6 +1406,17 @@ export function SpeciesPanel({
 
         .sp-card.extinct:hover {
           opacity: 0.75;
+        }
+
+        .sp-watch-btn:hover {
+          background: rgba(255, 255, 255, 0.1) !important;
+          color: #ffd700 !important;
+          border-color: #ffd700 !important;
+          transform: scale(1.1);
+        }
+
+        .sp-watch-btn.active {
+          background: rgba(255, 215, 0, 0.1) !important;
         }
 
         .sp-card-bg {

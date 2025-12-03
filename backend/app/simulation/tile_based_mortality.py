@@ -1682,6 +1682,7 @@ class TileBasedMortalityEngine:
         
         【核心改进】每个地块独立计算营养级生物量比例
         【性能优化】使用矩阵运算预计算生物量
+        【平衡改进v9】猎物丰富时给予死亡率减免（负压力）
         
         Args:
             species_list: 当前批次的物种列表
@@ -1743,6 +1744,12 @@ class TileBasedMortalityEngine:
         # 这是一个硬约束，防止消费者在无食物地块苟活
         SEVERE_STARVATION_PENALTY = 0.9
         
+        # 【新增v9】猎物丰富度奖励参数
+        # 当猎物生物量 > 需求的 N 倍时，给予负压力（死亡率减免）
+        # 【v10】大幅提高奖励：猎物越丰富，死亡率越低
+        ABUNDANCE_THRESHOLD = 1.5  # 猎物生物量超过需求1.5倍时开始给予奖励
+        ABUNDANCE_BONUS_MAX = 0.30  # 最大死亡率减免 30%
+        
         # === T1 受 T2 采食 ===
         req_t1 = np.where(t2 > 0, t2 / EFFICIENCY, 0)
         grazing_ratio = np.divide(req_t1, safe_t1, out=np.zeros_like(req_t1), where=t1 > MIN_BIOMASS)
@@ -1752,6 +1759,17 @@ class TileBasedMortalityEngine:
                                np.where(t2 > 0, SCARCITY_MAX, 0.0))
         # T2 严重饥饿检查: T2存在但T1几乎为0
         starvation_mask_t2 = (t2 > MIN_BIOMASS) & (t1 <= MIN_BIOMASS)
+        
+        # 【新增v9】T2 猎物丰富度奖励（负压力）
+        # 当 T1 >> T2需求时，T2消费者获得生存优势
+        # 【v10】提高奖励速度：每超过阈值1倍，减免5%死亡率
+        abundance_ratio_t2 = np.divide(safe_t1, np.maximum(req_t1, MIN_BIOMASS), 
+                                       out=np.ones_like(safe_t1), where=req_t1 > MIN_BIOMASS)
+        abundance_bonus_t2 = np.where(
+            (t2 > MIN_BIOMASS) & (t1 > MIN_BIOMASS) & (abundance_ratio_t2 > ABUNDANCE_THRESHOLD),
+            -np.minimum((abundance_ratio_t2 - ABUNDANCE_THRESHOLD) * 0.05, ABUNDANCE_BONUS_MAX),
+            0.0
+        )
         
         # === T2 受 T3 捕食 ===
         req_t2 = np.where(t3 > 0, t3 / EFFICIENCY, 0)
@@ -1763,6 +1781,16 @@ class TileBasedMortalityEngine:
         # T3 严重饥饿检查
         starvation_mask_t3 = (t3 > MIN_BIOMASS) & (t2 <= MIN_BIOMASS)
         
+        # 【新增v9】T3 猎物丰富度奖励
+        # 【v10】提高奖励速度
+        abundance_ratio_t3 = np.divide(safe_t2, np.maximum(req_t2, MIN_BIOMASS),
+                                       out=np.ones_like(safe_t2), where=req_t2 > MIN_BIOMASS)
+        abundance_bonus_t3 = np.where(
+            (t3 > MIN_BIOMASS) & (t2 > MIN_BIOMASS) & (abundance_ratio_t3 > ABUNDANCE_THRESHOLD),
+            -np.minimum((abundance_ratio_t3 - ABUNDANCE_THRESHOLD) * 0.05, ABUNDANCE_BONUS_MAX),
+            0.0
+        )
+        
         # === T3 受 T4 捕食 ===
         req_t3 = np.where(t4 > 0, t4 / EFFICIENCY, 0)
         ratio_t3 = np.divide(req_t3, safe_t3, out=np.zeros_like(req_t3), where=t3 > MIN_BIOMASS)
@@ -1773,6 +1801,16 @@ class TileBasedMortalityEngine:
         # T4 严重饥饿检查
         starvation_mask_t4 = (t4 > MIN_BIOMASS) & (t3 <= MIN_BIOMASS)
         
+        # 【新增v9】T4 猎物丰富度奖励
+        # 【v10】提高奖励速度
+        abundance_ratio_t4 = np.divide(safe_t3, np.maximum(req_t3, MIN_BIOMASS),
+                                       out=np.ones_like(safe_t3), where=req_t3 > MIN_BIOMASS)
+        abundance_bonus_t4 = np.where(
+            (t4 > MIN_BIOMASS) & (t3 > MIN_BIOMASS) & (abundance_ratio_t4 > ABUNDANCE_THRESHOLD),
+            -np.minimum((abundance_ratio_t4 - ABUNDANCE_THRESHOLD) * 0.05, ABUNDANCE_BONUS_MAX),
+            0.0
+        )
+        
         # === T4 受 T5 捕食 ===
         req_t4 = np.where(t5 > 0, t5 / EFFICIENCY, 0)
         ratio_t4 = np.divide(req_t4, safe_t4, out=np.zeros_like(req_t4), where=t4 > MIN_BIOMASS)
@@ -1782,6 +1820,16 @@ class TileBasedMortalityEngine:
                                np.where(t5 > 0, SCARCITY_MAX, 0.0))
         # T5 严重饥饿检查
         starvation_mask_t5 = (t5 > MIN_BIOMASS) & (t4 <= MIN_BIOMASS)
+        
+        # 【新增v9】T5 猎物丰富度奖励
+        # 【v10】提高奖励速度
+        abundance_ratio_t5 = np.divide(safe_t4, np.maximum(req_t4, MIN_BIOMASS),
+                                       out=np.ones_like(safe_t4), where=req_t4 > MIN_BIOMASS)
+        abundance_bonus_t5 = np.where(
+            (t5 > MIN_BIOMASS) & (t4 > MIN_BIOMASS) & (abundance_ratio_t5 > ABUNDANCE_THRESHOLD),
+            -np.minimum((abundance_ratio_t5 - ABUNDANCE_THRESHOLD) * 0.05, ABUNDANCE_BONUS_MAX),
+            0.0
+        )
         
         # 【改进v5】使用注入的生态配置
         # 消费者猎物稀缺时，死亡率显著上升
@@ -1796,31 +1844,32 @@ class TileBasedMortalityEngine:
                 # 生产者只受捕食压力
                 trophic_pressure[:, sp_idx] = grazing
             elif t_level == 2:
-                # T2消费者：受T3捕食 + 猎物(T1)稀缺惩罚
+                # T2消费者：受T3捕食 + 猎物(T1)稀缺惩罚 + 猎物丰富奖励
                 pred_component = pred_t3
                 scarcity_component = scarcity_t2 * SCARCITY_WEIGHT
+                # 【新增v9】应用猎物丰富度奖励（负值会减少死亡率）
+                final_pressure = pred_component + scarcity_component + abundance_bonus_t2
                 # 应用严重饥饿惩罚
-                final_pressure = pred_component + scarcity_component
                 final_pressure = np.where(starvation_mask_t2, SEVERE_STARVATION_PENALTY, final_pressure)
                 trophic_pressure[:, sp_idx] = final_pressure
             elif t_level == 3:
                 # T3消费者
                 pred_component = pred_t4
                 scarcity_component = scarcity_t3 * SCARCITY_WEIGHT
-                final_pressure = pred_component + scarcity_component
+                final_pressure = pred_component + scarcity_component + abundance_bonus_t3
                 final_pressure = np.where(starvation_mask_t3, SEVERE_STARVATION_PENALTY, final_pressure)
                 trophic_pressure[:, sp_idx] = final_pressure
             elif t_level == 4:
                 # T4消费者
                 pred_component = pred_t5
                 scarcity_component = scarcity_t4 * SCARCITY_WEIGHT
-                final_pressure = pred_component + scarcity_component
+                final_pressure = pred_component + scarcity_component + abundance_bonus_t4
                 final_pressure = np.where(starvation_mask_t4, SEVERE_STARVATION_PENALTY, final_pressure)
                 trophic_pressure[:, sp_idx] = final_pressure
             elif t_level >= 5:
                 # 顶级捕食者
                 scarcity_component = scarcity_t5 * SCARCITY_WEIGHT
-                final_pressure = scarcity_component
+                final_pressure = scarcity_component + abundance_bonus_t5
                 final_pressure = np.where(starvation_mask_t5, SEVERE_STARVATION_PENALTY, final_pressure)
                 trophic_pressure[:, sp_idx] = final_pressure
         

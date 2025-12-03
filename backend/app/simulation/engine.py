@@ -177,6 +177,17 @@ class SimulationEngine:
         
         # === 状态 ===
         self.turn_counter = 0
+        # 【修复】尝试从持久化存储恢复回合数（如果可能）
+        # 这样即使没有显式的 reload_state 调用，引擎也能从数据库中恢复
+        if hasattr(environment, 'repository'):
+            try:
+                map_state = environment.repository.get_state()
+                if map_state and map_state.turn_index > 0:
+                    self.turn_counter = map_state.turn_index
+                    logger.info(f"[引擎] 已从数据库恢复回合数: {self.turn_counter}")
+            except Exception as e:
+                logger.warning(f"[引擎] 自动恢复回合数失败: {e}")
+        
         self.watchlist: set[str] = set()
         self._event_callback = None
         

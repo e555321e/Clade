@@ -12,6 +12,7 @@ from .extinction_checker import ExtinctionChecker
 from .genetic_evolution import GeneticEvolutionService
 from .intervention import InterventionService
 from .reemergence import ReemergenceService, create_reemergence_service
+from .description_enhancer import DescriptionEnhancerService, create_description_enhancer
 
 __all__ = [
     "TraitConfig",
@@ -32,6 +33,8 @@ __all__ = [
     "InterventionService",
     "ReemergenceService",
     "create_reemergence_service",
+    "DescriptionEnhancerService",
+    "create_description_enhancer",
 ]
 
 

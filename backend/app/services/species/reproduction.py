@@ -1137,11 +1137,12 @@ class ReproductionService:
             # 配置加载失败时忽略新物种加成
             pass
         
-        # 【改进v6】营养级效率惩罚 - 从配置读取
+        # 【改进v6】营养级效率调整 - 从配置读取
+        # 【v11】重新设计：消费者不再受惩罚，反而在猎物充足时获得加成
         trophic_level = getattr(species, 'trophic_level', 1.0) or 1.0
         
         if trophic_level >= 4.0:
-            # 顶级捕食者（T4+）受最大效率惩罚
+            # 顶级捕食者（T4+）受效率惩罚（食物链顶端，能量传递效率低）
             base_growth_multiplier *= t4_efficiency
             logger.debug(f"[营养级效率] {species.common_name} (T{trophic_level:.1f}) 应用顶级捕食者惩罚 {t4_efficiency:.1%}")
         elif trophic_level >= 3.0:
@@ -1149,8 +1150,12 @@ class ReproductionService:
             base_growth_multiplier *= t3_efficiency
             logger.debug(f"[营养级效率] {species.common_name} (T{trophic_level:.1f}) 应用高营养级惩罚 {t3_efficiency:.1%}")
         elif trophic_level >= 2.0:
-            # 初级消费者（T2）轻微惩罚
-            base_growth_multiplier *= t2_efficiency
+            # 【v11】初级消费者（T2）：不再惩罚，反而给予繁殖加成
+            # 理由：T2是生态系统的主要消费者，猎物（T1）通常非常丰富
+            # 在猎物充足时，T2应该能够快速繁殖
+            consumer_boost = 1.3  # 30% 繁殖效率加成
+            base_growth_multiplier *= consumer_boost
+            logger.info(f"[消费者加成] {species.common_name} (T{trophic_level:.1f}) 初级消费者繁殖加成 +30%")
         # T1 生产者无惩罚
         
         # 3. 生存率修正
@@ -1170,6 +1175,23 @@ class ReproductionService:
             mortality_penalty_threshold = 0.4
             mortality_penalty_rate = 0.3
             extreme_mortality_threshold = 0.7
+        
+        # 【新增v9】低死亡率繁殖加成（食物充足时）
+        # 如果死亡率较低（< 50%），说明食物充足/环境适宜，给予繁殖加成
+        # 这对消费者尤其重要：猎物丰富时应该快速增长
+        # 【v11】大幅放宽条件：死亡率 < 50% 就开始给予加成
+        LOW_MORTALITY_THRESHOLD = 0.50  # 死亡率低于50%时开始给予加成
+        LOW_MORTALITY_BONUS_MAX = 2.00  # 最大加成200%（即繁殖效率×3倍）
+        
+        if death_rate < LOW_MORTALITY_THRESHOLD and trophic_level >= 2.0:
+            # 消费者在低死亡率时获得繁殖加成
+            # 死亡率1% -> 加成196%, 死亡率25% -> 加成100%, 死亡率50% -> 加成0%
+            low_mortality_bonus = (LOW_MORTALITY_THRESHOLD - death_rate) / LOW_MORTALITY_THRESHOLD * LOW_MORTALITY_BONUS_MAX
+            survival_modifier *= (1.0 + low_mortality_bonus)
+            logger.info(
+                f"[猎物丰富] {species.common_name} (T{trophic_level:.1f}) 死亡率{death_rate:.1%}，"
+                f"繁殖效率+{low_mortality_bonus:.0%}"
+            )
         
         # 【核心修改】高死亡率惩罚优先于生存本能
         if death_rate > extreme_mortality_threshold:

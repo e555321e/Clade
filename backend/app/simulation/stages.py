@@ -468,6 +468,8 @@ class MapEvolutionStage(BaseStage):
                 
                 ctx.current_map_state.global_avg_temperature = new_temp
                 ctx.current_map_state.sea_level = new_sea_level
+                # 注意：turn_index 会在 FinalizeStage 中统一更新为下一个回合数
+                # 这里暂时保存当前回合数，仅用于中间状态
                 ctx.current_map_state.turn_index = ctx.turn_index
                 environment_repository.save_state(ctx.current_map_state)
                 
@@ -1975,6 +1977,45 @@ class AutoHybridizationStage(BaseStage):
             logger.info(f"[自动杂交] 本回合产生了 {len(ctx.auto_hybrids)} 个杂交种")
             # 将杂交种加入物种列表
             ctx.species_batch.extend(ctx.auto_hybrids)
+            
+            # 【描述增强】为杂交种进行LLM描述增强
+            try:
+                from ..services.species.description_enhancer import DescriptionEnhancerService
+                
+                enhancer = DescriptionEnhancerService(engine.router)
+                
+                for hybrid in ctx.auto_hybrids:
+                    # 获取杂交亲本信息
+                    hybrid_parents = getattr(hybrid, 'hybrid_parent_codes', [])
+                    parent1 = None
+                    parent2 = None
+                    if hybrid_parents and len(hybrid_parents) >= 2:
+                        for sp in ctx.species_batch:
+                            if sp.lineage_code == hybrid_parents[0]:
+                                parent1 = sp
+                            elif sp.lineage_code == hybrid_parents[1]:
+                                parent2 = sp
+                    
+                    enhancer.queue_for_enhancement(
+                        species=hybrid,
+                        parent=parent1,
+                        parent2=parent2,
+                        is_hybrid=True,
+                        fertility=getattr(hybrid, 'hybrid_fertility', 1.0),
+                    )
+                
+                # 批量处理增强
+                enhanced_list = await enhancer.process_queue_async(
+                    max_items=10,  # 每回合最多处理10个杂交种描述
+                    timeout_per_item=25.0,
+                )
+                
+                if enhanced_list:
+                    for enhanced_sp in enhanced_list:
+                        species_repository.upsert(enhanced_sp)
+                    logger.info(f"[杂交描述增强] 完成 {len(enhanced_list)}/{len(ctx.auto_hybrids)} 个杂交种描述增强")
+            except Exception as e:
+                logger.warning(f"[杂交描述增强] 处理失败（不影响杂交结果）: {e}")
 
 
 class SubspeciesPromotionStage(BaseStage):
@@ -2541,6 +2582,14 @@ class BuildReportStage(BaseStage):
                 emit_event_fn=ctx.emit_event,
             )
             
+            # 合并 species_batch（存活）和已灭绝物种，构成完整的物种列表
+            # ctx.species_batch 在 SpeciationStage 后已包含新分化的物种
+            all_species_for_report = list(ctx.species_batch) if ctx.species_batch else []
+            # 添加灭绝物种（从 all_species 中筛选）
+            if ctx.all_species:
+                extinct_species = [sp for sp in ctx.all_species if sp.status == "extinct"]
+                all_species_for_report.extend(extinct_species)
+            
             ctx.report = await asyncio.wait_for(
                 turn_report_service.build_report(
                     turn_index=ctx.turn_index,
@@ -2553,6 +2602,7 @@ class BuildReportStage(BaseStage):
                     map_changes=ctx.map_changes,
                     migration_events=ctx.migration_events,
                     stream_callback=on_narrative_chunk,
+                    all_species=all_species_for_report,
                 ),
                 timeout=90
             )
@@ -2911,11 +2961,13 @@ class FinalizeStage(BaseStage):
         
         logger.info("最终化回合...")
         
-        # 更新 MapState.turn_index
+        # 更新 MapState.turn_index - 保存下一个回合的索引，这样引擎恢复时可以直接使用
+        # 【关键修复】保存 ctx.turn_index + 1，避免 hot reload 后回合数重复
         map_state = environment_repository.get_state()
         if map_state:
-            map_state.turn_index = ctx.turn_index
+            map_state.turn_index = ctx.turn_index + 1  # 保存下一个回合数
             environment_repository.save_state(map_state)
+            logger.debug(f"[FinalizeStage] 已保存下一回合索引: {map_state.turn_index}")
         
         ctx.emit_event("turn_complete", f"✅ 回合 {ctx.turn_index} 完成", "系统")
         logger.info(f"回合 {ctx.turn_index} 完成")

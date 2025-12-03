@@ -97,6 +97,46 @@ interface FlowParticle {
 const ROOT_NAME = "始祖物种";
 const ROOT_CODE = "ROOT";
 
+/**
+ * 智能格式化物种编号
+ * - 短编号直接显示
+ * - 长编号进行截断，显示首尾部分
+ * - 根据长度动态调整字体大小
+ * 
+ * @param code 原始编号（如 "A1a2b3c4d5"）
+ * @param maxLength 最大显示长度
+ * @param baseFontSize 基础字体大小
+ * @returns { displayCode, fontSize }
+ */
+function formatLineageCode(code: string, maxLength: number, baseFontSize: number): { displayCode: string; fontSize: number } {
+    if (!code || code === ROOT_CODE) {
+        return { displayCode: code || '', fontSize: baseFontSize };
+    }
+    
+    const len = code.length;
+    
+    // 短编号：直接显示
+    if (len <= maxLength) {
+        // 根据长度微调字体大小
+        const sizeRatio = len <= 4 ? 1.0 : len <= 6 ? 0.95 : len <= 8 ? 0.9 : 0.85;
+        return { displayCode: code, fontSize: Math.round(baseFontSize * sizeRatio) };
+    }
+    
+    // 长编号：显示首尾部分
+    // 保留前缀（通常是 A1, B2 等祖先标记）和后缀（最新分化标记）
+    // 格式：前3字符 + .. + 后4字符（如 "A1a..c4d5"）
+    const prefixLen = 3;
+    const suffixLen = Math.min(4, maxLength - prefixLen - 2);
+    const prefix = code.slice(0, prefixLen);
+    const suffix = code.slice(-suffixLen);
+    const displayCode = `${prefix}..${suffix}`;
+    
+    // 长编号使用更小的字体
+    const fontSize = Math.round(baseFontSize * 0.8);
+    
+    return { displayCode, fontSize };
+}
+
 export function GenealogyGraphView({ nodes: rawNodes, spacingX = 160, spacingY = 120, onNodeClick }: Props) {
   // 稳定化 nodes，避免父组件每次渲染都触发图形重建
   const nodes = useStableNodes(rawNodes);
@@ -759,12 +799,14 @@ export function GenealogyGraphView({ nodes: rawNodes, spacingX = 160, spacingY =
                 innerGroup.addChild(badgeText);
             }
             
-            // 物种代码（缩小显示）
+            // 物种代码（智能截断 + 动态字体大小）
+            const code = node.data.lineage_code;
+            const { displayCode, fontSize: codeFontSize } = formatLineageCode(code, 8, 36);
             const codeText = new Text({
-                text: node.data.lineage_code,
+                text: displayCode,
                 style: {
                     fontFamily: 'JetBrains Mono, Monaco, Consolas, monospace',
-                    fontSize: 36,
+                    fontSize: codeFontSize,
                     fontWeight: 'bold',
                     fill: 0xffffff,
                 }
@@ -862,11 +904,14 @@ export function GenealogyGraphView({ nodes: rawNodes, spacingX = 160, spacingY =
             }
 
             const TEXT_SCALE = 0.25;
+            // 智能截断 + 动态字体大小
+            const code = node.data.lineage_code;
+            const { displayCode, fontSize: codeFontSize } = formatLineageCode(code, 10, 56);
             const nameText = new Text({
-                text: node.data.lineage_code,
+                text: displayCode,
                 style: {
                     fontFamily: 'JetBrains Mono, Monaco, Consolas, monospace',
-                    fontSize: 56,
+                    fontSize: codeFontSize,
                     fontWeight: 'bold',
                     fill: isAlive ? COLORS.TEXT_MAIN : 0x64748b,
                 }

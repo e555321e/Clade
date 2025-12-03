@@ -141,6 +141,23 @@ class CoreServiceProvider:
                         model=self.settings.speciation_model,
                         extra_body={"response_format": {"type": "json_object"}}
                     ),
+                    
+                    # Auxiliary capabilities (optional LLM enhancement)
+                    "migration": ModelConfig(
+                        provider="openai", 
+                        model=self.settings.speciation_model,
+                        extra_body={"response_format": {"type": "json_object"}}
+                    ),
+                    "pressure_escalation": ModelConfig(
+                        provider="openai", 
+                        model=self.settings.speciation_model,
+                        extra_body={"response_format": {"type": "json_object"}}
+                    ),
+                    "reemergence": ModelConfig(
+                        provider="openai", 
+                        model=self.settings.speciation_model,
+                        extra_body={"response_format": {"type": "json_object"}}
+                    ),
                 },
                 base_url=self.settings.ai_base_url,
                 api_key=self.settings.ai_api_key,

@@ -282,10 +282,23 @@ model_router = ModelRouter(
             extra_body={"response_format": {"type": "json_object"}}
         ),
         
-        # ========== 已移除的规则型能力（不使用LLM）==========
-        # migration: 迁徙计算完全基于规则，不调用LLM
-        # pressure_escalation: 压力升级完全基于规则，不调用LLM  
-        # reemergence: 物种重现完全基于规则，不调用LLM
+        # ========== 辅助能力（可选LLM增强）==========
+        # 这些能力主要基于规则，但可配置LLM增强
+        "migration": ModelConfig(
+            provider="openai", 
+            model=settings.speciation_model,
+            extra_body={"response_format": {"type": "json_object"}}
+        ),
+        "pressure_escalation": ModelConfig(
+            provider="openai", 
+            model=settings.speciation_model,
+            extra_body={"response_format": {"type": "json_object"}}
+        ),
+        "reemergence": ModelConfig(
+            provider="openai", 
+            model=settings.speciation_model,
+            extra_body={"response_format": {"type": "json_object"}}
+        ),
     },
     base_url=settings.ai_base_url,
     api_key=settings.ai_api_key,
@@ -537,18 +550,19 @@ def initialize_environment() -> None:
             logger.info(f"[环境初始化] 未发现地图数据，等待创建存档时生成")
         
         # 【关键修复】恢复回合计数器：优先从 MapState，其次从历史记录
+        # 注意：MapState.turn_index 保存的是"下一个要执行的回合数"（在 FinalizeStage 中保存）
         try:
             # 方法1：从 MapState 恢复（最可靠）
             map_state = environment_repository.get_state()
             if map_state and map_state.turn_index > 0:
-                simulation_engine.turn_counter = map_state.turn_index + 1
+                simulation_engine.turn_counter = map_state.turn_index  # 直接使用，不需要 +1
                 logger.info(f"[环境初始化] 从 MapState 恢复回合计数器: {simulation_engine.turn_counter}")
             else:
-                # 方法2：从历史记录恢复
+                # 方法2：从历史记录恢复（历史记录保存的是已完成回合的索引）
                 logs = history_repository.list_turns(limit=1)
                 if logs:
                     last_turn = logs[0].turn_index
-                    simulation_engine.turn_counter = last_turn + 1  # 下一个回合
+                    simulation_engine.turn_counter = last_turn + 1  # 历史记录需要 +1
                     logger.info(f"[环境初始化] 从历史记录恢复回合计数器: {simulation_engine.turn_counter}")
                 else:
                     logger.info(f"[环境初始化] 未发现历史记录，回合计数器保持为 0")

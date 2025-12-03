@@ -179,21 +179,26 @@ export function TurnSummaryModal({ report, previousReport, onClose }: Props) {
                 <StatCard
                   label="物种数量"
                   value={currentAliveCount}
-                  change={speciesChange !== 0 ? speciesChange : null}
+                  change={
+                    // 显示格式: +新增 -灭绝
+                    newSpecies > 0 || extinctThisTurn.length > 0
+                      ? `${newSpecies > 0 ? `+${newSpecies}` : ""}${extinctThisTurn.length > 0 ? ` -${extinctThisTurn.length}` : ""}`.trim()
+                      : null
+                  }
                   icon="🧬"
                   color={speciesChange > 0 ? "#10b981" : speciesChange < 0 ? "#ef4444" : "#3b82f6"}
                 />
                 <StatCard
                   label="灭绝物种"
                   value={extinctThisTurn.length}
-                  change={extinctThisTurn.length > 0 ? `本回合灭绝` : null}
+                  change={extinctThisTurn.length > 0 ? "本回合灭绝" : null}
                   icon="💀"
                   color="#ef4444"
                 />
                 <StatCard
                   label="新增物种"
                   value={newSpecies}
-                  change={newSpecies > 0 ? `+${newSpecies}` : null}
+                  change={null}
                   icon="✨"
                   color="#10b981"
                 />

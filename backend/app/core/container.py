@@ -103,6 +103,15 @@ class ServiceContainer(
         self.map_manager.ensure_initialized()
         logger.info("[容器] 地图初始化完成")
         
+        # 【修复】从持久化存储恢复回合数，防止服务器重启导致进度丢失
+        try:
+            map_state = self.environment_repository.get_state()
+            if map_state and map_state.turn_index > 0:
+                self.simulation_engine.turn_counter = map_state.turn_index
+                logger.info(f"[容器] 已从数据库恢复回合数: {map_state.turn_index}")
+        except Exception as e:
+            logger.warning(f"[容器] 恢复回合数失败: {e}")
+        
         self._initialized = True
         logger.info("[容器] 服务容器初始化完成")
 

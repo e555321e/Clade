@@ -3092,7 +3092,10 @@ class MapStateManager:
         prey_abundance = None
         
         if is_consumer:
-            # 【改进】消费者食物分基于猎物丰富度
+            # 【改进v12】消费者食物分基于生态学正确的猎物丰富度
+            # 关键：考虑营养级间的能量传递效率（Lindeman效率约10-15%）
+            ECOLOGICAL_EFFICIENCY = 0.12  # 生态效率12%
+            
             prey_pop = 0
             consumer_pop = 0
             
@@ -3107,21 +3110,38 @@ class MapStateManager:
             
             if prey_pop > 0:
                 has_prey = True
-                prey_abundance = prey_pop / (consumer_pop + 100)
+                
+                # 【修复v12】正确计算猎物丰富度
+                # 消费者需要的猎物量 = 消费者数量 / 生态效率
+                # 例：5000个消费者需要 5000/0.12 ≈ 41667个猎物
+                prey_requirement = (consumer_pop + 1) / ECOLOGICAL_EFFICIENCY
+                prey_abundance = prey_pop / max(prey_requirement, 1)
+                
+                # prey_abundance 的含义：
+                # < 1.0: 猎物不足（消费者会饥饿）
+                # = 1.0: 刚好满足需求
+                # > 1.0: 猎物丰富（如 2.0 表示猎物是需求的2倍）
                 
                 # 基于丰富度计算食物分
-                if prey_abundance >= 10:
+                if prey_abundance >= 2.0:
+                    # 猎物充足（>= 需求的2倍）
                     resource_score = 1.0
-                elif prey_abundance >= 1:
-                    resource_score = 0.7 + 0.3 * math.log10(prey_abundance)
+                elif prey_abundance >= 1.0:
+                    # 猎物刚好满足或略有富余
+                    resource_score = 0.7 + 0.3 * (prey_abundance - 1.0)
+                elif prey_abundance >= 0.5:
+                    # 猎物不足但可维持
+                    resource_score = 0.4 + 0.6 * (prey_abundance - 0.5) / 0.5
                 elif prey_abundance >= 0.1:
-                    resource_score = 0.3 + 0.4 * (math.log10(prey_abundance) + 1)
+                    # 猎物严重不足
+                    resource_score = 0.2 + 0.2 * (prey_abundance - 0.1) / 0.4
                 else:
-                    resource_score = max(0.15, 0.3 * prey_abundance / 0.1)
+                    # 接近饥荒
+                    resource_score = max(0.1, 0.2 * prey_abundance / 0.1)
             else:
                 has_prey = False
                 prey_abundance = 0.0
-                resource_score = 0.15  # 【改进】无猎物时更低
+                resource_score = 0.1  # 无猎物时极低
         else:
             # 生产者：使用地块资源
             if tile.resources > 0:
