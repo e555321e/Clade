@@ -3928,6 +3928,62 @@ a:hover::after, .link-button:hover::after {
   transform: none;
 }
 
+/* ============ 下一回合按钮 - 更醒目的样式 ============ */
+.pressure-next-turn-btn:not(:disabled) {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%) !important;
+  border: 2px solid rgba(34, 197, 94, 0.6) !important;
+  box-shadow: 
+    0 4px 20px rgba(34, 197, 94, 0.4),
+    0 0 30px rgba(34, 197, 94, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+  color: #fff !important;
+  font-size: 1.15rem !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.5px !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+.pressure-next-turn-btn:not(:disabled)::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 120%;
+  height: 120%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.25) 0%, transparent 60%);
+  transform: translate(-50%, -50%) scale(0);
+  animation: next-turn-pulse 2s ease-out infinite;
+}
+
+@keyframes next-turn-pulse {
+  0% {
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+
+.pressure-next-turn-btn:not(:disabled):hover {
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%) !important;
+  box-shadow: 
+    0 8px 35px rgba(34, 197, 94, 0.5),
+    0 0 50px rgba(34, 197, 94, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+  transform: translateY(-3px) scale(1.02);
+}
+
+.pressure-next-turn-btn:not(:disabled):active {
+  transform: translateY(-1px) scale(1);
+  box-shadow: 
+    0 4px 15px rgba(34, 197, 94, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
 /* 能量消耗显示框 */
 .pressure-cost-display {
   background: linear-gradient(

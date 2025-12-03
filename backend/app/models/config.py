@@ -250,7 +250,7 @@ class ReproductionConfig(BaseModel):
     # ========== 营养级惩罚 ==========
     # 【优化v7】增强高营养级惩罚
     # T2 初级消费者繁殖效率
-    t2_birth_efficiency: float = 0.85  # 从0.9降低到0.85
+    t2_birth_efficiency: float = 0.90  # 从0.85提升到0.90，帮助早期食草动物存活
     # T3 高级消费者繁殖效率
     t3_birth_efficiency: float = 0.60  # 从0.7降低到0.60
     # T4+ 顶级捕食者繁殖效率
@@ -258,9 +258,10 @@ class ReproductionConfig(BaseModel):
     
     # ========== 【新增v7】高死亡率繁殖惩罚 ==========
     # 死亡率惩罚阈值：超过此值开始降低繁殖效率
-    mortality_penalty_threshold: float = 0.4
+    mortality_penalty_threshold: float = 0.5  # 从0.4提升到0.5，更宽容
     # 死亡率惩罚系数：每超过阈值10%，繁殖效率降低此比例
-    mortality_penalty_rate: float = 0.3
+    mortality_penalty_rate: float = 0.2  # 从0.3降低到0.2，减少死亡螺旋
+
     # 极端死亡率阈值：超过此值繁殖效率直接减半
     extreme_mortality_threshold: float = 0.7
 
@@ -294,32 +295,32 @@ class MortalityConfig(BaseModel):
     # ========== 加权求和权重 ==========
     # 【优化v8】平衡各压力源权重
     # 环境压力权重
-    env_weight: float = 0.50  # 从0.55降低到0.50
+    env_weight: float = 0.40  # 从0.50降低到0.40
     # 竞争压力权重
     # 【v8优化】降低竞争权重，避免无压力时种群衰退
-    competition_weight: float = 0.18  # 从0.30降低到0.18
+    competition_weight: float = 0.15  # 从0.18降低到0.15
     # 营养级压力权重
-    trophic_weight: float = 0.35  # 从0.40降低到0.35
+    trophic_weight: float = 0.25  # 从0.35降低到0.25
     # 资源压力权重
-    resource_weight: float = 0.30  # 从0.35降低到0.30
+    resource_weight: float = 0.25  # 从0.30降低到0.25
     # 捕食网压力权重
-    predation_weight: float = 0.30  # 从0.35降低到0.30
+    predation_weight: float = 0.25  # 从0.30降低到0.25
     # 植物竞争权重
     plant_competition_weight: float = 0.20  # 从0.25降低到0.20
     
     # ========== 乘法模型系数 ==========
     # 【优化v8】降低乘法系数，减少无压力时的死亡率
     # 环境压力乘法系数
-    env_mult_coef: float = 0.55  # 从0.65降低到0.55
+    env_mult_coef: float = 0.45  # 从0.55降低到0.45
     # 竞争压力乘法系数
     # 【v8优化】大幅降低竞争乘法系数
     competition_mult_coef: float = 0.30  # 从0.50降低到0.30
     # 营养级压力乘法系数
-    trophic_mult_coef: float = 0.60
+    trophic_mult_coef: float = 0.50  # 降低
     # 资源压力乘法系数
-    resource_mult_coef: float = 0.50
+    resource_mult_coef: float = 0.40  # 降低
     # 捕食网压力乘法系数
-    predation_mult_coef: float = 0.60
+    predation_mult_coef: float = 0.50  # 降低
     # 植物竞争乘法系数
     plant_mult_coef: float = 0.40
     
@@ -339,8 +340,8 @@ class MortalityConfig(BaseModel):
     
     # ========== 死亡率边界 ==========
     # 最低死亡率（保证自然死亡）
-    # 【v8优化】降低到1.5%，让无压力情况下种群可增长
-    min_mortality: float = 0.015
+    # 【v8优化】降低到1.0%，让无压力情况下种群可增长
+    min_mortality: float = 0.010
     # 最高死亡率上限
     max_mortality: float = 0.92  # 从0.95降低到0.92，保留一点生存希望
 

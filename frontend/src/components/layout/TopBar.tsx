@@ -78,7 +78,7 @@ export function TopBar({
           <span className="btn-pressure-icon">
             <Zap size={18} fill="currentColor" />
           </span>
-          <span className="btn-pressure-text">压力策划</span>
+          <span className="btn-pressure-text">下一回合</span>
           <div className="btn-pressure-shine" />
           <div className="btn-pressure-glow" />
         </button>

@@ -529,7 +529,7 @@ export const CanvasMapPanel = forwardRef<CanvasMapPanelHandle, Props>(function C
       console.log('[CanvasMapPanel] 开始初始化 PixiJS...');
       const app = new Application();
       await app.init({ 
-        background: '#030510', 
+        backgroundAlpha: 0,
         resizeTo: containerRef.current!,
         antialias: true,
         resolution: window.devicePixelRatio || 1,
@@ -982,12 +982,13 @@ export const CanvasMapPanel = forwardRef<CanvasMapPanelHandle, Props>(function C
       
       // Calculate dynamic limits based on screen size
       const rect = containerRef.current?.getBoundingClientRect();
-      let minZoom = 0.2;
+      let minZoom = 0.25;
       if (rect && layout) {
         const fitX = rect.width / layout.worldWidth;
         const fitY = rect.height / layout.worldHeight;
         // Ensure minZoom isn't too small, but allows seeing full map with some margin
-        minZoom = Math.max(0.2, Math.min(fitX, fitY) * 0.9); 
+        // User requested to slightly enlarge minimum size to prevent jitter
+        minZoom = Math.max(0.25, Math.min(fitX, fitY) * 1.05); 
       }
       
       const newZoom = Math.max(minZoom, Math.min(3.0, prevZoom + delta));

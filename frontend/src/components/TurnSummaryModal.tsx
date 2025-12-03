@@ -12,22 +12,40 @@ interface Props {
 export function TurnSummaryModal({ report, previousReport, onClose }: Props) {
   const [expandedSection, setExpandedSection] = useState<string | null>("overview");
   
-  // 计算当前存活物种数（包括本回合新分化的物种）
-  const currentAliveCount = report.species.filter(s => s.status === "alive").length 
-    + report.branching_events.length;
+  // 从 report.species 中直接获取物种统计（后端已返回完整族谱数据）
+  const currentAliveCount = report.species.filter(s => s.status === "alive").length;
+  const extinctSpecies = report.species.filter(s => s.status === "extinct");
+  
+  // 新增物种数 = 本回合分化事件数量
+  const newSpeciesCount = report.branching_events.length;
   
   // 计算上回合存活物种数
   const previousAliveCount = previousReport 
     ? previousReport.species.filter(s => s.status === "alive").length 
     : 0;
   
-  // 物种变化 = 当前存活 - 上回合存活
+  // 本回合灭绝的物种（在当前报告中灭绝，但在上一回合还存活的）
+  const extinctThisTurn = report.species.filter(s => 
+    s.status === "extinct" && 
+    (!previousReport || !previousReport.species.find(ps => ps.lineage_code === s.lineage_code && ps.status === "extinct"))
+  );
+  
+  // 物种变化 = 当前存活数 - 上回合存活数
   const speciesChange = previousReport 
     ? currentAliveCount - previousAliveCount 
     : currentAliveCount;
   
-  const extinctSpecies = report.species.filter(s => s.status === "extinct");
-  const newSpecies = report.branching_events.length;
+  const newSpecies = newSpeciesCount;
+  
+  // 调试日志
+  console.log("[回合总结] 物种统计:", {
+    currentAliveCount,
+    extinctCount: extinctSpecies.length,
+    newSpeciesCount,
+    previousAliveCount,
+    speciesChange,
+    totalSpeciesInReport: report.species.length,
+  });
   
   // 计算总生物量变化
   const currentBiomass = report.species.reduce((sum, s) => sum + (s.population || 0), 0);
@@ -163,18 +181,19 @@ export function TurnSummaryModal({ report, previousReport, onClose }: Props) {
                   value={currentAliveCount}
                   change={speciesChange !== 0 ? speciesChange : null}
                   icon="🧬"
+                  color={speciesChange > 0 ? "#10b981" : speciesChange < 0 ? "#ef4444" : "#3b82f6"}
                 />
                 <StatCard
                   label="灭绝物种"
-                  value={extinctSpecies.length}
-                  change={null}
+                  value={extinctThisTurn.length}
+                  change={extinctThisTurn.length > 0 ? `本回合灭绝` : null}
                   icon="💀"
                   color="#ef4444"
                 />
                 <StatCard
                   label="新增物种"
                   value={newSpecies}
-                  change={null}
+                  change={newSpecies > 0 ? `+${newSpecies}` : null}
                   icon="✨"
                   color="#10b981"
                 />

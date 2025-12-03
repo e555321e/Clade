@@ -405,8 +405,8 @@ class AdaptationService:
             # 【优化】间隔并行执行，每2秒启动一个，最多同时3个
             results = await staggered_gather(
                 description_update_tasks,
-                interval=2.0,
-                max_concurrent=3,
+                interval=1.0,  # 【提升】间隔从 2.0 缩短到 1.0
+                max_concurrent=10,  # 【提升】并发从 3 提升到 10
                 task_name="描述更新",
                 event_callback=event_callback,  # 【新增】传递心跳回调
             )
@@ -444,8 +444,8 @@ class AdaptationService:
             # 【优化】间隔并行执行，每2秒启动一个，最多同时3个
             results = await staggered_gather(
                 llm_adaptation_tasks,
-                interval=2.0,
-                max_concurrent=3,
+                interval=1.0,  # 【提升】间隔从 2.0 缩短到 1.0
+                max_concurrent=10,  # 【提升】并发从 3 提升到 10
                 task_name="LLM适应",
                 event_callback=event_callback,  # 【新增】传递心跳回调
             )

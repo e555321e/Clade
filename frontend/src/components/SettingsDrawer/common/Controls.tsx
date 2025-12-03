@@ -317,7 +317,7 @@ export const InfoBox = memo(function InfoBox({
       <span className="info-box-icon">{icon || defaultIcon}</span>
       <div className="info-box-content">
         {title && <h4>{title}</h4>}
-        <p>{children}</p>
+        <div className="info-box-text">{children}</div>
       </div>
     </div>
   );

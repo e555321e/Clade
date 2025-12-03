@@ -2533,7 +2533,23 @@ class TileBasedMortalityEngine:
             # 应用调整
             if evolution_adjustment != 0:
                 old_rate = overall_death_rate
-                overall_death_rate = min(0.95, max(0.03, overall_death_rate + evolution_adjustment))
+                overall_death_rate = min(0.98, max(0.01, overall_death_rate + evolution_adjustment))
+                
+                # 【修复】同步更新地块统计数据，确保UI显示的一致性
+                # 全局演化修正（如新种优势、竞争惩罚）应体现到每个地块的统计中
+                if total_tiles > 0:
+                    # 将修正应用到地块死亡率统计样本上
+                    adjusted_rates = occupied_rates + evolution_adjustment
+                    # 确保范围合理
+                    adjusted_rates = np.clip(adjusted_rates, 0.01, 0.98)
+                    
+                    # 重新计算统计指标
+                    healthy_tiles = int((adjusted_rates < 0.25).sum())
+                    warning_tiles = int(((adjusted_rates >= 0.25) & (adjusted_rates < 0.50)).sum())
+                    critical_tiles = int((adjusted_rates >= 0.50).sum())
+                    best_tile_rate = float(adjusted_rates.min())
+                    worst_tile_rate = float(adjusted_rates.max())
+                    has_refuge = bool((adjusted_rates < 0.20).any())
                 
                 # 重新计算存活数
                 if total_pop > 0:

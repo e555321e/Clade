@@ -1748,7 +1748,7 @@ class ModelRouter:
 async def staggered_gather(
     coroutines: list,
     interval: float = 2.0,
-    max_concurrent: int = 3,
+    max_concurrent: int = 10,  # 【提升】默认并发从 3 提升到 10
     task_name: str = "任务",
     task_timeout: float = 90.0,  # 【新增】单任务超时
     event_callback: Callable[[str, str, str], None] | None = None,  # 【新增】心跳回调

@@ -676,7 +676,7 @@ class AIPressureResponseService:
             return fallback_result
     
     # 状态评估批次大小（每批最多处理几个物种）
-    STATUS_EVAL_BATCH_SIZE = 3
+    STATUS_EVAL_BATCH_SIZE = 3  # 小批量，降低单次延迟
     
     # 超时配置（可通过 set_timeout_config 方法动态设置）
     SPECIES_EVAL_TIMEOUT = 60  # 单物种评估超时（秒）
@@ -800,7 +800,7 @@ class AIPressureResponseService:
         batch_results = await staggered_gather(
             [process_batch(batch) for batch in batches],
             interval=0.5,  # 批次间隔0.5秒
-            max_concurrent=4,  # 最多同时4个批次（即12个并发评估）
+            max_concurrent=10,  # 【提升】最多同时10个批次
             task_name="状态评估批次",
             task_timeout=60.0,  # 单批次超时60秒
             event_callback=self._emit_event if self._event_callback else None,  # 【新增】传递心跳回调
@@ -1034,7 +1034,7 @@ class AIPressureResponseService:
     # ==================== 【新】物种叙事生成 ====================
     
     # 叙事生成批次大小阈值
-    NARRATIVE_BATCH_SIZE = 3  # 【优化】减小批量，降低超时风险
+    NARRATIVE_BATCH_SIZE = 3  # 小批量，降低单次延迟
     
     # 【优化】叙事物种数量上限（节省tokens）
     MAX_CRITICAL_NARRATIVES = 3   # Critical物种最多3个
@@ -1114,8 +1114,8 @@ class AIPressureResponseService:
         # 使用 staggered_gather 并行处理
         batch_results = await staggered_gather(
             [process_batch(batch) for batch in batches],
-            interval=1.5,  
-            max_concurrent=4,  
+            interval=2.0,  # 【提升】间隔从 1.5 缩短到 1.0
+            max_concurrent=10,  # 【提升】并发从 4 提升到 10
             task_name="叙事批次",
             task_timeout=60.0,  # 单批次超时60秒
             event_callback=self._emit_event if self._event_callback else None,  # 【新增】传递心跳回调

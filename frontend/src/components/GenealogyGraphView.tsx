@@ -627,18 +627,19 @@ export function GenealogyGraphView({ nodes: rawNodes, spacingX = 160, spacingY =
               clickCount++;
               
               if (clickCount === 1) {
-                // 单击：选中节点
+                // 单击：立即选中节点（无延迟）
+                setSelectedNode(node.data.lineage_code);
+                onNodeClickRef.current?.(node.data);
+                
+                // 设置计时器检测双击
                 clickTimer = setTimeout(() => {
                   clickCount = 0;
-                  setSelectedNode(node.data.lineage_code);
-                  onNodeClickRef.current?.(node.data);
-                }, 250);
+                }, 300);
               } else if (clickCount === 2) {
                 // 双击：聚焦该谱系
                 if (clickTimer) clearTimeout(clickTimer);
                 clickCount = 0;
                 setFocusedLineage(node.data.lineage_code);
-                setSelectedNode(node.data.lineage_code);
               }
             }
         });

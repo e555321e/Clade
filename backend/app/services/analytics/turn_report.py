@@ -103,40 +103,85 @@ class TurnReportService:
             if pressure_parts:
                 pressure_summary = ", ".join(pressure_parts)
         
-        # 构建物种数据
-        species_data = []
+        # 构建物种数据 - 从族谱获取所有物种，用 mortality_results 补充详细信息
+        from ...repositories.species_repository import species_repository
+        
+        # 获取族谱中的所有物种（包括存活和灭绝的）
+        all_species = species_repository.list_species()
+        
+        # 构建 mortality_results 的查找字典
+        mortality_lookup: Dict[str, Any] = {}
+        for result in mortality_results:
+            if hasattr(result, 'species'):
+                mortality_lookup[result.species.lineage_code] = result
+        
+        # 计算总生物量（只计算存活物种）
         total_population = sum(
-            getattr(r, 'final_population', 0) or r.species.morphology_stats.get("population", 0)
-            for r in mortality_results
-            if hasattr(r, 'species')
+            sp.morphology_stats.get("population", 0) or 0
+            for sp in all_species
+            if sp.status == "alive"
         ) or 1  # 避免除零
         
-        for result in mortality_results:
-            if hasattr(result, 'species') and hasattr(result, 'death_rate'):
-                pop = getattr(result, 'final_population', 0) or result.species.morphology_stats.get("population", 0)
+        species_data = []
+        for species in all_species:
+            pop = species.morphology_stats.get("population", 0) or 0
+            
+            # 尝试从 mortality_results 获取详细信息
+            mortality_result = mortality_lookup.get(species.lineage_code)
+            
+            if mortality_result:
+                # 有死亡率计算结果，使用更详细的数据
+                pop = getattr(mortality_result, 'final_population', 0) or pop
                 species_data.append({
-                    "lineage_code": result.species.lineage_code,
-                    "latin_name": result.species.latin_name,
-                    "common_name": result.species.common_name,
+                    "lineage_code": species.lineage_code,
+                    "latin_name": species.latin_name,
+                    "common_name": species.common_name,
                     "population": pop,
-                    "population_share": pop / total_population,
-                    "deaths": getattr(result, 'deaths', 0),
-                    "death_rate": result.death_rate,
-                    "ecological_role": self._get_ecological_role(result.species.trophic_level),
-                    "status": result.species.status,
-                    "notes": getattr(result, 'notes', []) or [],
-                    "niche_overlap": getattr(result, 'niche_overlap', None),
-                    "resource_pressure": getattr(result, 'resource_pressure', None),
-                    "is_background": getattr(result, 'is_background', False),
-                    "tier": getattr(result, 'tier', None),
-                    "trophic_level": result.species.trophic_level,
-                    "grazing_pressure": getattr(result, 'grazing_pressure', None),
-                    "predation_pressure": getattr(result, 'predation_pressure', None),
-                    "ai_narrative": getattr(result, 'ai_narrative', None),
-                    "initial_population": getattr(result, 'initial_population', 0),
-                    "births": getattr(result, 'births', 0),
-                    "survivors": getattr(result, 'survivors', 0),
+                    "population_share": pop / total_population if species.status == "alive" else 0,
+                    "deaths": getattr(mortality_result, 'deaths', 0),
+                    "death_rate": mortality_result.death_rate,
+                    "ecological_role": self._get_ecological_role(species.trophic_level),
+                    "status": species.status,
+                    "notes": getattr(mortality_result, 'notes', []) or [],
+                    "niche_overlap": getattr(mortality_result, 'niche_overlap', None),
+                    "resource_pressure": getattr(mortality_result, 'resource_pressure', None),
+                    "is_background": getattr(mortality_result, 'is_background', False),
+                    "tier": getattr(mortality_result, 'tier', None),
+                    "trophic_level": species.trophic_level,
+                    "grazing_pressure": getattr(mortality_result, 'grazing_pressure', None),
+                    "predation_pressure": getattr(mortality_result, 'predation_pressure', None),
+                    "ai_narrative": getattr(mortality_result, 'ai_narrative', None),
+                    "initial_population": getattr(mortality_result, 'initial_population', 0),
+                    "births": getattr(mortality_result, 'births', 0),
+                    "survivors": getattr(mortality_result, 'survivors', 0),
                 })
+            else:
+                # 没有死亡率计算结果（新分化的物种或其他情况），使用基础数据
+                species_data.append({
+                    "lineage_code": species.lineage_code,
+                    "latin_name": species.latin_name,
+                    "common_name": species.common_name,
+                    "population": pop,
+                    "population_share": pop / total_population if species.status == "alive" else 0,
+                    "deaths": 0,
+                    "death_rate": 0.0,
+                    "ecological_role": self._get_ecological_role(species.trophic_level),
+                    "status": species.status,
+                    "notes": [],
+                    "niche_overlap": None,
+                    "resource_pressure": None,
+                    "is_background": species.is_background,
+                    "tier": None,
+                    "trophic_level": species.trophic_level,
+                    "grazing_pressure": None,
+                    "predation_pressure": None,
+                    "ai_narrative": None,
+                    "initial_population": pop,
+                    "births": 0,
+                    "survivors": pop,
+                })
+        
+        logger.info(f"[TurnReport] 族谱物种总数: {len(all_species)}, 存活: {sum(1 for s in species_data if s['status'] == 'alive')}")
         
         # ========== 检查 LLM 回合报告开关 ==========
         # 优先从 UI 配置读取，否则从系统配置读取
@@ -158,12 +203,15 @@ class TurnReportService:
             
             narrative = f"回合 {turn_index} 完成。"
             
-            if mortality_results:
-                alive_count = sum(1 for r in mortality_results if r.species.status == "alive")
+            # 统计存活物种数量 - 使用 species_data 中的存活物种计数
+            alive_count = sum(1 for s in species_data if s.get("status") == "alive")
+            new_species_count = len(branching_events) if branching_events else 0
+            
+            if species_data:
                 narrative += f" 存活物种: {alive_count} 个。"
             
-            if branching_events:
-                narrative += f" 发生了 {len(branching_events)} 次物种分化。"
+            if new_species_count > 0:
+                narrative += f" 发生了 {new_species_count} 次物种分化。"
             
             if migration_events:
                 narrative += f" 发生了 {len(migration_events)} 次迁徙。"
@@ -258,12 +306,15 @@ class TurnReportService:
         if not narrative:
             narrative = f"回合 {turn_index} 完成。"
             
-            if mortality_results:
-                alive_count = sum(1 for r in mortality_results if r.species.status == "alive")
+            # 统计存活物种数量 - 使用 species_data 中的存活物种计数
+            alive_count = sum(1 for s in species_data if s.get("status") == "alive")
+            new_species_count = len(branching_events) if branching_events else 0
+            
+            if species_data:
                 narrative += f" 存活物种: {alive_count} 个。"
             
-            if branching_events:
-                narrative += f" 发生了 {len(branching_events)} 次物种分化。"
+            if new_species_count > 0:
+                narrative += f" 发生了 {new_species_count} 次物种分化。"
             
             if migration_events:
                 narrative += f" 发生了 {len(migration_events)} 次迁徙。"

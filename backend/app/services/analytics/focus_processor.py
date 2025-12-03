@@ -75,8 +75,8 @@ class FocusBatchProcessor:
         coroutines = [self._process_chunk(chunk) for chunk in chunks]
         batch_results = await staggered_gather(
             coroutines, 
-            interval=1.5,  # 每1.5秒启动一个
-            max_concurrent=4,  # 最多同时4个
+            interval=1.0,  # 【提升】间隔从 1.5 缩短到 1.0
+            max_concurrent=10,  # 【提升】并发从 4 提升到 10
             task_name="Focus批次",
             event_callback=event_callback  # 【新增】传递心跳回调
         )

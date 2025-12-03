@@ -68,8 +68,8 @@ class CriticalAnalyzer:
         coroutines = [self._process_item(item) for item in results]
         responses = await staggered_gather(
             coroutines,
-            interval=1.0,  # Critical 物种较少，间隔1秒即可
-            max_concurrent=2,
+            interval=0.5,  # 【提升】间隔从 1.0 缩短到 0.5
+            max_concurrent=10,  # 【提升】并发从 2 提升到 10
             task_name="Critical分析",
             event_callback=event_callback  # 【新增】传递心跳回调
         )

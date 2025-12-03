@@ -1119,8 +1119,8 @@ class SpeciationService:
         logger.info(f"[分化] 开始批量处理 {len(active_batch)} 个分化任务 (剩余排队 {len(self._deferred_requests)})")
         
         # 【优化】小批次 + 高并发策略
-        # 每批 3 个物种，减少单次 prompt token，降低超时风险
-        # 同时 4 个批次并行，提高整体吞吐量
+        # 每批 3 个物种，降低单次延迟
+        # 同时 10 个批次并行，提高整体吞吐量
         batch_size = 3
         
         # 分割成多个批次
@@ -1145,8 +1145,8 @@ class SpeciationService:
         coroutines = [process_batch(batch) for batch in batches]
         batch_results_list = await staggered_gather(
             coroutines,
-            interval=1.5,  # 每1.5秒启动一个批次（批次更小，间隔可以更短）
-            max_concurrent=4,  # 最多同时4个批次（每批4个物种，总共最多16个并行）
+            interval=2.0,  # 【提升】间隔从 1.5 缩短到 1.0
+            max_concurrent=10,  # 【提升】并发从 4 提升到 10
             task_name="分化批次",
             event_callback=stream_callback,  # 【新增】传递心跳回调
         )

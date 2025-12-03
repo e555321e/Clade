@@ -155,8 +155,8 @@ export function PressureModal({
         {/* Header */}
         <header className="pressure-modal-header flex-shrink-0">
           <div>
-            <h2 className="pressure-modal-title">环境压力策划</h2>
-            <p className="pressure-modal-subtitle">配置自然灾害与环境变迁事件</p>
+            <h2 className="pressure-modal-title">回合规划</h2>
+            <p className="pressure-modal-subtitle">配置环境事件，推动生态演化</p>
           </div>
           <button onClick={onClose} className="pressure-close-btn" aria-label="关闭">
             ×
@@ -187,7 +187,7 @@ export function PressureModal({
           >
             <div className="pressure-section-title" style={{ marginBottom: '12px' }}>
               <span className="title-icon">📋</span>
-              事件模板
+              环境事件
             </div>
             
             <div style={{ 
@@ -427,7 +427,7 @@ export function PressureModal({
                     ? "⚠️ 队列已满 (3/3)" 
                     : conflictInfo 
                       ? `⛔ 与「${conflictInfo}」冲突` 
-                      : "➕ 添加至执行列表"}
+                      : "➕ 添加到本回合"}
                 </button>
               </>
             ) : (
@@ -466,7 +466,7 @@ export function PressureModal({
             >
               <div className="pressure-section-title" style={{ marginBottom: '12px' }}>
                 <span className="title-icon">📦</span>
-                执行队列
+                本回合事件
                 <span style={{
                   marginLeft: 'auto',
                   padding: '3px 8px',
@@ -490,7 +490,7 @@ export function PressureModal({
                 <div className="pressure-empty-state" style={{ padding: '30px 16px' }}>
                   <div className="pressure-empty-state-icon" style={{ fontSize: '2.5rem' }}>📭</div>
                   <div style={{ fontWeight: 500, marginBottom: '4px', fontSize: '0.9rem' }}>暂无事件</div>
-                  <div style={{ fontSize: '0.8rem' }}>从中间配置区添加</div>
+                  <div style={{ fontSize: '0.8rem' }}>从左侧选择事件</div>
                 </div>
               ) : (
                 <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -570,7 +570,7 @@ export function PressureModal({
                     cursor: 'pointer',
                   }}
                 >
-                  📋 手动模式
+                  📋 单回合
                 </button>
                 <button
                   onClick={() => setShowBatchMode(true)}
@@ -586,7 +586,7 @@ export function PressureModal({
                     cursor: 'pointer',
                   }}
                 >
-                  🎲 自动模式
+                  🎲 快进
                 </button>
               </div>
 
@@ -630,11 +630,23 @@ export function PressureModal({
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <button 
                       onClick={() => onExecute(pressures)}
-                      className="pressure-execute-btn"
+                      className="pressure-execute-btn pressure-next-turn-btn"
                       disabled={pressures.length === 0}
-                      style={{ padding: '12px 16px', fontSize: '0.9rem' }}
+                      style={{ 
+                        padding: '16px 20px', 
+                        fontSize: '1.1rem',
+                        background: pressures.length === 0 
+                          ? 'rgba(60, 60, 60, 0.5)'
+                          : 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                        border: pressures.length === 0
+                          ? '1px solid rgba(100, 100, 100, 0.3)'
+                          : '2px solid rgba(34, 197, 94, 0.6)',
+                        boxShadow: pressures.length === 0
+                          ? 'none'
+                          : '0 4px 20px rgba(34, 197, 94, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                      }}
                     >
-                      {pressures.length === 0 ? "请先添加事件" : `🚀 立即推演`}
+                      {pressures.length === 0 ? "请先添加事件" : "▶ 下一回合"}
                     </button>
                     
                     <button
@@ -657,9 +669,9 @@ export function PressureModal({
                         cursor: (pressures.length === 0 || rounds <= 1) ? 'not-allowed' : 'pointer',
                         transition: 'all 0.2s'
                       }}
-                      title="连续执行多回合，不中断"
+                      title="一次性运行多个回合"
                     >
-                      ⚡ 连续执行 {rounds} 回合
+                      ⚡ 快进 {rounds} 回合
                     </button>
                     
                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -686,7 +698,7 @@ export function PressureModal({
                         }}
                         title="加入后台队列"
                       >
-                        📋 加入队列
+                        📋 稍后执行
                       </button>
                       <button 
                         style={{
@@ -725,10 +737,10 @@ export function PressureModal({
                     marginBottom: '12px',
                   }}>
                     <div style={{ fontSize: '0.75rem', color: '#a855f7', fontWeight: 600, marginBottom: '10px' }}>
-                      🎲 自动随机压力模式
+                      🎲 自动演化模式
                     </div>
                     <p style={{ fontSize: '0.7rem', color: 'rgba(255, 255, 255, 0.5)', margin: '0 0 12px 0', lineHeight: 1.5 }}>
-                      系统会在每回合自动随机选择压力事件，连续执行指定回合数后再显示结果。
+                      系统会自动随机选择环境事件，一次性快进多个回合。
                     </p>
                     
                     {/* 回合数设置 */}
@@ -807,7 +819,7 @@ export function PressureModal({
                       gap: '8px',
                     }}
                   >
-                    🎲 开始自动演化 ({batchRounds} 回合)
+                    🎲 快进 {batchRounds} 回合
                   </button>
                   
                   <p style={{ 
