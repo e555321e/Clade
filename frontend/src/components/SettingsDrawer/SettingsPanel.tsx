@@ -24,6 +24,7 @@ import {
   ReproductionSection,
   AutosaveSection,
   MortalitySection,
+  PressureSection,
   EcologySection,
   MapSection,
 } from "./sections";
@@ -53,6 +54,7 @@ const TABS: {
   { id: "speciation", label: "分化设置", icon: "🧬", desc: "物种演化", group: "gameplay" },
   { id: "reproduction", label: "繁殖设置", icon: "🐣", desc: "种群增长", group: "gameplay" },
   { id: "mortality", label: "死亡率", icon: "💀", desc: "压力死亡", group: "gameplay" },
+  { id: "pressure", label: "压力强度", icon: "🌊", desc: "环境压力", group: "gameplay" },
   { id: "ecology", label: "生态平衡", icon: "🌿", desc: "动态平衡", group: "gameplay" },
   { id: "map", label: "地图环境", icon: "🗺️", desc: "气候地形", group: "gameplay" },
 ];
@@ -253,6 +255,8 @@ export function SettingsPanel({ config, onClose, onSave }: Props) {
         return <ReproductionSection config={state.form.reproduction || {}} dispatch={dispatch} />;
       case "mortality":
         return <MortalitySection config={state.form.mortality || {}} dispatch={dispatch} />;
+      case "pressure":
+        return <PressureSection config={state.form.pressure_intensity || {}} dispatch={dispatch} />;
       case "ecology":
         return <EcologySection config={state.form.ecology_balance || {}} dispatch={dispatch} />;
       case "map":

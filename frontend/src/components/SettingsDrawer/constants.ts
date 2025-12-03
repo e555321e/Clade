@@ -2,7 +2,7 @@
  * SettingsDrawer 常量定义
  */
 
-import type { ProviderType, SpeciationConfig, ReproductionConfig, MortalityConfig, EcologyBalanceConfig, MapEnvironmentConfig } from "@/services/api.types";
+import type { ProviderType, SpeciationConfig, ReproductionConfig, MortalityConfig, EcologyBalanceConfig, MapEnvironmentConfig, PressureIntensityConfig } from "@/services/api.types";
 import type { CapabilityDef, ProviderPreset } from "./types";
 
 // ============ API 类型 ============
@@ -286,6 +286,21 @@ export const DEFAULT_ECOLOGY_BALANCE_CONFIG: EcologyBalanceConfig = {
   environment_noise: 0.03,
   base_escape_rate: 0.3,
   size_advantage_factor: 0.1,
+};
+
+export const DEFAULT_PRESSURE_INTENSITY_CONFIG: PressureIntensityConfig = {
+  // 压力类型倍率
+  tier1_multiplier: 0.5,   // 一阶：生态波动，几乎无害
+  tier2_multiplier: 0.7,   // 二阶：气候变迁，可控
+  tier3_multiplier: 1.5,   // 三阶：天灾降临，大浪淘沙
+  
+  // 强度滑块倍率
+  intensity_low_multiplier: 0.3,   // 强度 1-3：轻微
+  intensity_mid_multiplier: 0.6,   // 强度 4-7：显著
+  intensity_high_multiplier: 1.2,  // 强度 8-10：毁灭性
+  
+  // 温度修饰系数
+  temperature_effect_per_unit: 0.8,  // 每单位 = 0.8°C
 };
 
 export const DEFAULT_MAP_ENVIRONMENT_CONFIG: MapEnvironmentConfig = {

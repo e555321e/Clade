@@ -18,17 +18,20 @@ PHYSICS_RES_Y = LOGIC_RES_Y * PHYSICS_SCALE  # 640
 # 压力强度等级 (Pressure Tiers) - 针对压力类型的固有等级
 # ===========================
 # 这里的 Tier 是指压力类型本身的等级，而不是强度的 1-10 级
+# 【注意】这些是神力消耗的基础值，与效果倍率分开
 TIER_1_BASE_COST = 5    # 轻微：自然演化、微调
-TIER_2_BASE_COST = 20   # 中等：显著气候变化 (原15)
-TIER_3_BASE_COST = 100  # 毁灭：地质灾难、大灭绝 (原50，大幅提升以体现"毁灭性"代价)
+TIER_2_BASE_COST = 20   # 中等：显著气候变化
+TIER_3_BASE_COST = 100  # 毁灭：地质灾难、大灭绝
 
 # 压力类型固有的效果倍率 (Type Tier Modifiers)
 # 除了基础数值不同外，高等级压力还会有额外的效果加成
 # 【平衡调整v3】一阶二阶低压力，三阶保持大灭绝效果
+# 【可配置】这些默认值可通过设置面板的"压力强度"配置覆盖
+# 对应 UIConfig.pressure_intensity.tier1/2/3_multiplier
 PRESSURE_TYPE_TIER_MODIFIERS = {
     1: 0.5,  # 轻微压力：0.5倍效果（生态波动，几乎无害）
     2: 0.7,  # 中等压力：0.7倍效果（气候变迁，可控）
-    3: 2.5   # 毁灭压力：2.5倍效果（天灾降临，大浪淘沙！）
+    3: 1.5   # 毁灭压力：1.5倍效果（天灾降临，大浪淘沙！）
 }
 
 # 压力类型分级映射
@@ -76,15 +79,17 @@ PRESSURE_TYPE_TIERS = {
 # 压力强度倍率 (Intensity Multipliers) - 针对 1-10 强度的倍率
 # ===========================
 # 【平衡调整v3】低强度温和，高强度致命
+# 【可配置】这些默认值可通过设置面板的"压力强度"配置覆盖
+# 对应 UIConfig.pressure_intensity.intensity_low/mid/high_multiplier
 # 强度 1-3: x0.3 (轻微，几乎可忽略)
 # 强度 4-7: x0.6 (中等，有感知但不致命)
-# 强度 8-10: x1.5 (极端，毁灭性效果！)
+# 强度 8-10: x1.2 (极端，毁灭性效果！)
 INTENSITY_TIER_1_LIMIT = 3
 INTENSITY_TIER_2_LIMIT = 7
 
 INTENSITY_MULT_1 = 0.3  # 轻微强度，几乎无影响
 INTENSITY_MULT_2 = 0.6  # 中等强度，可控
-INTENSITY_MULT_3 = 1.5  # 极端强度，大浪淘沙！
+INTENSITY_MULT_3 = 1.2  # 极端强度，大浪淘沙！
 
 def get_intensity_multiplier(intensity: int) -> float:
     """获取压力强度对应的倍率"""

@@ -428,6 +428,24 @@ export interface ReproductionConfig {
 }
 
 /**
+ * 压力强度配置 - 控制玩家施加的环境压力强度
+ */
+export interface PressureIntensityConfig {
+  // 压力类型倍率 (Tier Modifiers)
+  tier1_multiplier?: number;  // 一阶压力（生态波动）倍率，默认 0.5
+  tier2_multiplier?: number;  // 二阶压力（气候变迁）倍率，默认 0.7
+  tier3_multiplier?: number;  // 三阶压力（天灾降临）倍率，默认 1.5
+  
+  // 强度滑块倍率 (Intensity Multipliers)
+  intensity_low_multiplier?: number;   // 强度 1-3（轻微）倍率，默认 0.3
+  intensity_mid_multiplier?: number;   // 强度 4-7（显著）倍率，默认 0.6
+  intensity_high_multiplier?: number;  // 强度 8-10（毁灭性）倍率，默认 1.2
+  
+  // 温度修饰系数
+  temperature_effect_per_unit?: number;  // 每单位温度修饰的效果（°C），默认 0.8
+}
+
+/**
  * 死亡率配置 - 控制物种死亡率计算
  */
 export interface MortalityConfig {
@@ -649,7 +667,10 @@ export interface UIConfig {
   // 13. 死亡率配置
   mortality?: MortalityConfig;
   
-  // 14. 游戏模式配置
+  // 14. 压力强度配置
+  pressure_intensity?: PressureIntensityConfig;
+  
+  // 15. 游戏模式配置
   gameplay?: GameplayConfig;
   
   // 15. 地图环境配置

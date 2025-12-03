@@ -11,6 +11,7 @@ import {
   DEFAULT_MORTALITY_CONFIG,
   DEFAULT_ECOLOGY_BALANCE_CONFIG,
   DEFAULT_MAP_ENVIRONMENT_CONFIG,
+  DEFAULT_PRESSURE_INTENSITY_CONFIG,
 } from "./constants";
 
 // ============ 工具函数 ============
@@ -381,6 +382,21 @@ export function settingsReducer(state: SettingsState, action: SettingsAction): S
       return {
         ...state,
         form: { ...state.form, map_environment: { ...DEFAULT_MAP_ENVIRONMENT_CONFIG } },
+      };
+
+    case "UPDATE_PRESSURE":
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          pressure_intensity: { ...(state.form.pressure_intensity || {}), ...action.updates },
+        },
+      };
+
+    case "RESET_PRESSURE":
+      return {
+        ...state,
+        form: { ...state.form, pressure_intensity: { ...DEFAULT_PRESSURE_INTENSITY_CONFIG } },
       };
 
     default:

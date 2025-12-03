@@ -13,6 +13,7 @@ import type {
   EcologyBalanceConfig,
   GameplayConfig,
   MapEnvironmentConfig,
+  PressureIntensityConfig,
 } from "@/services/api.types";
 import type { ModelInfo } from "@/services/api";
 
@@ -27,6 +28,7 @@ export type SettingsTab =
   | "speciation"
   | "reproduction"
   | "mortality"
+  | "pressure"
   | "ecology"
   | "map";
 
@@ -108,7 +110,9 @@ export type SettingsAction =
   | { type: "RESET_ECOLOGY" }
   | { type: "UPDATE_GAMEPLAY"; updates: Partial<GameplayConfig> }
   | { type: "UPDATE_MAP_ENV"; updates: Partial<MapEnvironmentConfig> }
-  | { type: "RESET_MAP_ENV" };
+  | { type: "RESET_MAP_ENV" }
+  | { type: "UPDATE_PRESSURE"; updates: Partial<PressureIntensityConfig> }
+  | { type: "RESET_PRESSURE" };
 
 // ============ 能力定义 ============
 export type ParallelMode = "batch" | "concurrent" | "single";

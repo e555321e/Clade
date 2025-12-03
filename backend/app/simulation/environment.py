@@ -1,9 +1,12 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, TYPE_CHECKING
 
 from ..schemas.requests import PressureConfig
+
+if TYPE_CHECKING:
+    from ..models.config import PressureIntensityConfig
 
 
 @dataclass(slots=True)
@@ -309,38 +312,66 @@ class EnvironmentSystem:
             f"附注: {description}"
         )
 
-    def apply_pressures(self, parsed: Iterable[ParsedPressure]) -> dict[str, float]:
+    def apply_pressures(
+        self, 
+        parsed: Iterable[ParsedPressure],
+        pressure_config: "PressureIntensityConfig | None" = None
+    ) -> dict[str, float]:
         """Aggregate modifiers for downstream mortality rules.
         
         将高级压力类型（如 glacial_period）映射到基础环境修改器（如 temperature）。
         这确保死亡率计算和气候变化计算能正确响应各种压力事件。
         
-        【修改】引入非线性强度倍率：
-        - 1-3级: x1.0 (轻微)
-        - 4-7级: x2.0 (中等)
-        - 8-10级: x5.0 (毁灭性)
-
-        【修改】引入压力类型等级倍率：
-        - Tier 1: x1.0 (标准)
-        - Tier 2: x1.5 (增强)
-        - Tier 3: x3.0 (毁灭性加成)
+        Args:
+            parsed: 解析后的压力列表
+            pressure_config: 压力强度配置（来自设置面板）
+        
+        【动态配置】从 pressure_config 读取：
+        - 压力类型倍率 (tier1/2/3_multiplier)
+        - 强度滑块倍率 (intensity_low/mid/high_multiplier)
         """
         from .constants import (
-            get_intensity_multiplier,
             PRESSURE_TYPE_TIERS,
-            PRESSURE_TYPE_TIER_MODIFIERS
+            INTENSITY_TIER_1_LIMIT,
+            INTENSITY_TIER_2_LIMIT,
         )
+        
+        # 从配置获取倍率，如果没有配置则使用默认值
+        if pressure_config:
+            tier_mults = {
+                1: pressure_config.tier1_multiplier,
+                2: pressure_config.tier2_multiplier,
+                3: pressure_config.tier3_multiplier,
+            }
+            intensity_low = pressure_config.intensity_low_multiplier
+            intensity_mid = pressure_config.intensity_mid_multiplier
+            intensity_high = pressure_config.intensity_high_multiplier
+        else:
+            # 默认值（与 constants.py 保持一致）
+            tier_mults = {1: 0.5, 2: 0.7, 3: 1.5}
+            intensity_low = 0.3
+            intensity_mid = 0.6
+            intensity_high = 1.2
+        
+        def get_intensity_mult(intensity: int) -> float:
+            """根据强度滑块获取倍率"""
+            if intensity <= INTENSITY_TIER_1_LIMIT:
+                return intensity_low
+            elif intensity <= INTENSITY_TIER_2_LIMIT:
+                return intensity_mid
+            else:
+                return intensity_high
         
         summary: dict[str, float] = {}
         
         for item in parsed:
             # 1. 获取强度滑块带来的倍率 (Intensity Multiplier)
-            intensity_mult = get_intensity_multiplier(item.intensity)
+            intensity_mult = get_intensity_mult(item.intensity)
             
             # 2. 获取压力类型本身的等级带来的效果倍率 (Type Tier Modifier)
             # 默认为 Tier 2 (中等)
             type_tier = PRESSURE_TYPE_TIERS.get(item.kind, 2)
-            type_tier_mult = PRESSURE_TYPE_TIER_MODIFIERS.get(type_tier, 1.5)
+            type_tier_mult = tier_mults.get(type_tier, 0.7)
             
             # 3. 计算有效强度
             effective_intensity = item.intensity * intensity_mult * type_tier_mult

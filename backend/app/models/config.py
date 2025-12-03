@@ -776,6 +776,40 @@ class MapEnvironmentConfig(BaseModel):
     show_humidity_overlay: bool = False
 
 
+class PressureIntensityConfig(BaseModel):
+    """压力强度配置 - 控制玩家施加的环境压力效果强度
+    
+    【设计理念】
+    压力分为三个等级：
+    - 一阶（生态波动）：影响轻微
+    - 二阶（气候变迁）：影响显著但可控  
+    - 三阶（天灾降临）：可造成大灭绝
+    
+    最终效果 = 基础系数 × 类型倍率 × 强度倍率
+    """
+    model_config = ConfigDict(extra="ignore")
+    
+    # ========== 压力类型倍率 ==========
+    # 一阶压力：生态波动，几乎无害
+    tier1_multiplier: float = 0.5
+    # 二阶压力：气候变迁，可控
+    tier2_multiplier: float = 0.7
+    # 三阶压力：天灾降临，大浪淘沙
+    tier3_multiplier: float = 1.5
+    
+    # ========== 强度滑块倍率 ==========
+    # 强度 1-3：轻微
+    intensity_low_multiplier: float = 0.3
+    # 强度 4-7：显著
+    intensity_mid_multiplier: float = 0.6
+    # 强度 8-10：毁灭性
+    intensity_high_multiplier: float = 1.2
+    
+    # ========== 温度修饰系数 ==========
+    # 每单位温度修饰的效果（°C）
+    temperature_effect_per_unit: float = 0.8
+
+
 class GameplayConfig(BaseModel):
     """游戏模式配置 - 控制整体游戏难度和风格
     
@@ -864,7 +898,10 @@ class UIConfig(BaseModel):
     # 13. 死亡率配置
     mortality: MortalityConfig = Field(default_factory=MortalityConfig)
     
-    # 14. 游戏模式配置
+    # 14. 压力强度配置
+    pressure_intensity: PressureIntensityConfig = Field(default_factory=PressureIntensityConfig)
+    
+    # 15. 游戏模式配置
     gameplay: GameplayConfig = Field(default_factory=GameplayConfig)
     
     # 15. 地图环境配置
