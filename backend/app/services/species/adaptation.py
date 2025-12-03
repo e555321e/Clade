@@ -494,6 +494,12 @@ class AdaptationService:
         
         【改进】植物使用专用的描述更新Prompt
         """
+        # 【优化】如果是背景物种，跳过 LLM 描述更新
+        # 背景物种的描述更新可能消耗大量Token，且对玩家体验影响较小
+        if species.is_background:
+            logger.debug(f"[描述更新] 跳过背景物种: {species.common_name}")
+            return {}
+
         is_plant = PlantTraitConfig.is_plant(species)
         
         # 构建 trait diffs 文本

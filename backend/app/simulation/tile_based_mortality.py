@@ -1240,8 +1240,68 @@ class TileBasedMortalityEngine:
         if _settings.enable_generational_mortality:
             mortality = self._apply_generational_mortality(species_arrays, mortality)
         
-        # ========== 8. 边界约束（从配置读取） ==========
-        mortality = np.clip(mortality, mort_cfg.min_mortality, mort_cfg.max_mortality)
+        # ========== 【大灭绝机制】7.5 幸存者彩票 ==========
+        # 大灾难时，大部分物种会灭绝，但少数"幸运儿"有机会存活
+        # 基于物种特质决定是否获得"幸存者"资格：
+        # - 适应性强的物种更容易存活
+        # - 只有被选中的幸存者才有死亡率上限保护
+        # - 其他所有物种没有死亡率上限，可以直接灭绝
+        
+        # 检测是否处于大灾难（mortality_spike 很高）
+        mortality_spike_raw = pressure_modifiers.get('mortality_spike', 0.0)
+        is_mass_extinction = mortality_spike_raw > 50  # 有效强度 > 50 视为大灾难
+        
+        # 记录哪些物种是幸存者（有上限保护）
+        survivor_mask = np.zeros(mortality.shape[1], dtype=bool)
+        
+        if is_mass_extinction:
+            # 大灾难模式：只保护少数幸运的物种
+            population = species_arrays['population']
+            
+            # 获取适应性特质
+            env_tolerance = species_arrays.get('environmental_tolerance', None)
+            if env_tolerance is None:
+                env_tolerance = np.ones(mortality.shape[1]) * 0.5
+            
+            for sp_idx in range(mortality.shape[1]):
+                pop = population[sp_idx]
+                tolerance = env_tolerance[sp_idx] if sp_idx < len(env_tolerance) else 0.5
+                
+                # 计算幸存者概率：基于适应性
+                # 适应性 0.3 以下: 5% 概率成为幸存者
+                # 适应性 0.3-0.6: 15% 概率
+                # 适应性 0.6 以上: 30% 概率
+                if tolerance < 0.3:
+                    survivor_chance = 0.05
+                elif tolerance < 0.6:
+                    survivor_chance = 0.15
+                else:
+                    survivor_chance = 0.30
+                
+                # 使用物种索引和当前 mortality_spike 值作为伪随机种子
+                # 这确保每次大灾难时结果有变化，但同一回合内一致
+                seed_val = int(sp_idx * 1000 + mortality_spike_raw * 100) % (2**31 - 1)
+                np.random.seed(seed_val)
+                is_survivor = np.random.random() < survivor_chance
+                
+                if is_survivor and pop > 0:
+                    survivor_mask[sp_idx] = True
+                    # 幸存者：死亡率上限 80%（仍然损失大量种群，但能存活）
+                    mortality[:, sp_idx] = np.clip(mortality[:, sp_idx], 
+                                                    mort_cfg.min_mortality, 0.80)
+                # 非幸存者：没有上限保护，死亡率可达 100%
+        
+        # ========== 8. 边界约束 ==========
+        # 【重要改动】去掉全局死亡率上限！
+        # - 只保留最低死亡率（确保有自然死亡）
+        # - 没有最高死亡率限制，物种可以因为各种原因直接灭绝
+        # - 只有大灾变中被选中的幸存者才有上限保护（已在上面处理）
+        
+        # 只应用下限，不应用上限
+        mortality = np.maximum(mortality, mort_cfg.min_mortality)
+        
+        # 确保死亡率不超过 1.0（物理限制）
+        mortality = np.minimum(mortality, 1.0)
         
         return mortality
     
@@ -1427,10 +1487,16 @@ class TileBasedMortalityEngine:
                 if habitat in ('marine', 'coastal', 'freshwater', 'deep_sea'):
                     special_pressure[:, sp_idx] += salinity_pressure[0, sp_idx]
         
-        # 直接死亡率修饰（风暴、地震等）
+        # 直接死亡率修饰（风暴、地震、陨石撞击等）
+        # 【大灭绝机制】天灾应该造成大规模死亡，但留下少数幸存者
         mortality_spike = pressure_modifiers.get('mortality_spike', 0.0)
         if mortality_spike > 0:
-            special_pressure += mortality_spike * 0.03  # 直接增加基础死亡率
+            # 使用 sigmoid 曲线：低强度线性增长，高强度趋近上限
+            # 最大可达 ~0.85 的额外死亡率（配合 max_mortality=0.92，仍有生存空间）
+            # mortality_spike=100 时约 0.75，mortality_spike=200 时约 0.85
+            spike_factor = 1.0 / (1.0 + np.exp(-mortality_spike * 0.03 + 3))  # sigmoid
+            capped_spike = spike_factor * 0.85
+            special_pressure += capped_spike
         
         # ========== 基础环境敏感度 ==========
             

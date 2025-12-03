@@ -1108,65 +1108,105 @@ class SpeciationService:
         if not entries and not self._deferred_requests:
             return []
 
-        # 合并上回合遗留请求，并限制本回合最大任务数
-        pending = self._deferred_requests + entries
+        # 【优化】分离背景物种和非背景物种的 entries
+        # 背景物种直接走规则生成，不调用 AI，节省 Token 和时间
+        background_entries: list[dict] = []
+        ai_entries: list[dict] = []
+        
+        for entry in entries:
+            parent = entry["ctx"]["parent"]
+            if getattr(parent, 'is_background', False):
+                background_entries.append(entry)
+            else:
+                ai_entries.append(entry)
+        
+        if background_entries:
+            logger.info(
+                f"[分化优化] 检测到 {len(background_entries)} 个背景物种分化，"
+                f"跳过 AI 直接使用规则生成"
+            )
+
+        # 合并上回合遗留请求，并限制本回合最大任务数（只针对非背景物种）
+        pending = self._deferred_requests + ai_entries
         if len(pending) > self.max_deferred_requests:
             pending = pending[:self.max_deferred_requests]
         active_batch = pending[: self.max_speciation_per_turn]
         self._deferred_requests = pending[self.max_speciation_per_turn :]
 
-        if not active_batch:
-            logger.info("[分化] 没有可执行的AI任务，本回合跳过")
+        if not active_batch and not background_entries:
+            logger.info("[分化] 没有可执行的分化任务，本回合跳过")
             return []
 
-        logger.info(f"[分化] 开始批量处理 {len(active_batch)} 个分化任务 (剩余排队 {len(self._deferred_requests)})")
+        logger.info(f"[分化] 开始批量处理 {len(active_batch)} 个AI分化任务 + {len(background_entries)} 个规则分化任务 (剩余排队 {len(self._deferred_requests)})")
         
-        # 【优化】小批次 + 高并发策略
-        # 每批 3 个物种，降低单次延迟
-        # 同时 10 个批次并行，提高整体吞吐量
-        batch_size = 3
-        
-        # 分割成多个批次
-        batches = []
-        for batch_start in range(0, len(active_batch), batch_size):
-            batch_entries = active_batch[batch_start:batch_start + batch_size]
-            batches.append(batch_entries)
-        
-        logger.info(f"[分化] 共 {len(batches)} 个批次（每批≤{batch_size}个），开始高并发执行")
-        
-        async def process_batch(batch_entries: list) -> list:
-            """处理单个批次"""
-            batch_payload = self._build_batch_payload(
-                batch_entries, average_pressure, pressure_summary, 
-                map_changes, major_events
+        # ========== 【优化】先处理背景物种的规则分化 ==========
+        # 背景物种完全跳过 AI，直接使用规则生成，节省 Token 和时间
+        background_results: list[tuple[dict, dict]] = []  # [(entry, ai_content)]
+        for entry in background_entries:
+            ctx = entry["ctx"]
+            ai_content = self._generate_rule_based_fallback(
+                parent=ctx["parent"],
+                new_code=ctx["new_code"],
+                survivors=ctx["population"],
+                speciation_type=ctx["speciation_type"],
+                average_pressure=average_pressure,
             )
-            # 【混合模式】传入entries用于判断是否为植物批次
-            batch_results = await self._call_batch_ai(batch_payload, stream_callback, batch_entries)
-            return self._parse_batch_results(batch_results, batch_entries)
+            background_results.append((entry, ai_content))
+            logger.debug(
+                f"[规则分化] 背景物种 {ctx['parent'].common_name} -> {ai_content.get('common_name')}"
+            )
         
-        # 【优化】小批次 + 高并发：间隔更短，并发更高
-        coroutines = [process_batch(batch) for batch in batches]
-        batch_results_list = await staggered_gather(
-            coroutines,
-            interval=2.0,  # 【提升】间隔从 1.5 缩短到 1.0
-            max_concurrent=10,  # 【提升】并发从 4 提升到 10
-            task_name="分化批次",
-            event_callback=stream_callback,  # 【新增】传递心跳回调
-        )
+        if background_results:
+            logger.info(f"[规则分化] 完成 {len(background_results)} 个背景物种的规则生成")
         
-        # 合并所有批次的结果
+        # ========== AI 分化（仅针对非背景物种）==========
         results = []
-        for batch_idx, batch_result in enumerate(batch_results_list):
-            if isinstance(batch_result, Exception):
-                logger.error(f"[分化] 批次 {batch_idx + 1} 失败: {batch_result}")
-                results.extend([batch_result] * len(batches[batch_idx]))
-            else:
-                success_count = len([r for r in batch_result if not isinstance(r, Exception)])
-                logger.info(f"[分化] 批次 {batch_idx + 1} 完成，成功解析 {success_count} 个结果")
-                results.extend(batch_result)
+        if active_batch:
+            # 【优化】小批次 + 高并发策略
+            # 每批 3 个物种，降低单次延迟
+            # 同时 10 个批次并行，提高整体吞吐量
+            batch_size = 3
+            
+            # 分割成多个批次
+            batches = []
+            for batch_start in range(0, len(active_batch), batch_size):
+                batch_entries = active_batch[batch_start:batch_start + batch_size]
+                batches.append(batch_entries)
+            
+            logger.info(f"[分化] 共 {len(batches)} 个AI批次（每批≤{batch_size}个），开始高并发执行")
+            
+            async def process_batch(batch_entries: list) -> list:
+                """处理单个批次"""
+                batch_payload = self._build_batch_payload(
+                    batch_entries, average_pressure, pressure_summary, 
+                    map_changes, major_events
+                )
+                # 【混合模式】传入entries用于判断是否为植物批次
+                batch_results = await self._call_batch_ai(batch_payload, stream_callback, batch_entries)
+                return self._parse_batch_results(batch_results, batch_entries)
+            
+            # 【优化】小批次 + 高并发：间隔更短，并发更高
+            coroutines = [process_batch(batch) for batch in batches]
+            batch_results_list = await staggered_gather(
+                coroutines,
+                interval=2.0,  # 【提升】间隔从 1.5 缩短到 1.0
+                max_concurrent=10,  # 【提升】并发从 4 提升到 10
+                task_name="分化批次",
+                event_callback=stream_callback,  # 【新增】传递心跳回调
+            )
+            
+            # 合并所有批次的结果
+            for batch_idx, batch_result in enumerate(batch_results_list):
+                if isinstance(batch_result, Exception):
+                    logger.error(f"[分化] 批次 {batch_idx + 1} 失败: {batch_result}")
+                    results.extend([batch_result] * len(batches[batch_idx]))
+                else:
+                    success_count = len([r for r in batch_result if not isinstance(r, Exception)])
+                    logger.info(f"[分化] 批次 {batch_idx + 1} 完成，成功解析 {success_count} 个结果")
+                    results.extend(batch_result)
 
         # 3. 结果处理与写入
-        logger.info(f"[分化] 开始处理 {len(results)} 个AI结果")
+        logger.info(f"[分化] 开始处理 {len(results)} 个AI结果 + {len(background_results)} 个规则结果")
         new_species_events: list[BranchingEvent] = []
         for res, entry in zip(results, active_batch):
             ctx = entry["ctx"]  # 从entry中提取ctx
@@ -1304,6 +1344,74 @@ class SpeciationService:
                     reason_text = f"{ctx['parent'].common_name}与竞争物种的生态位重叠导致竞争排斥，促使种群分化到不同资源梯度"
                 else:
                     reason_text = f"{ctx['parent'].common_name}种群在演化压力下发生生态位分化"
+            
+            new_species_events.append(
+                BranchingEvent(
+                    parent_lineage=ctx["parent"].lineage_code,
+                    new_lineage=ctx["new_code"],
+                    description=event_desc,
+                    timestamp=datetime.utcnow(),
+                    reason=reason_text,
+                )
+            )
+        
+        # ========== 【优化】处理背景物种的规则分化结果 ==========
+        for entry, ai_content in background_results:
+            ctx = entry["ctx"]
+            
+            logger.info(
+                f"[规则分化结果] 背景物种: {ai_content.get('common_name')}, description长度: {len(str(ai_content.get('description', '')))}"
+            )
+            
+            # 【新增】规则引擎后验证：验证并修正输出
+            ai_content = self.rules.validate_and_fix(
+                ai_content, 
+                ctx["parent"],
+                preprocess_result=None
+            )
+
+            new_species = self._create_species(
+                parent=ctx["parent"],
+                new_code=ctx["new_code"],
+                survivors=ctx["population"],
+                turn_index=turn_index,
+                ai_payload=ai_content,
+                average_pressure=average_pressure,
+                speciation_type=ctx["speciation_type"],
+            )
+            
+            # 背景物种子代也标记为背景
+            new_species.is_background = True
+            
+            logger.info(f"[规则分化] 新背景物种 {new_species.common_name} created_turn={new_species.created_turn}")
+            new_species = species_repository.upsert(new_species)
+            
+            # 将背景物种加入增强队列（用于模板描述和向量遗传）
+            self._rule_fallback_species.append((new_species, ctx["parent"], ctx["speciation_type"]))
+            
+            # 处理分配地块
+            assigned_tiles = ctx.get("assigned_tiles", set())
+            self._inherit_habitat_distribution(
+                new_species, ctx["parent"], assigned_tiles
+            )
+            
+            # 【植物基因库】继承休眠基因
+            if hasattr(self, 'gene_library_service') and self.gene_library_service:
+                genus = genus_repository.get_by_code(new_species.genus_code)
+                if genus:
+                    self.gene_library_service.inherit_dormant_genes(ctx["parent"], new_species, genus)
+                    species_repository.upsert(new_species)
+            
+            species_repository.log_event(
+                LineageEvent(
+                    lineage_code=ctx["new_code"],
+                    event_type="speciation",
+                    payload={"parent": ctx["parent"].lineage_code, "turn": turn_index},
+                )
+            )
+            
+            event_desc = f"{ctx['parent'].common_name}在压力{average_pressure:.1f}条件下分化出{ctx['new_code']}（背景物种）"
+            reason_text = f"{ctx['parent'].common_name}种群在演化压力下发生生态位分化"
             
             new_species_events.append(
                 BranchingEvent(

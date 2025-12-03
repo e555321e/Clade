@@ -240,6 +240,8 @@ class PressureTemplate(BaseModel):
     kind: str
     label: str
     description: str
+    tier: int = 1       # 压力类型等级 (1-3)
+    base_cost: int = 5  # 基础能量消耗
 
 
 class SpeciesDetail(BaseModel):

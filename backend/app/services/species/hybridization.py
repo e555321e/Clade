@@ -237,10 +237,21 @@ class HybridizationService:
         )
         
         # 尝试使用AI生成杂交物种信息
+        # 【优化】如果任一亲本是背景物种，跳过AI调用，节省Token
         ai_content = None
-        if self.router:
+        is_background_hybrid = (
+            getattr(parent1, 'is_background', False) or 
+            getattr(parent2, 'is_background', False)
+        )
+        
+        if self.router and not is_background_hybrid:
             ai_content = await self._call_hybridization_ai(
                 parent1, parent2, hybrid_code, genetic_distance, fertility
+            )
+        elif is_background_hybrid:
+            logger.debug(
+                f"[杂交优化] 跳过AI调用（背景物种参与杂交）: "
+                f"{parent1.common_name} × {parent2.common_name}"
             )
         
         # 混合基础属性（体现杂交特点）

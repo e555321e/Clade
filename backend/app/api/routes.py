@@ -361,28 +361,10 @@ gene_flow_service = GeneFlowService()
 save_manager = SaveManager(settings.saves_dir, embedding_service=embedding_service)
 species_generator = SpeciesGenerator(model_router)
 ui_config_path = Path(settings.ui_config_path)
-pressure_templates: list[PressureTemplate] = [
-    # 【零消耗】自然演化 - 在能量不足时仍可推进回合
-    PressureTemplate(kind="natural_evolution", label="🌱 自然演化", description="让生态系统自然发展，不施加任何神力干预。物种按照自身特性与环境互动，遵循自然选择规律。消耗 0 神力能量。"),
-    PressureTemplate(kind="glacial_period", label="冰河时期", description="气温下降，冰川扩张，环境转向寒冷。对耐寒性弱的物种形成压力，生物需要发展保温结构、提高代谢效率或通过迁移适应新环境。"),
-    PressureTemplate(kind="greenhouse_earth", label="温室地球", description="气温上升，极地冰层减少，海平面变化影响沿海栖息地。物种需要改进散热能力、调整分布区域或适应更潮湿的环境形态。"),
-    PressureTemplate(kind="pluvial_period", label="洪积期", description="降水增多，形成湿地、湖泊等水域环境。陆生栖息地减少，水生与两栖类获得更多生存空间。物种可能需要增强对水域的适应性。"),
-    PressureTemplate(kind="drought_period", label="干旱期", description="降水减少，植被减少，水源变得紧缺。物种需要提升水分保存能力、减少蒸散，或通过休眠、迁移等方式维持生存。"),
-    PressureTemplate(kind="monsoon_shift", label="季风变动", description="风带格局发生变化，一些地区从湿润转向干燥，另一些从干燥转向湿润。物种需调整分布区域或适应新的气候组合。"),
-    PressureTemplate(kind="fog_period", label="浓雾时期", description="大气湿度提升，持续雾霾削弱光照。光合作用受到限制，生物可能需降低能量需求或依赖替代能量来源。"),
-    PressureTemplate(kind="volcanic_eruption", label="火山喷发期", description="火山活动影响大气光照、气温与水体化学条件。物种需适应光照减少、温度变化或受污染的环境。"),
-    PressureTemplate(kind="orogeny", label="造山期", description="地壳抬升形成新的山地屏障，改变水汽流动并隔离生境。生物分布被分割，适应高海拔或低氧环境的物种具备优势。"),
-    PressureTemplate(kind="subsidence", label="陆架沉降", description="陆地区域下降并被海水覆盖，沿海和浅海环境扩张。物种可能需向内陆迁移，或向半水生与水生方向发展。"),
-    PressureTemplate(kind="land_degradation", label="土地退化", description="表层土壤流失，植被生长受限，生态系统的基础生产力下降。物种可能转向耐贫瘠策略或改变食性以维持生存。"),
-    PressureTemplate(kind="ocean_current_shift", label="洋流变迁", description="海洋环流改变沿海气候，使部分地区变暖或变冷。依赖稳定环境的物种需要调整分布或适应新的温度条件。"),
-    PressureTemplate(kind="resource_abundance", label="资源繁盛期", description="环境资源充裕、生态位开放，生物演化与分化速度提高，产生更多独特的形态和生态策略。"),
-    PressureTemplate(kind="productivity_decline", label="生产力衰退", description="基础生产者数量减少，食物链低层受到影响，草食与肉食物种的生存压力增加。物种需降低能耗、改变食性或发展耐逆策略。"),
-    PressureTemplate(kind="predator_rise", label="捕食者兴起", description="新型捕食者出现，使捕食压力上升。其他物种需发展更有效的防御、隐蔽或逃避能力。"),
-    PressureTemplate(kind="species_invasion", label="物种入侵", description="外来物种进入生态系统，以竞争力或繁殖速度影响本地物种。原生物种可能被迫迁移或演化新策略以避免竞争。"),
-    PressureTemplate(kind="ocean_acidification", label="海洋酸化", description="海水化学成分变化，使依赖钙质结构的生物更难形成硬壳或骨骼。生态结构偏向对酸性环境更适应的生物类群。"),
-    PressureTemplate(kind="oxygen_increase", label="氧气增多", description="大气含氧量提高，使生物具备发展更大体型、更高代谢能力或更强运动能力的可能性。"),
-    PressureTemplate(kind="anoxic_event", label="缺氧事件", description="水体中可利用氧减少，部分海域变成低氧环境。依赖溶氧的生物面临压力，而能耐低氧或使用替代代谢方式的物种更为适应。"),
-]
+
+# 【导入新的压力模板（带 tier 和 base_cost）】
+from .pressure_templates import PRESSURE_TEMPLATES as pressure_templates
+
 pressure_queue: list[list[PressureConfig]] = []
 # 事件队列：用于实时推送演化日志到前端
 simulation_events: Queue = Queue()
@@ -771,28 +753,36 @@ async def run_turns(command: TurnCommand, background_tasks: BackgroundTasks):
         current_turn = simulation_engine.turn_counter
         
         # 【能量系统】检查压力消耗
+        # 【修改】自然演化（无压力参数）不消耗能量
         if pressures and energy_service.enabled:
-            pressure_dicts = [{"kind": p.kind, "intensity": p.intensity} for p in pressures]
-            total_cost = energy_service.get_pressure_cost(pressure_dicts)
-            current_energy = energy_service.get_state().current
+            # 过滤掉强度为0的无效压力
+            valid_pressures = [p for p in pressures if p.intensity > 0]
             
-            if current_energy < total_cost:
-                action_queue["running"] = False
-                simulation_running = False
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"能量不足！施加压力需要 {total_cost} 能量，当前只有 {current_energy}"
+            if valid_pressures:
+                pressure_dicts = [{"kind": p.kind, "intensity": p.intensity} for p in valid_pressures]
+                total_cost = energy_service.get_pressure_cost(pressure_dicts)
+                current_energy = energy_service.get_state().current
+                
+                if current_energy < total_cost:
+                    action_queue["running"] = False
+                    simulation_running = False
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"能量不足！施加压力需要 {total_cost} 能量，当前只有 {current_energy}"
+                    )
+                
+                # 消耗能量
+                success, msg = energy_service.spend(
+                    "pressure", 
+                    current_turn,
+                    details=f"压力: {', '.join([p.kind for p in valid_pressures])}",
+                    intensity=sum(p.intensity for p in valid_pressures) / len(valid_pressures)
                 )
-            
-            # 消耗能量
-            success, msg = energy_service.spend(
-                "pressure", 
-                current_turn,
-                details=f"压力: {', '.join([p.kind for p in pressures])}",
-                intensity=sum(p.intensity for p in pressures) / len(pressures) if pressures else 0
-            )
-            if success:
-                push_simulation_event("energy", f"⚡ 消耗 {total_cost} 能量（环境压力）", "系统")
+                if success:
+                    push_simulation_event("energy", f"⚡ 消耗 {total_cost} 能量（环境压力）", "系统")
+            else:
+                # 虽然有参数但都是0强度，视为自然演化
+                pressures = []
         
         push_simulation_event("pressure", f"应用压力: {', '.join([p.kind for p in pressures]) if pressures else '自然演化'}", "环境")
         

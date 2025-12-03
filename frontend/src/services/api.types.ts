@@ -678,6 +678,8 @@ export interface PressureTemplate {
   kind: string;
   label: string;
   description: string;
+  tier: number;
+  base_cost: number;
   narrative_template?: string; // Optional template for the description
   default_intensity?: number; // Optional default intensity
 }

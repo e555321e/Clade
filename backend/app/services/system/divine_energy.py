@@ -39,7 +39,7 @@ class EnergyCost:
 ENERGY_COSTS: dict[str, EnergyCost] = {
     # 环境压力（基础消耗 × 强度）
     "pressure": EnergyCost(
-        base_cost=3,
+        base_cost=5,  # 默认为 Tier 1 基础值，实际计算会由 get_pressure_cost 处理
         name="环境压力",
         description="释放环境压力，强度越高消耗越多",
         icon="⚡",
@@ -100,9 +100,9 @@ ENERGY_COSTS: dict[str, EnergyCost] = {
 @dataclass
 class EnergyState:
     """能量状态"""
-    current: int = 100
-    maximum: int = 100
-    regen_per_turn: int = 15
+    current: int = 3000
+    maximum: int = 3000
+    regen_per_turn: int = 300
     
     # 历史记录
     total_spent: int = 0
@@ -120,9 +120,9 @@ class EnergyState:
     @classmethod
     def from_dict(cls, data: dict) -> "EnergyState":
         return cls(
-            current=data.get("current", 100),
-            maximum=data.get("maximum", 100),
-            regen_per_turn=data.get("regen_per_turn", 15),
+            current=data.get("current", 3000),
+            maximum=data.get("maximum", 3000),
+            regen_per_turn=data.get("regen_per_turn", 300),
             total_spent=data.get("total_spent", 0),
             total_regenerated=data.get("total_regenerated", 0),
         )
@@ -191,6 +191,13 @@ class DivineEnergyService:
         # 应用乘数
         if cost_def.multiplier_field and cost_def.multiplier_field in kwargs:
             multiplier = kwargs[cost_def.multiplier_field]
+            
+            # 【修改】针对环境压力应用分级倍率
+            if action == "pressure" and cost_def.multiplier_field == "intensity":
+                from ...simulation.constants import get_pressure_tier_multiplier
+                tier_mult = get_pressure_tier_multiplier(int(multiplier))
+                return int(base * multiplier * tier_mult)
+                
             return int(base * multiplier)
         
         return base
@@ -207,14 +214,38 @@ class DivineEnergyService:
         # 零消耗的压力类型（自然演化）
         FREE_PRESSURE_KINDS = {"natural_evolution"}
         
+        from ...simulation.constants import (
+            PRESSURE_TYPE_TIERS,
+            TIER_1_BASE_COST,
+            TIER_2_BASE_COST,
+            TIER_3_BASE_COST,
+            get_pressure_tier_multiplier
+        )
+        
         total = 0
         for p in pressures:
             kind = p.get("kind", "")
             # 自然演化不消耗能量
             if kind in FREE_PRESSURE_KINDS:
                 continue
+            
             intensity = p.get("intensity", 5)
-            total += self.get_cost("pressure", intensity=intensity)
+            
+            # 1. 获取压力类型的 Tier 和基础消耗
+            tier = PRESSURE_TYPE_TIERS.get(kind, 2)  # 默认为中等 Tier 2
+            base_cost = TIER_2_BASE_COST
+            if tier == 1:
+                base_cost = TIER_1_BASE_COST
+            elif tier == 3:
+                base_cost = TIER_3_BASE_COST
+            
+            # 2. 获取强度倍率 (针对 intensity 1-10 的非线性倍率)
+            intensity_mult = get_pressure_tier_multiplier(intensity)
+            
+            # 3. 计算单项消耗 = 基础消耗 * 强度 * 强度倍率
+            cost = int(base_cost * intensity * intensity_mult)
+            total += cost
+            
         return total
     
     def can_afford(self, action: str, **kwargs) -> tuple[bool, int]:

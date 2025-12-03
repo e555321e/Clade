@@ -222,6 +222,28 @@ PRESSURE_TO_MODIFIER_MAP = {
         "oxygen": -0.3,        # 氧化消耗氧气
         "ocean_acidification": 0.4,  # 碳循环扰动
     },
+    
+    # ============================================================
+    # === 新增：末日级天灾 ===
+    # 这些是最高级别的毁灭性事件
+    # ============================================================
+    "meteor_impact": {        # 陨石撞击（如K-Pg灭绝事件）
+        "mortality_spike": 1.0,     # 直接大规模死亡
+        "temperature": -0.8,        # 撞击冬天
+        "light_reduction": 1.0,     # 尘埃遮天蔽日
+        "wildfire": 0.6,            # 撞击引发大火
+        "acidity": 0.5,             # 酸雨
+        "habitat_fragmentation": 0.8,  # 栖息地毁坏
+        "resource_decline": 0.9,    # 食物链崩溃
+    },
+    "gamma_ray_burst": {      # 伽马射线暴（奥陶纪灭绝假说之一）
+        "mortality_spike": 1.0,     # 直接辐射杀伤
+        "uv_radiation": 1.0,        # 臭氧层被破坏
+        "dna_damage": 1.0,          # 严重基因损伤
+        "mutation_rate": 0.8,       # 突变率暴增
+        "light_reduction": 0.3,     # 大气化学变化
+        "surface_avoidance": 0.9,   # 表层生物受创最重
+    },
 }
 
 
@@ -262,6 +284,8 @@ class EnvironmentSystem:
         return affected
 
     def _describe_pressure(self, pressure: PressureConfig) -> str:
+        from .constants import PRESSURE_TIER_1_LIMIT, PRESSURE_TIER_2_LIMIT
+        
         target = (
             f"局部({pressure.target_region[0]}, {pressure.target_region[1]})"
             if pressure.target_region
@@ -272,8 +296,16 @@ class EnvironmentSystem:
         event_name = pressure.label or f"{pressure.kind}事件"
         description = pressure.narrative_note or "系统解析待补充"
         
+        intensity = pressure.intensity
+        if intensity <= PRESSURE_TIER_1_LIMIT:
+            tier_name = "轻微"
+        elif intensity <= PRESSURE_TIER_2_LIMIT:
+            tier_name = "中等"
+        else:
+            tier_name = "毁灭性"
+        
         return (
-            f"{target}发生【{event_name}】，强度{pressure.intensity}/10。"
+            f"{target}发生【{event_name}】，强度{pressure.intensity}/10 ({tier_name})。"
             f"附注: {description}"
         )
 
@@ -282,20 +314,47 @@ class EnvironmentSystem:
         
         将高级压力类型（如 glacial_period）映射到基础环境修改器（如 temperature）。
         这确保死亡率计算和气候变化计算能正确响应各种压力事件。
+        
+        【修改】引入非线性强度倍率：
+        - 1-3级: x1.0 (轻微)
+        - 4-7级: x2.0 (中等)
+        - 8-10级: x5.0 (毁灭性)
+
+        【修改】引入压力类型等级倍率：
+        - Tier 1: x1.0 (标准)
+        - Tier 2: x1.5 (增强)
+        - Tier 3: x3.0 (毁灭性加成)
         """
+        from .constants import (
+            get_pressure_tier_multiplier,
+            PRESSURE_TYPE_TIERS,
+            PRESSURE_TYPE_TIER_MODIFIERS
+        )
+        
         summary: dict[str, float] = {}
         
         for item in parsed:
+            # 1. 获取强度滑块带来的倍率 (Intensity Multiplier)
+            intensity_mult = get_pressure_tier_multiplier(item.intensity)
+            
+            # 2. 获取压力类型本身的等级带来的效果倍率 (Type Tier Modifier)
+            # 默认为 Tier 2 (中等)
+            type_tier = PRESSURE_TYPE_TIERS.get(item.kind, 2)
+            type_tier_mult = PRESSURE_TYPE_TIER_MODIFIERS.get(type_tier, 1.5)
+            
+            # 3. 计算有效强度
+            effective_intensity = item.intensity * intensity_mult * type_tier_mult
+            
             # 检查是否有映射关系
             if item.kind in PRESSURE_TO_MODIFIER_MAP:
                 # 将高级压力映射到多个基础修改器
                 modifier_map = PRESSURE_TO_MODIFIER_MAP[item.kind]
                 for base_modifier, coefficient in modifier_map.items():
-                    # 计算该基础修改器的值 = 压力强度 × 系数
-                    modifier_value = item.intensity * coefficient
+                    # 计算该基础修改器的值 = 有效强度 × 系数
+                    modifier_value = effective_intensity * coefficient
                     summary[base_modifier] = summary.get(base_modifier, 0.0) + modifier_value
             else:
-                # 未知压力类型，直接使用原始kind作为修改器
-                summary[item.kind] = summary.get(item.kind, 0.0) + item.intensity
+                # 未知压力类型，直接使用有效强度作为修改器
+                summary[item.kind] = summary.get(item.kind, 0.0) + effective_intensity
         
         return summary

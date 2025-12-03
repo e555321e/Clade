@@ -260,26 +260,33 @@ async def run_turns(
         current_turn = engine.turn_counter
         
         # 能量系统检查
+        # 【修改】自然演化（无压力参数）不消耗能量
         if pressures and energy_service.enabled:
-            pressure_dicts = [{"kind": p.kind, "intensity": p.intensity} for p in pressures]
-            total_cost = energy_service.get_pressure_cost(pressure_dicts)
-            current_energy = energy_service.get_state().current
+            # 过滤掉强度为0的无效压力
+            valid_pressures = [p for p in pressures if p.intensity > 0]
             
-            if current_energy < total_cost:
-                session.set_running(False)
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"能量不足！施加压力需要 {total_cost} 能量，当前只有 {current_energy}"
+            if valid_pressures:
+                pressure_dicts = [{"kind": p.kind, "intensity": p.intensity} for p in valid_pressures]
+                total_cost = energy_service.get_pressure_cost(pressure_dicts)
+                current_energy = energy_service.get_state().current
+                
+                if current_energy < total_cost:
+                    session.set_running(False)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"能量不足！施加压力需要 {total_cost} 能量，当前只有 {current_energy}"
+                    )
+                
+                success, msg = energy_service.spend_fixed(
+                    total_cost,
+                    current_turn,
+                    details=f"压力: {', '.join([p.kind for p in valid_pressures])}"
                 )
-            
-            success, msg = energy_service.spend(
-                "pressure",
-                current_turn,
-                details=f"压力: {', '.join([p.kind for p in pressures])}",
-                intensity=sum(p.intensity for p in pressures) / len(pressures) if pressures else 0
-            )
-            if success:
-                session.push_event("energy", f"⚡ 消耗 {total_cost} 能量（环境压力）", "系统")
+                if success:
+                    session.push_event("energy", f"⚡ 消耗 {total_cost} 能量（环境压力）", "系统")
+            else:
+                # 虽然有参数但都是0强度，视为自然演化
+                pressures = []
         
         session.push_event(
             "pressure",

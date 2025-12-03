@@ -15,6 +15,86 @@ PHYSICS_RES_X = LOGIC_RES_X * PHYSICS_SCALE  # 2048
 PHYSICS_RES_Y = LOGIC_RES_Y * PHYSICS_SCALE  # 640
 
 # ===========================
+# 压力强度等级 (Pressure Tiers) - 针对压力类型的固有等级
+# ===========================
+# 这里的 Tier 是指压力类型本身的等级，而不是强度的 1-10 级
+TIER_1_BASE_COST = 5    # 轻微：自然演化、微调
+TIER_2_BASE_COST = 20   # 中等：显著气候变化 (原15)
+TIER_3_BASE_COST = 100  # 毁灭：地质灾难、大灭绝 (原50，大幅提升以体现"毁灭性"代价)
+
+# 压力类型固有的效果倍率 (Type Tier Modifiers)
+# 除了基础数值不同外，高等级压力还会有额外的效果加成
+# 【大灭绝设计】Tier 3 压力应该造成大规模死亡，但不是100%
+PRESSURE_TYPE_TIER_MODIFIERS = {
+    1: 1.0,  # 轻微压力：标准效果
+    2: 1.5,  # 中等压力：1.5倍效果
+    3: 2.5   # 毁灭压力：2.5倍效果 (真正的大灭绝级别)
+}
+
+# 压力类型分级映射
+PRESSURE_TYPE_TIERS = {
+    # Tier 1: 轻微/生态/微调 (Base Cost: 5)
+    "natural_evolution": 1,
+    "fog_period": 1,
+    "resource_abundance": 1,
+    "productivity_decline": 1,
+    "monsoon_shift": 1,
+    "predator_rise": 1,
+    "disease_outbreak": 1,
+    
+    # Tier 2: 中等/气候/显著 (Base Cost: 20)
+    "glacial_period": 2,
+    "greenhouse_earth": 2,
+    "pluvial_period": 2,
+    "drought_period": 2,
+    "land_degradation": 2,
+    "ocean_current_shift": 2,
+    "species_invasion": 2,
+    "oxygen_increase": 2,
+    "wildfire_period": 2,
+    "algal_bloom": 2,
+    "uv_radiation_increase": 2,
+    "salinity_change": 2,
+    
+    # Tier 3: 毁灭/地质/天灾 (Base Cost: 100)
+    "volcanic_eruption": 3,
+    "orogeny": 3,
+    "subsidence": 3,
+    "ocean_acidification": 3,
+    "anoxic_event": 3,
+    "sulfide_event": 3,
+    "methane_release": 3,
+    "extreme_weather": 3,
+    "sea_level_rise": 3,
+    "sea_level_fall": 3,
+    "earthquake_period": 3,
+    "meteor_impact": 3,      # 确保陨石撞击也在列表中
+    "gamma_ray_burst": 3,    # 确保伽马射线暴也在列表中
+}
+
+# ===========================
+# 压力强度倍率 (Intensity Multipliers) - 针对 1-10 强度的倍率
+# ===========================
+# 强度 1-3: x1.0
+# 强度 4-7: x2.0
+# 强度 8-10: x5.0
+INTENSITY_TIER_1_LIMIT = 3
+INTENSITY_TIER_2_LIMIT = 7
+
+INTENSITY_MULT_1 = 1.0
+INTENSITY_MULT_2 = 2.0
+INTENSITY_MULT_3 = 5.0
+
+def get_intensity_multiplier(intensity: int) -> float:
+    """获取压力强度对应的倍率"""
+    if intensity <= INTENSITY_TIER_1_LIMIT:
+        return INTENSITY_MULT_1
+    elif intensity <= INTENSITY_TIER_2_LIMIT:
+        return INTENSITY_MULT_2
+    else:
+        return INTENSITY_MULT_3
+
+# ===========================
 # 时间尺度定义 (Chronos Flow)
 # ===========================
 # 基准步长：用于计算倍率的标准（1.0x）
@@ -72,17 +152,7 @@ ERA_TIMELINE = [
 ]
 
 def get_time_config(turn_index: int) -> dict:
-    """根据回合数计算当前时间配置
-    
-    Returns:
-        {
-            "current_year": int,
-            "years_per_turn": int,
-            "era_name": str,
-            "scaling_factor": float,
-            "evolution_guide": str
-        }
-    """
+    """根据回合数计算当前时间配置"""
     current_year = START_YEAR
     remaining_turns = turn_index
     
