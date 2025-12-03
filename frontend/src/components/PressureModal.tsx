@@ -112,7 +112,7 @@ export function PressureModal({
   
   // 批量模式
   const [batchRounds, setBatchRounds] = useState(5);
-  const [randomEnergy, setRandomEnergy] = useState(15);
+  const [randomEnergy, setRandomEnergy] = useState(750);
   const [showBatchMode, setShowBatchMode] = useState(false);
 
   // 初始化选中项

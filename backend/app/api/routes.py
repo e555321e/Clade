@@ -1238,9 +1238,11 @@ async def create_save(request: CreateSaveRequest) -> dict:
     try:
         logger.info(f"[存档API] 创建存档: {request.save_name}, 剧本: {request.scenario}")
         
-        # 【关键修复】重置回合计数器
-        simulation_engine.turn_counter = 0
-        logger.debug(f"[存档API] 回合计数器已重置为 0")
+        # 【关键修复】根据剧本设置初始回合
+        # 繁荣生态剧本从150回合开始，其他剧本从0开始
+        initial_turn = 150 if request.scenario == "繁荣生态" else 0
+        simulation_engine.turn_counter = initial_turn
+        logger.debug(f"[存档API] 回合计数器已设置为 {initial_turn}")
         
         # 【重置游戏服务状态】
         energy_service.reset()
@@ -1341,7 +1343,7 @@ async def create_save(request: CreateSaveRequest) -> dict:
         logger.info(f"[存档API] 初始化物种栖息地分布...")
         all_species = species_repository.list_species()
         if all_species:
-            map_manager.snapshot_habitats(all_species, turn_index=0, force_recalculate=True)
+            map_manager.snapshot_habitats(all_species, turn_index=initial_turn, force_recalculate=True)
             logger.info(f"[存档API] 栖息地分布初始化完成，{len(all_species)} 个物种已分布到地图")
         else:
             logger.warning(f"[存档API警告] 没有物种需要分布")
@@ -1359,7 +1361,7 @@ async def create_save(request: CreateSaveRequest) -> dict:
                 if population > 0:
                     snapshots.append(PopulationSnapshot(
                         species_id=species.id or 0,
-                        turn_index=0,
+                        turn_index=initial_turn,
                         region_id=0,
                         count=population,
                         death_count=0,
@@ -1416,10 +1418,16 @@ async def create_save(request: CreateSaveRequest) -> dict:
             # 获取地图状态
             map_state = environment_repository.get_state()
             
+            # 根据剧本生成合适的叙事
+            if initial_turn > 0:
+                narrative = f"繁荣生态！经过{initial_turn}万年的演化，{len(all_species)}个物种已建立起复杂的生态网络。海洋中奇虾称霸，陆地上蜈蚣横行，深海热泉孕育着奇特的共生关系。"
+            else:
+                narrative = f"世界诞生！{len(all_species)}个物种在{request.scenario}开始了它们的演化之旅。"
+            
             initial_report = TurnReport(
-                turn_index=0,
-                pressures_summary="初始状态，无环境压力",
-                narrative=f"世界诞生！{len(all_species)}个物种在{request.scenario}开始了它们的演化之旅。",
+                turn_index=initial_turn,
+                pressures_summary="初始状态，无环境压力" if initial_turn == 0 else "生态平衡，万物竞生",
+                narrative=narrative,
                 species=initial_species,
                 branching_events=[],
                 background_summary=[],
@@ -1434,7 +1442,7 @@ async def create_save(request: CreateSaveRequest) -> dict:
             
             history_repository.log_turn(
                 TurnLog(
-                    turn_index=0,
+                    turn_index=initial_turn,
                     pressures_summary=initial_report.pressures_summary,
                     narrative=initial_report.narrative,
                     record_data=initial_report.model_dump(mode="json")
@@ -1455,7 +1463,7 @@ async def create_save(request: CreateSaveRequest) -> dict:
         
         # 5. 立即保存游戏状态到存档文件
         logger.info(f"[存档API] 保存初始游戏状态到存档文件...")
-        save_manager.save_game(request.save_name, turn_index=0)
+        save_manager.save_game(request.save_name, turn_index=initial_turn)
         
         # 6. 更新物种数量
         species_count = len(species_repository.list_species())

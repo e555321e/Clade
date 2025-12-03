@@ -10,7 +10,7 @@
 
 import { useReducer, useCallback, useEffect, useRef, type ReactNode } from "react";
 import type { UIConfig } from "@/services/api.types";
-import { createDefaultConfig, settingsReducer, createInitialState } from "./reducer";
+import { createDefaultConfig, settingsReducer, createInitialState, getInitialProviders } from "./reducer";
 import type { SettingsTab, ConfirmState } from "./types";
 import "./Settings.css";
 
@@ -67,9 +67,14 @@ export function SettingsPanel({ config, onClose, onSave }: Props) {
   const [state, dispatch] = useReducer(settingsReducer, config, createInitialState);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 同步外部配置
+  // 同步外部配置（确保预设服务商始终存在）
   useEffect(() => {
-    dispatch({ type: "SET_FORM", form: config });
+    // 使用 getInitialProviders 确保预设服务商存在
+    const initialProviders = getInitialProviders(config);
+    dispatch({ 
+      type: "SET_FORM", 
+      form: { ...config, providers: initialProviders } 
+    });
   }, [config]);
 
   // 键盘快捷键

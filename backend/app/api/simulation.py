@@ -422,7 +422,9 @@ async def create_save(
         species_generator = container.species_generator
         
         # 重置引擎和服务状态
-        engine.turn_counter = 0
+        # 繁荣生态剧本从150回合开始，其他剧本从0开始
+        initial_turn = 150 if request.scenario == "繁荣生态" else 0
+        engine.turn_counter = initial_turn
         energy_service.reset()
         divine_progression_service.reset()
         achievement_service.reset()
@@ -493,7 +495,7 @@ async def create_save(
         # 初始化栖息地分布
         all_species = species_repo.list_species()
         if all_species:
-            map_manager.snapshot_habitats(all_species, turn_index=0, force_recalculate=True)
+            map_manager.snapshot_habitats(all_species, turn_index=initial_turn, force_recalculate=True)
         
         # 创建初始人口快照
         MAX_SAFE_POPULATION = 9_007_199_254_740_991
@@ -505,7 +507,7 @@ async def create_save(
                 if population > 0:
                     snapshots.append(PopulationSnapshot(
                         species_id=species.id or 0,
-                        turn_index=0,
+                        turn_index=initial_turn,
                         region_id=0,
                         count=population,
                         death_count=0,
@@ -555,10 +557,18 @@ async def create_save(
             
             map_state = env_repo.get_state()
             
+            # 根据剧本生成合适的叙事
+            if initial_turn > 0:
+                narrative = f"繁荣生态！经过{initial_turn}万年的演化，{len(all_species)}个物种已建立起复杂的生态网络。海洋中奇虾称霸，陆地上蜈蚣横行，深海热泉孕育着奇特的共生关系。"
+                pressures_summary = "生态平衡，万物竞生"
+            else:
+                narrative = f"世界诞生！{len(all_species)}个物种在{request.scenario}开始了它们的演化之旅。"
+                pressures_summary = "初始状态，无环境压力"
+            
             initial_report = TurnReport(
-                turn_index=0,
-                pressures_summary="初始状态，无环境压力",
-                narrative=f"世界诞生！{len(all_species)}个物种在{request.scenario}开始了它们的演化之旅。",
+                turn_index=initial_turn,
+                pressures_summary=pressures_summary,
+                narrative=narrative,
                 species=initial_species,
                 branching_events=[],
                 background_summary=[],
@@ -573,7 +583,7 @@ async def create_save(
             
             history_repo.log_turn(
                 TurnLog(
-                    turn_index=0,
+                    turn_index=initial_turn,
                     pressures_summary=initial_report.pressures_summary,
                     narrative=initial_report.narrative,
                     record_data=initial_report.model_dump(mode="json")
@@ -589,7 +599,7 @@ async def create_save(
             embedding_integration.switch_to_save_context(save_dir)
         
         # 保存初始状态
-        save_manager.save_game(request.save_name, turn_index=0)
+        save_manager.save_game(request.save_name, turn_index=initial_turn)
         
         species_count = len(species_repo.list_species())
         metadata["species_count"] = species_count
