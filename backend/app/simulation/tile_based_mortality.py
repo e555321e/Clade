@@ -1346,8 +1346,9 @@ class TileBasedMortalityEngine:
         # 【优化v7】改进极端温度压力计算，使冰河期/温室效应产生显著影响
         # 全局温度修饰（来自冰河期/温室效应等）
         temp_modifier = pressure_modifiers.get('temperature', 0.0)
-        # 【修改1】增强温度修饰效果：每单位 = 5°C（原3°C）
-        adjusted_temps = tile_temps + temp_modifier * 5.0
+        # 【平衡调整】降低温度修饰效果：每单位 = 2°C（从5°C降低）
+        # 这样5级冰川期 = -9 * 2 = -18°C，更加合理
+        adjusted_temps = tile_temps + temp_modifier * 2.0
         
         # 【修改2】引入极端温度阈值
         # - 适宜温度范围：5°C ~ 25°C（原10°C ~ 20°C）
@@ -1614,23 +1615,24 @@ class TileBasedMortalityEngine:
         if is_extreme_climate:
             # 极端气候模式：温度成为主导因素
             pressure = (
-                temp_pressure * 0.50 +      # 【极端模式】温度压力权重翻倍
-                drought_pressure * 0.12 +   # 水分权重降低
-                flood_pressure * 0.08 +     # 洪水权重降低
-                special_pressure * 0.20 +   # 特殊事件权重降低
-                global_pressure * 0.10      # 其他综合影响降低
-            )
+                temp_pressure * 0.45 +      # 【极端模式】温度压力权重提升
+                drought_pressure * 0.10 +   # 水分权重降低
+                flood_pressure * 0.05 +     # 洪水权重降低
+                special_pressure * 0.25 +   # 特殊事件权重
+                global_pressure * 0.15      # 其他综合影响
+            )  # 总和 = 1.0
             logger.debug(f"[极端气候模式] 温度压力主导，平均温度压力={avg_temp_pressure:.2%}")
         else:
             # 正常气候模式：平衡各因素
+            # 【平衡调整】确保权重总和为 1.0
             pressure = (
-                temp_pressure * 0.30 +      # 【提升】温度权重从0.25提升到0.30
-                drought_pressure * 0.15 +   # 水分次之
-                flood_pressure * 0.10 +     # 洪水影响较小
-                special_pressure * 0.28 +   # 特殊事件影响显著
-                global_pressure * 0.17 +    # 其他综合影响
-                synergistic_pressure * 0.25 # 【新增】协同压力权重
-            )
+                temp_pressure * 0.25 +      # 温度
+                drought_pressure * 0.12 +   # 水分
+                flood_pressure * 0.08 +     # 洪水
+                special_pressure * 0.20 +   # 特殊事件
+                global_pressure * 0.15 +    # 其他综合影响
+                synergistic_pressure * 0.20 # 协同压力
+            )  # 总和 = 1.0
         
         # 【新增】应用正面压力减免
         pressure = pressure * (1.0 - positive_bonus)
