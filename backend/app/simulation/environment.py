@@ -284,7 +284,7 @@ class EnvironmentSystem:
         return affected
 
     def _describe_pressure(self, pressure: PressureConfig) -> str:
-        from .constants import PRESSURE_TIER_1_LIMIT, PRESSURE_TIER_2_LIMIT
+        from .constants import INTENSITY_TIER_1_LIMIT, INTENSITY_TIER_2_LIMIT
         
         target = (
             f"局部({pressure.target_region[0]}, {pressure.target_region[1]})"
@@ -297,9 +297,9 @@ class EnvironmentSystem:
         description = pressure.narrative_note or "系统解析待补充"
         
         intensity = pressure.intensity
-        if intensity <= PRESSURE_TIER_1_LIMIT:
+        if intensity <= INTENSITY_TIER_1_LIMIT:
             tier_name = "轻微"
-        elif intensity <= PRESSURE_TIER_2_LIMIT:
+        elif intensity <= INTENSITY_TIER_2_LIMIT:
             tier_name = "中等"
         else:
             tier_name = "毁灭性"
