@@ -419,6 +419,56 @@ class PredationService:
         }
         return (habitat_a, habitat_b) in compatible_pairs
     
+    def infer_prey_with_affinity(
+        self,
+        species: Species,
+        all_species: Sequence[Species],
+        species_tiles: dict[str, set[int]] | None = None,
+        max_prey_count: int = 5,
+        min_score: float = 0.2,
+    ) -> list[tuple[str, float]]:
+        """使用基于 Embedding 的猎物亲和度服务推断猎物
+        
+        【v14 新增】
+        使用 PreyAffinityService 计算语义匹配度，结合营养级、栖息地、体型等特征。
+        
+        Args:
+            species: 捕食者物种
+            all_species: 所有物种列表
+            species_tiles: {species_code: set(tile_ids)} 物种→地块映射
+            max_prey_count: 最大猎物数量
+            min_score: 最低分数阈值
+            
+        Returns:
+            [(prey_code, affinity_score), ...] 按分数降序
+        """
+        if species.trophic_level < 2.0:
+            return []  # 生产者不需要猎物
+        
+        try:
+            from .prey_affinity import get_prey_affinity_service
+            from ..system.embedding import get_embedding_service
+            
+            embedding_service = get_embedding_service()
+            affinity_service = get_prey_affinity_service(embedding_service)
+            
+            return affinity_service.get_best_prey(
+                species,
+                all_species,
+                species_tiles,
+                top_k=max_prey_count,
+                min_score=min_score,
+            )
+        except Exception as e:
+            logger.warning(f"[捕食] 猎物亲和度计算失败: {e}, 回退到旧方法")
+            # 回退到旧方法
+            prey_codes = self.infer_prey_optimized(
+                species, all_species,
+                species_tiles=species_tiles,
+                max_prey_count=max_prey_count
+            )
+            return [(code, 0.5) for code in prey_codes]
+    
     def auto_assign_prey(
         self,
         species: Species,

@@ -448,6 +448,15 @@ def get_map_overview(
     # 确保地图已初始化
     map_manager.ensure_initialized()
     
+    # 【v14】预初始化 embedding 相关服务
+    try:
+        from ..services.geo.suitability_service import get_suitability_service
+        from ..services.species.prey_affinity import get_prey_affinity_service
+        get_suitability_service(container.embedding_service)
+        get_prey_affinity_service(container.embedding_service)
+    except Exception:
+        pass  # 非阻塞，失败时回退到旧方法
+    
     # 如果提供了 species_code，转换为 species_id
     resolved_species_id = species_id
     if species_code and not species_id:

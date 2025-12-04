@@ -1108,6 +1108,12 @@ def get_map_overview(
     species_code: str | None = None,
 ) -> MapOverview:
     try:
+        # 【v14】预初始化 embedding 相关服务
+        from ..services.geo.suitability_service import get_suitability_service
+        from ..services.species.prey_affinity import get_prey_affinity_service
+        get_suitability_service(embedding_service)
+        get_prey_affinity_service(embedding_service)
+        
         tile_limit = None if limit_tiles <= 0 else limit_tiles
         habitat_limit = None if limit_habitats <= 0 else limit_habitats
         logger.debug(f"[地图查询] 限制地块: {tile_limit or "all"}, 栖息地: {habitat_limit or "all"}, 模式: {view_mode}, 物种: {species_code}")

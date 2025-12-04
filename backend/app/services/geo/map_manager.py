@@ -774,7 +774,8 @@ class MapStateManager:
         habitats = self.repo.latest_habitats(limit=habitat_limit, species_ids=species_ids)
         logger.debug(f"[地图管理器] 查询到 {len(habitats)} 个栖息地记录")
         
-        species_map = {sp.id: sp for sp in species_repository.list_species()}
+        all_species_list = species_repository.list_species()
+        species_map = {sp.id: sp for sp in all_species_list}
         tile_by_coords = {(tile.x, tile.y): tile.id or 0 for tile in tiles}
         
         # 获取当前地图状态（海平面和温度）
@@ -862,6 +863,14 @@ class MapStateManager:
         tile_prey_populations: dict[int, dict[float, float]] = {}
         tile_consumer_populations: dict[int, float] = {}
         species_tile_populations: dict[int, dict[int, float]] = {}
+        # 【修复】按营养级分组的消费者生物量，用于计算同营养级竞争
+        # {tile_id: {consumer_trophic_range: total_biomass}}
+        tile_consumer_by_trophic: dict[int, dict[float, float]] = {}
+        
+        # 【新增v14】构建物种→地块映射，用于猎物亲和度计算
+        species_tiles_map: dict[str, set[int]] = {}
+        # 【新增v14】构建物种→地块→生物量映射
+        species_tile_biomass: dict[str, dict[int, float]] = {}
         
         for item in habitats:
             sp = species_map.get(item.species_id)
@@ -871,6 +880,17 @@ class MapStateManager:
                 species_tile_populations[item.species_id] = {}
             species_tile_populations[item.species_id][item.tile_id] = item.population
             trophic = getattr(sp, 'trophic_level', 1.0) or 1.0
+            
+            # 【新增v14】记录物种→地块映射
+            lineage = sp.lineage_code
+            if lineage not in species_tiles_map:
+                species_tiles_map[lineage] = set()
+            species_tiles_map[lineage].add(item.tile_id)
+            
+            # 【新增v14】记录物种→地块→生物量
+            if lineage not in species_tile_biomass:
+                species_tile_biomass[lineage] = {}
+            species_tile_biomass[lineage][item.tile_id] = item.population
             
             if trophic < 2.0:
                 # 生产者 - 是消费者的猎物
@@ -885,6 +905,14 @@ class MapStateManager:
                 if item.tile_id not in tile_consumer_populations:
                     tile_consumer_populations[item.tile_id] = 0
                 tile_consumer_populations[item.tile_id] += item.population
+                
+                # 【修复】按营养级分组记录消费者生物量
+                consumer_range = math.floor(trophic * 2) / 2.0
+                if item.tile_id not in tile_consumer_by_trophic:
+                    tile_consumer_by_trophic[item.tile_id] = {}
+                if consumer_range not in tile_consumer_by_trophic[item.tile_id]:
+                    tile_consumer_by_trophic[item.tile_id][consumer_range] = 0
+                tile_consumer_by_trophic[item.tile_id][consumer_range] += item.population
 
         def _get_prey_ranges_for_consumer(consumer_trophic: float) -> list[float]:
             """确定消费者对应的猎物营养级范围。"""
@@ -898,6 +926,39 @@ class MapStateManager:
             if consumer_range >= 2.0:
                 return [1.0, 1.5]
             return []
+        
+        # 【新增v14】基于 Embedding 的猎物亲和度计算
+        # 分离消费者和潜在猎物
+        consumers = [sp for sp in all_species_list if (getattr(sp, 'trophic_level', 1.0) or 1.0) >= 2.0 and sp.status == "alive"]
+        potential_prey = [sp for sp in all_species_list if sp.status == "alive"]
+        
+        # 计算猎物选择矩阵 (N_consumers x M_prey)
+        prey_selection_matrix: np.ndarray | None = None
+        consumer_to_idx: dict[str, int] = {}
+        prey_to_idx: dict[str, int] = {}
+        
+        # 获取猎物亲和度服务并计算矩阵
+        if consumers and potential_prey:
+            try:
+                from ..species.prey_affinity import get_prey_affinity_service
+                
+                # 获取服务（会自动从 suitability_service 获取 embedding）
+                prey_affinity_service = get_prey_affinity_service()
+                
+                # 计算猎物选择矩阵
+                prey_selection_matrix = prey_affinity_service.compute_prey_selection_matrix(
+                    consumers, potential_prey, species_tiles_map
+                )
+                consumer_to_idx = {sp.lineage_code: i for i, sp in enumerate(consumers)}
+                prey_to_idx = {sp.lineage_code: j for j, sp in enumerate(potential_prey)}
+                
+                if prey_affinity_service.embeddings is not None:
+                    logger.debug(f"[MapManager] 猎物亲和度矩阵(Embedding): {len(consumers)}x{len(potential_prey)}")
+                else:
+                    logger.debug(f"[MapManager] 猎物亲和度矩阵(规则): {len(consumers)}x{len(potential_prey)}")
+            except Exception as e:
+                logger.warning(f"[MapManager] 猎物亲和度计算失败: {e}")
+                prey_selection_matrix = None
         
         # 使用混合 Embedding 宜居度服务
         from .suitability_service import get_suitability_service
@@ -924,27 +985,56 @@ class MapStateManager:
                     result = suitability_service.compute_suitability(species, tile)
                     calculated_suitability = result.total
                     
-                    # 【改进】对消费者，额外计算猎物丰富度惩罚
+                    # 【改进v14】对消费者，使用基于 Embedding 的猎物亲和度计算猎物丰富度
                     trophic_level = getattr(species, 'trophic_level', 1.0) or 1.0
                     if trophic_level >= 2.0:
-                        # 获取消费者对应的猎物营养级范围
-                        prey_ranges = _get_prey_ranges_for_consumer(trophic_level)
-                        
-                        # 汇总该地块的猎物总量
                         tile_id = item.tile_id
-                        prey_pop = 0
-                        if tile_id in tile_prey_populations:
-                            for prey_range in prey_ranges:
-                                prey_pop += tile_prey_populations[tile_id].get(prey_range, 0)
+                        lineage = species.lineage_code
                         
-                        # 获取该物种在该地块的消费者数量
-                        consumer_pop_map = species_tile_populations.get(item.species_id, {})
+                        # 【新增v14】使用猎物亲和度矩阵计算有效猎物生物量
+                        effective_prey_pop = 0.0
+                        
+                        if prey_selection_matrix is not None and lineage in consumer_to_idx:
+                            consumer_idx = consumer_to_idx[lineage]
+                            
+                            # 遍历所有潜在猎物，按亲和度加权计算有效猎物量
+                            for prey_sp in potential_prey:
+                                prey_code = prey_sp.lineage_code
+                                if prey_code == lineage:
+                                    continue  # 跳过自己
+                                if prey_code not in prey_to_idx:
+                                    continue
+                                
+                                prey_idx = prey_to_idx[prey_code]
+                                affinity = prey_selection_matrix[consumer_idx, prey_idx]
+                                
+                                # 获取该猎物在当前地块的生物量
+                                prey_biomass_at_tile = species_tile_biomass.get(prey_code, {}).get(tile_id, 0)
+                                
+                                # 加权累加
+                                effective_prey_pop += prey_biomass_at_tile * affinity
+                        else:
+                            # 回退到旧方法：基于营养级范围
+                            prey_ranges = _get_prey_ranges_for_consumer(trophic_level)
+                            if tile_id in tile_prey_populations:
+                                for prey_range in prey_ranges:
+                                    effective_prey_pop += tile_prey_populations[tile_id].get(prey_range, 0)
+                        
+                        # 【修复v13】获取该地块上所有同营养级消费者的总生物量
+                        # 这样猎物丰富度才能正确反映竞争压力
+                        consumer_trophic_range = math.floor(trophic_level * 2) / 2.0
+                        total_same_level_consumers = 0
+                        if tile_id in tile_consumer_by_trophic:
+                            total_same_level_consumers = tile_consumer_by_trophic[tile_id].get(consumer_trophic_range, 0)
+                        
+                        # 构建消费者数量映射：使用同营养级总量
+                        consumer_pop_map = {tile_id: total_same_level_consumers}
                         
                         # 调用 _suitability_score_with_breakdown 计算猎物丰富度感知的宜居度
                         consumer_result = self._suitability_score_with_breakdown(
                             species,
                             tile,
-                            prey_tile_populations={tile_id: prey_pop},
+                            prey_tile_populations={tile_id: effective_prey_pop},
                             consumer_tile_populations=consumer_pop_map,
                         )
                         
