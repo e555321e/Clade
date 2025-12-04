@@ -233,7 +233,7 @@ $needInstallBackend = $false
 $packagesToCheck = @("fastapi", "uvicorn", "sqlmodel", "numpy", "scipy")
 
 foreach ($pkg in $packagesToCheck) {
-    $check = & pip show $pkg 2>&1
+    & pip show $pkg 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
         $needInstallBackend = $true
         break
