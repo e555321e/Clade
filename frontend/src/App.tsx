@@ -321,7 +321,10 @@ function GameScene() {
     fetchHistory(20)
       .then((data) => setReports(data))
       .catch(console.error);
-  }, [setCurrentTurnIndex, setBackendSessionId, setReports]);
+    
+    // 游戏加载时自动打开游戏指南
+    openModal("gameGuide");
+  }, [setCurrentTurnIndex, setBackendSessionId, setReports, openModal]);
 
   // 提示信息轮询
   useEffect(() => {
@@ -462,6 +465,7 @@ function GameScene() {
             onOpenAIAssistant={() => openModal("aiAssistant")}
             onOpenAchievements={() => openModal("achievements")}
             onToggleHints={() => (modals.hints ? closeModal("hints") : openModal("hints"))}
+            onOpenGuide={() => openModal("gameGuide")}
             showHints={modals.hints}
             hintsInfo={hintsInfo}
           />

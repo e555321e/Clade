@@ -119,6 +119,7 @@ export interface UIState {
     hints: boolean;
     hybridization: boolean;
     divinePowers: boolean;
+    gameGuide: boolean;
   };
   // 设置初始视图
   settingsInitialView: "menu" | "load";

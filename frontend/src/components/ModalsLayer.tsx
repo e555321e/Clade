@@ -41,6 +41,7 @@ const FullscreenOverlay = lazy(() => import("./FullscreenOverlay").then(m => ({ 
 const TurnProgressOverlay = lazy(() => import("./TurnProgressOverlay").then(m => ({ default: m.TurnProgressOverlay })));
 const GameHintsPanel = lazy(() => import("./GameHintsPanel").then(m => ({ default: m.GameHintsPanel })));
 const AchievementNotification = lazy(() => import("./GameHintsPanel").then(m => ({ default: m.AchievementNotification })));
+const GameGuideModal = lazy(() => import("./GameGuideModal").then(m => ({ default: m.GameGuideModal })));
 
 // 加载占位符
 function ModalFallback() {
@@ -76,6 +77,7 @@ interface ModalState {
   hints: boolean;
   hybridization: boolean;
   divinePowers: boolean;
+  gameGuide: boolean;
 }
 
 interface ModalsLayerProps {
@@ -356,6 +358,14 @@ export function ModalsLayer({
           onSelectSpecies={onSelectSpecies}
           refreshTrigger={0}
           onClose={() => onCloseModal("hints")}
+        />
+      )}
+
+      {/* 游戏指南 */}
+      {modals.gameGuide && (
+        <GameGuideModal
+          isOpen={modals.gameGuide}
+          onClose={() => onCloseModal("gameGuide")}
         />
       )}
     </Suspense>

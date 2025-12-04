@@ -22,6 +22,7 @@ interface Props {
   onOpenAIAssistant?: () => void;
   onOpenAchievements?: () => void;
   onToggleHints?: () => void;
+  onOpenGuide?: () => void;
   showHints?: boolean;
   hintsInfo?: HintsInfo;
 }
@@ -82,6 +83,7 @@ const HISTORY_TOOLS = [
   { id: "maphistory", label: "地质变迁", icon: "🌋", description: "回顾地图的地质变化历史", color: "#a78bfa" },
   { id: "history", label: "演化年鉴", icon: "📜", description: "查看完整的演化历史记录", color: "#fbbf24" },
   { id: "logs", label: "系统日志", icon: "🖥️", description: "查看详细的系统运行日志", color: "#94a3b8" },
+  { id: "guide", label: "游戏指南", icon: "📖", description: "了解游戏机制与玩法说明", color: "#2dd4bf" },
 ];
 
 export function LensBar({ 
@@ -99,6 +101,7 @@ export function LensBar({
   onOpenAIAssistant,
   onOpenAchievements,
   onToggleHints,
+  onOpenGuide,
   showHints = false,
   hintsInfo,
 }: Props) {
@@ -151,6 +154,7 @@ export function LensBar({
       case "ai": onOpenAIAssistant?.(); break;
       case "achievements": onOpenAchievements?.(); break;
       case "hints": onToggleHints?.(); break;
+      case "guide": onOpenGuide?.(); break;
     }
   };
 
@@ -301,6 +305,7 @@ export function LensBar({
           {HISTORY_TOOLS.filter(t => {
             if (t.id === "maphistory") return !!onOpenMapHistory;
             if (t.id === "logs") return !!onOpenLogs;
+            if (t.id === "guide") return !!onOpenGuide;
             return true;
           }).map(tool => (
             <div
