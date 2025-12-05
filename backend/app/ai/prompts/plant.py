@@ -230,7 +230,7 @@ PLANT_PROMPTS = {
 {{
     "latin_name": "Bryophytella argentoalpina",
     "common_name": "霜岭银毛苔",
-    "description": "高海拔适应的苔藓先驱。发展出银色反光表皮反射过量紫外线，深层色素体沉降到细胞底部避免辐射损伤。假根特化为锚定结构，紧抓岩缝抵御强风。夜间从雾气中收集水分的凝露毛刺是其独特创新。",
+    "description": "高海拔适应的苔藓先驱。发展出银色反光表皮反射过量紫外线，深层色素体沉降到细胞底部避免辐射损伤。假根特化为锚定结构，紧抓岩缝抵御强风。夜间从雾气中收集水分的凝露毛刺是其独特特征。",
     "life_form_stage": 3,
     "growth_form": "moss",
     "trait_changes": {{"耐旱性": "+1.5", "光合效率": "-0.5", "繁殖速度": "-0.3", "保水能力": "+0.8"}},
@@ -395,93 +395,55 @@ PLANT_PROMPTS = {
 
 **重要：只返回纯JSON，不要markdown。**
 
-=== 全局环境背景 ===
-环境压力强度：{average_pressure:.2f}/10
-压力来源：{pressure_summary}
-重大事件：{major_events}
-{time_context}
+=== 📊 演化预算（系统已计算，必须遵守）===
+- 总增益上限: {max_increase}
+- 单项上限: {single_max}
+- 时代属性上限: {era_caps}
+- 代价比例: {tradeoff_ratio}（系统自动计算代价，勿写削弱项）
 
-=== 待分化植物列表 ===
-{species_list}
+=== 父系物种摘要 ===
+{parent_summary}
 
-=== 🌱 植物演化硬性约束 ===
+=== 🌍 分化触发背景 ===
+{trigger_context}
 
-【1. 阶段升级条件】
-- 阶段0→1（真核化）：多细胞程度 >= 3.0（需长期积累）
-- 阶段1→2（群体化）：多细胞程度 >= 6.0（需长期积累）
-- 阶段2→3（登陆）⚠️关键：保水能力 >= 5.0 且 耐旱性 >= 4.0
-- 阶段3→4（真根）：根系发达度 >= 5.0
-- 阶段4→5（种子）：种子化程度 >= 5.0
-- 阶段5→6（开花）：种子化程度 >= 8.0 且 散布能力 >= 7.0
-- 成为树木：木质化程度 >= 7.0 且 阶段 >= 5
-
-【2. 属性权衡预算】⚠️ 最重要！
-- 查看每个物种的【属性预算】，增加总和不超过"增加≤+X"值（通常+2~+4）
-- 减少总和不低于"减少≥-X"值（通常-1~-2）
-- 单项变化不超过±2.0
-- 必须有增有减，增减要平衡！
-- ✅ 正确: {{"光合效率": "+1.0", "保水能力": "+0.5", "繁殖速度": "-0.8"}}
-- ❌ 错误: {{"光合效率": "+3.0", "根系": "+2.5"}} (增过大,无减少)
-
-【3. 里程碑必需器官】
-- 登陆: 角质层 + 假根
-- 真根: 原始根 + 维管束
-- 种子: 胚珠
-- 开花: 花 + 果实
-- 成为树木: 乔木干
-
-【4. 器官类别】
-- photosynthetic: 光合器官 | root_system: 根系 | stem: 茎
-- reproductive: 繁殖 | protection: 保护 | vascular: 维管
-- storage: 储存 | defense: 防御
+=== 任务 ===
+1) 只输出演化特征与增益，不要提供任何代价/惩罚，系统会自动权衡。
+2) 针对植物的器官或生理演化特征，写出用途，并在 gains 中给出数值，遵守预算。
+3) 生成拉丁学名、中文俗名、100-150字描述与分化叙事。
+4) 输出 JSON 对象，results 数组与输入 request_id 对应。
 
 === 输出格式 ===
-{{
+{
     "results": [
-        {{
-            "request_id": "请求ID（与输入对应）",
-            "latin_name": "新拉丁学名（用词根组合）",
-            "common_name": "新中文俗名（有画面感）",
-            "description": "100-120字描述，包含形态变化、适应性创新",
+        {
+            "request_id": "请求ID",
+            "latin_name": "拉丁学名",
+            "common_name": "中文俗名",
+            "description": "100-150字描述",
             "life_form_stage": 当前阶段或+1（不可跳级）,
             "growth_form": "aquatic/moss/herb/shrub/tree",
-            "habitat_type": "marine/freshwater/coastal/terrestrial",
-            "trophic_level": 1.0-1.5,
-            "key_innovations": ["创意演化点"],
-            "trait_changes": {{"增强特质": "+数值", "减弱特质": "-数值"}},
-            "morphology_changes": {{"body_length_cm": 0.8-1.3倍}},
-            "new_organs": ["新器官名称"],
-            "organ_changes": [
-                {{"category": "器官类别", "change_type": "new/enhance", "organ_name": "器官名", "parameters": {{"参数": 值}}}}
+            "innovations": [
+                {
+                    "name": "演化特征名称",
+                    "type": "organ/ability/morphology",
+                    "description": "作用机理",
+                    "gains": {"特质名": +数值}
+                }
             ],
-            "milestone_triggered": "里程碑ID或null",
-            "event_description": "30-50字分化摘要",
-            "rationale": "演化机制解释"
-        }}
+            "event_description": "分化叙事"
+        }
     ]
-}}
+}
 
-=== 命名规则 ===
-名字要像真实植物，自然、有依据。可自由组合创造！
+=== 命名提示（中文俗名可选风格）===
+- 环境+形态+类群：风崖长鳍鱼、玄渊盲螈、霜脊游龙
+- 人名+氏+类群：邓氏鱼、李氏螈、陈氏虫
+- 地名+类群：澄江虫、热河鸟、辽西龙
+- 特征直译：三叶虫、盾皮鱼、棘皮动物
+- 行为/习性：伏击蟹、滤食贝、穴居蛇
 
-【拉丁学名】常用词根组合：
-- 地理/栖息地：alpina(高山)、littoricola(沿岸)、paludosa(沼泽)、arenaria(沙生)、rupestris(岩生)、aquatica(水生)、sylvatica(林生)
-- 叶片特征：crassifolia(厚叶)、tenuifolia(细叶)、latifolia(阔叶)、acutifolia(尖叶)、rotundifolia(圆叶)
-- 形态特征：spinosa(多刺)、glabra(光滑)、tomentosa(绒毛)、gigantea(巨大)、nana(矮小)、procumbens(匍匐)
-- 颜色：argentea(银)、rubra(红)、viridis(绿)、purpurea(紫)、alba(白)、aurea(金)
-- 人名后缀：-ii/-i(属格，如hookeri胡克的)、-iana(纪念某人)、-ae(女性属格)
-- 地名化：sinensis(中国)、japonica(日本)、americana(美洲)、indica(印度)
-
-【中文俗名】多种风格可选：
-- 环境+形态+类群：霜岭银毛苔、潮岩先锋藻、热泉厚垫藓
-- 人名+氏+类群：胡氏藻、李氏蕨、张氏苔（纪念发现者/科学家）
-- 地名+类群：澄江藻、热河蕨、辽西松
-- 特征直译：厚叶苔、银丝藻、刺茎蕨
-- 生态习性：附生兰、浮游藻、攀援蔓
-- ❌ 避免搞笑/卡通化/无意义组合
-
-只返回JSON对象。
-""",
+严格输出 JSON，不要包含代价或负向改动。""",
 
     # ==================== 里程碑叙事生成Prompt ====================
     "milestone_narrative": """你是进化生物学科普作家，为植物演化里程碑撰写叙事。

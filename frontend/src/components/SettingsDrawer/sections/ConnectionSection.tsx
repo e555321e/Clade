@@ -8,7 +8,7 @@ import type { SettingsAction, TestResult } from "../types";
 import { testApiConnection, fetchProviderModels, type ModelInfo } from "@/services/api";
 import { PROVIDER_API_TYPES } from "../constants";
 import { getProviderLogo, getProviderTypeBadge, generateId } from "../reducer";
-import { SectionHeader, ActionButton } from "../common/Controls";
+import { SectionHeader, ActionButton, InfoBox, ConfigGroup } from "../common/Controls";
 
 interface Props {
   providers: Record<string, ProviderConfig>;
@@ -185,7 +185,6 @@ export const ConnectionSection = memo(function ConnectionSection({
       });
 
       if (result.success && result.models.length > 0) {
-        // 只存储到临时状态，不自动添加到收藏
         setProviderModels((prev) => ({
           ...prev,
           [provider.id]: result.models,
@@ -224,7 +223,7 @@ export const ConnectionSection = memo(function ConnectionSection({
 
           <div className="provider-list-scroll">
             {providerList.length === 0 ? (
-              <div className="empty-state" style={{ padding: "24px 16px" }}>
+              <div className="empty-state">
                 <div className="empty-state-icon">🔌</div>
                 <div className="empty-state-title">暂无服务商</div>
                 <div className="empty-state-desc">点击下方按钮添加</div>
@@ -238,7 +237,7 @@ export const ConnectionSection = memo(function ConnectionSection({
                 return (
                   <div
                     key={provider.id}
-                    className={`provider-item ${isSelected ? "active" : ""}`}
+                    className={`provider-item ${isSelected ? "selected" : ""}`}
                     onClick={() => dispatch({ type: "SELECT_PROVIDER", id: provider.id })}
                   >
                     <div className="provider-logo">{getProviderLogo(provider)}</div>
@@ -263,7 +262,7 @@ export const ConnectionSection = memo(function ConnectionSection({
             <div className="preset-btns">
               <button className="preset-btn" onClick={() => handleAddCustom("openai", "OpenAI")}>
                 <span>🤖</span>
-                <span>OpenAI 兼容</span>
+                <span>OpenAI</span>
               </button>
               <button className="preset-btn" onClick={() => handleAddCustom("anthropic", "Claude")}>
                 <span>🎭</span>
@@ -280,64 +279,48 @@ export const ConnectionSection = memo(function ConnectionSection({
         {/* 右侧：编辑面板 */}
         <div className="provider-edit-panel">
           {selectedProvider ? (
-            <>
-              <div className="edit-panel-header">
-                <div className="edit-panel-title">
-                  <span className="edit-panel-logo">{getProviderLogo(selectedProvider)}</span>
+            <div className="edit-panel">
+              <div className="edit-header">
+                <div className="edit-title">
+                  <div className="edit-logo">{getProviderLogo(selectedProvider)}</div>
                   <div>
-                    <div className="edit-panel-name">{selectedProvider.name}</div>
-                    <div className="edit-panel-type">
+                    <h3>{selectedProvider.name}</h3>
+                    <div className="edit-type">
                       {getProviderTypeBadge(selectedProvider.provider_type || "openai").text}
                     </div>
                   </div>
                 </div>
                 <button
-                  className="btn btn-ghost danger"
+                  className="btn-delete"
                   onClick={() => handleDelete(selectedProvider.id)}
                 >
                   🗑️ 删除
                 </button>
               </div>
 
-              <div className="edit-panel-body">
+              <div className="edit-form">
                 {/* 服务商名称 */}
-                <div className="form-row">
-                  <div className="form-label">
-                    <div className="form-label-text">服务商名称</div>
-                  </div>
-                  <div className="form-control" style={{ flex: 1 }}>
-                    <input
-                      type="text"
-                      className="text-input"
-                      value={selectedProvider.name}
-                      onChange={(e) =>
-                        dispatch({
-                          type: "UPDATE_PROVIDER",
-                          id: selectedProvider.id,
-                          field: "name",
-                          value: e.target.value,
-                        })
-                      }
-                      placeholder="输入便于识别的名称"
-                      style={{
-                        width: "100%",
-                        padding: "10px 14px",
-                        background: "var(--s-bg-deep)",
-                        border: "1px solid var(--s-border)",
-                        borderRadius: "var(--s-radius-md)",
-                        color: "var(--s-text)",
-                        fontSize: "0.9rem",
-                      }}
-                    />
-                  </div>
+                <div className="form-group">
+                  <label>服务商名称</label>
+                  <input
+                    type="text"
+                    value={selectedProvider.name}
+                    onChange={(e) =>
+                      dispatch({
+                        type: "UPDATE_PROVIDER",
+                        id: selectedProvider.id,
+                        field: "name",
+                        value: e.target.value,
+                      })
+                    }
+                    placeholder="输入便于识别的名称"
+                  />
                 </div>
 
                 {/* API 类型选择 */}
-                <div style={{ marginTop: "16px" }}>
-                  <div className="form-label-text" style={{ marginBottom: "10px" }}>
-                    API 类型
-                  </div>
-                  <div className="api-type-grid">
+                <div className="form-group">
+                  <label>API 类型</label>
+                  <div className="api-type-selector">
                     {PROVIDER_API_TYPES.map((t) => (
                       <button
                         key={t.value}
@@ -351,52 +334,36 @@ export const ConnectionSection = memo(function ConnectionSection({
                           })
                         }
                       >
-                        <span className="api-type-label">{t.label}</span>
-                        <span className="api-type-desc">{t.desc}</span>
+                        <span className="type-label">{t.label}</span>
+                        <span className="type-desc">{t.desc}</span>
                       </button>
                     ))}
                   </div>
                 </div>
 
                 {/* Base URL */}
-                <div className="form-row" style={{ marginTop: "16px" }}>
-                  <div className="form-label">
-                    <div className="form-label-text">Base URL</div>
-                    <div className="form-label-desc">API 端点地址，通常以 /v1 结尾</div>
-                  </div>
-                  <div className="form-control" style={{ flex: 1 }}>
-                    <input
-                      type="text"
-                      value={selectedProvider.base_url || ""}
-                      onChange={(e) =>
-                        dispatch({
-                          type: "UPDATE_PROVIDER",
-                          id: selectedProvider.id,
-                          field: "base_url",
-                          value: e.target.value,
-                        })
-                      }
-                      placeholder="https://api.example.com/v1"
-                      style={{
-                        width: "100%",
-                        padding: "10px 14px",
-                        background: "var(--s-bg-deep)",
-                        border: "1px solid var(--s-border)",
-                        borderRadius: "var(--s-radius-md)",
-                        color: "var(--s-text)",
-                        fontSize: "0.9rem",
-                        fontFamily: "var(--s-font-mono)",
-                      }}
-                    />
-                  </div>
+                <div className="form-group">
+                  <label>Base URL <span className="field-hint">API 端点地址，通常以 /v1 结尾</span></label>
+                  <input
+                    type="text"
+                    value={selectedProvider.base_url || ""}
+                    onChange={(e) =>
+                      dispatch({
+                        type: "UPDATE_PROVIDER",
+                        id: selectedProvider.id,
+                        field: "base_url",
+                        value: e.target.value,
+                      })
+                    }
+                    placeholder="https://api.example.com/v1"
+                    style={{ fontFamily: "monospace" }}
+                  />
                 </div>
 
                 {/* API Key */}
-                <div className="form-row" style={{ marginTop: "16px" }}>
-                  <div className="form-label">
-                    <div className="form-label-text">API Key</div>
-                  </div>
-                  <div className="form-control" style={{ flex: 1, position: "relative" }}>
+                <div className="form-group">
+                  <label>API Key</label>
+                  <div className="api-key-input">
                     <input
                       type={showApiKeys[selectedProvider.id] ? "text" : "password"}
                       value={selectedProvider.api_key || ""}
@@ -409,34 +376,13 @@ export const ConnectionSection = memo(function ConnectionSection({
                         })
                       }
                       placeholder="sk-..."
-                      style={{
-                        width: "100%",
-                        padding: "10px 48px 10px 14px",
-                        background: "var(--s-bg-deep)",
-                        border: "1px solid var(--s-border)",
-                        borderRadius: "var(--s-radius-md)",
-                        color: "var(--s-text)",
-                        fontSize: "0.9rem",
-                        fontFamily: "var(--s-font-mono)",
-                      }}
                     />
                     <button
                       type="button"
+                      className="toggle-visibility"
                       onClick={() =>
                         dispatch({ type: "TOGGLE_API_KEY_VISIBILITY", providerId: selectedProvider.id })
                       }
-                      style={{
-                        position: "absolute",
-                        right: "8px",
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        background: "transparent",
-                        border: "none",
-                        color: "var(--s-text-muted)",
-                        cursor: "pointer",
-                        fontSize: "1.1rem",
-                        padding: "4px",
-                      }}
                     >
                       {showApiKeys[selectedProvider.id] ? "🙈" : "👁️"}
                     </button>
@@ -444,50 +390,22 @@ export const ConnectionSection = memo(function ConnectionSection({
                 </div>
 
                 {/* 收藏的模型 */}
-                <div style={{ marginTop: "16px" }}>
-                  <div className="form-label-text" style={{ marginBottom: "10px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span>收藏模型</span>
-                    <span style={{ fontSize: "0.72rem", color: "var(--s-text-muted)", fontWeight: 400 }}>
-                      {(selectedProvider.models || []).length} 个收藏，
-                      {(selectedProvider.models || []).filter(m => !(selectedProvider.disabled_models || []).includes(m)).length} 个启用
-                    </span>
-                  </div>
-                  
+                <ConfigGroup title={`收藏模型 (${(selectedProvider.models || []).length})`}>
                   {(selectedProvider.models || []).length === 0 ? (
-                    <div style={{
-                      padding: "16px",
-                      background: "var(--s-bg-deep)",
-                      border: "1px dashed var(--s-border)",
-                      borderRadius: "var(--s-radius-md)",
-                      textAlign: "center",
-                      color: "var(--s-text-muted)",
-                      fontSize: "0.82rem",
-                    }}>
-                      暂无收藏模型，点击下方"获取模型列表"添加
+                    <div className="empty-notice">
+                      <p>暂无收藏模型</p>
+                      <p className="hint">点击下方"获取模型列表"添加</p>
                     </div>
                   ) : (
-                    <div style={{
-                      background: "var(--s-bg-deep)",
-                      border: "1px solid var(--s-border)",
-                      borderRadius: "var(--s-radius-md)",
-                      maxHeight: "200px",
-                      overflowY: "auto",
-                    }}>
+                    <div className="model-list-container">
                       {(selectedProvider.models || []).map((modelId) => {
                         const isEnabled = !(selectedProvider.disabled_models || []).includes(modelId);
                         const isDefault = selectedProviderDefaultModel === modelId;
                         return (
                           <div
                             key={modelId}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              padding: "8px 12px",
-                              borderBottom: "1px solid var(--s-border)",
-                              opacity: isEnabled ? 1 : 0.5,
-                            }}
+                            className={`model-item ${!isEnabled ? "disabled" : ""}`}
                           >
-                            {/* 启用/禁用开关 */}
                             <button
                               onClick={() => {
                                 const disabledModels = selectedProvider.disabled_models || [];
@@ -507,90 +425,32 @@ export const ConnectionSection = memo(function ConnectionSection({
                                   });
                                 }
                               }}
-                              style={{
-                                width: "36px",
-                                height: "20px",
-                                borderRadius: "10px",
-                                border: "none",
-                                background: isEnabled ? "var(--s-success)" : "var(--s-bg-glass)",
-                                cursor: "pointer",
-                                position: "relative",
-                                marginRight: "10px",
-                                flexShrink: 0,
-                                transition: "all 0.2s",
-                              }}
+                              className={`model-toggle-btn ${isEnabled ? "enabled" : ""}`}
                               title={isEnabled ? "点击禁用" : "点击启用"}
                             >
-                              <div style={{
-                                width: "16px",
-                                height: "16px",
-                                borderRadius: "50%",
-                                background: "#fff",
-                                position: "absolute",
-                                top: "2px",
-                                left: isEnabled ? "18px" : "2px",
-                                transition: "left 0.2s",
-                              }} />
+                              <div className="model-toggle-thumb" />
                             </button>
                             
-                            {/* 模型名称 */}
-                            <span
-                              style={{
-                                flex: 1,
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "6px",
-                                fontSize: "0.82rem",
-                                color: isEnabled ? "var(--s-text)" : "var(--s-text-muted)",
-                                overflow: "hidden",
-                              }}
-                            >
-                              <span
-                                style={{
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
+                            <span className="model-info">
+                              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>
                                 {modelId}
                               </span>
                               {isDefault && (
-                                <span
-                                  style={{
-                                    fontSize: "0.68rem",
-                                    color: "var(--s-warning)",
-                                    background: "rgba(251, 191, 36, 0.15)",
-                                    borderRadius: "999px",
-                                    padding: "2px 6px",
-                                  }}
-                                >
+                                <span className="model-default-badge">
                                   默认
                                 </span>
                               )}
                             </span>
                             
-                            {/* 删除按钮 */}
                             <button
+                              className="model-remove-btn"
                               onClick={() => removeModel(selectedProvider, modelId)}
-                              style={{
-                                width: "24px",
-                                height: "24px",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                background: "transparent",
-                                border: "none",
-                                color: "var(--s-text-muted)",
-                                cursor: "pointer",
-                                fontSize: "0.9rem",
-                                opacity: 0.6,
-                                transition: "opacity 0.15s",
-                              }}
-                              onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
-                              onMouseLeave={(e) => e.currentTarget.style.opacity = "0.6"}
                               title="移除收藏"
                             >
-                              ✕
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                              </svg>
                             </button>
                           </div>
                         );
@@ -599,20 +459,12 @@ export const ConnectionSection = memo(function ConnectionSection({
                   )}
                   
                   {/* 手动添加模型 */}
-                  <div style={{ marginTop: "10px", display: "flex", gap: "8px" }}>
+                  <div className="add-model-group">
                     <input
                       type="text"
-                      placeholder="输入模型名称手动添加..."
+                      className="add-model-input"
+                      placeholder="输入模型名称..."
                       id={`manual-model-${selectedProvider.id}`}
-                      style={{
-                        flex: 1,
-                        padding: "8px 12px",
-                        background: "var(--s-bg-deep)",
-                        border: "1px solid var(--s-border)",
-                        borderRadius: "var(--s-radius-sm)",
-                        color: "var(--s-text)",
-                        fontSize: "0.82rem",
-                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           const input = e.currentTarget;
@@ -630,6 +482,7 @@ export const ConnectionSection = memo(function ConnectionSection({
                       }}
                     />
                     <button
+                      className="btn-icon-add"
                       onClick={() => {
                         const input = document.getElementById(`manual-model-${selectedProvider.id}`) as HTMLInputElement;
                         const value = input?.value.trim();
@@ -643,55 +496,29 @@ export const ConnectionSection = memo(function ConnectionSection({
                           if (input) input.value = "";
                         }
                       }}
-                      style={{
-                        padding: "8px 14px",
-                        background: "var(--s-primary)",
-                        border: "none",
-                        borderRadius: "var(--s-radius-sm)",
-                        color: "#fff",
-                        fontSize: "0.82rem",
-                        cursor: "pointer",
-                      }}
+                      title="添加模型"
                     >
-                      添加
+                      +
                     </button>
                   </div>
-                </div>
+                </ConfigGroup>
 
                 {/* 默认模型 */}
-                <div style={{ marginTop: "16px" }}>
-                  <div className="form-label-text" style={{ marginBottom: "8px" }}>
-                    默认模型
-                  </div>
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <div className="form-group">
+                  <label>默认模型 <span className="field-hint">优先作为该服务商的默认调用模型，未设置时退回全局默认</span></label>
+                  <div style={{ display: "flex", gap: "8px" }}>
                     <input
                       type="text"
                       list={`default-model-options-${selectedProvider.id}`}
                       value={selectedProviderDefaultModel}
                       onChange={(e) => handleDefaultModelChange(selectedProvider.id, e.target.value)}
                       placeholder="未设置则使用全局默认"
-                      style={{
-                        flex: 1,
-                        padding: "8px 12px",
-                        background: "var(--s-bg-deep)",
-                        border: "1px solid var(--s-border)",
-                        borderRadius: "var(--s-radius-sm)",
-                        color: "var(--s-text)",
-                        fontSize: "0.82rem",
-                        fontFamily: "var(--s-font-mono)",
-                      }}
+                      style={{ flex: 1, fontFamily: "monospace" }}
                     />
                     <button
+                      className="btn btn-outline"
                       onClick={() => handleDefaultModelChange(selectedProvider.id, "")}
                       disabled={!selectedProviderDefaultModel}
-                      style={{
-                        padding: "8px 12px",
-                        border: "1px solid var(--s-border)",
-                        background: "var(--s-bg-deep)",
-                        borderRadius: "var(--s-radius-sm)",
-                        color: selectedProviderDefaultModel ? "var(--s-text)" : "var(--s-text-muted)",
-                        cursor: selectedProviderDefaultModel ? "pointer" : "not-allowed",
-                      }}
                     >
                       清除
                     </button>
@@ -701,39 +528,26 @@ export const ConnectionSection = memo(function ConnectionSection({
                       <option key={m} value={m} />
                     ))}
                   </datalist>
-                  <div style={{ fontSize: "0.72rem", color: "var(--s-text-muted)", marginTop: "6px" }}>
-                    将优先作为该服务商的默认调用模型，未设置时退回全局默认。
-                  </div>
                 </div>
 
                 {/* 操作按钮 */}
-                <div style={{ display: "flex", gap: "12px", marginTop: "20px", paddingTop: "16px", borderTop: "1px solid var(--s-border)" }}>
-                  <button
-                    className="btn btn-primary"
+                <div className="form-actions">
+                  <ActionButton
+                    label={testingProviderId === selectedProvider.id ? "测试中..." : "测试连接"}
                     onClick={() => handleTest(selectedProvider)}
+                    variant="primary"
+                    loading={testingProviderId === selectedProvider.id}
                     disabled={testingProviderId !== null}
-                  >
-                    {testingProviderId === selectedProvider.id ? (
-                      <>
-                        <span className="spinner" /> 测试中...
-                      </>
-                    ) : (
-                      "🔍 测试连接"
-                    )}
-                  </button>
-                  <button
-                    className="btn btn-outline"
+                    icon="🔍"
+                  />
+                  <ActionButton
+                    label={fetchingModels === selectedProvider.id ? "获取中..." : "获取模型列表"}
                     onClick={() => handleFetchModels(selectedProvider)}
+                    variant="secondary"
+                    loading={fetchingModels === selectedProvider.id}
                     disabled={fetchingModels !== null || !selectedProvider.api_key || !selectedProvider.base_url}
-                  >
-                    {fetchingModels === selectedProvider.id ? (
-                      <>
-                        <span className="spinner" /> 获取中...
-                      </>
-                    ) : (
-                      "📋 获取模型列表"
-                    )}
-                  </button>
+                    icon="📋"
+                  />
                 </div>
 
                 {/* 测试结果 */}
@@ -753,44 +567,31 @@ export const ConnectionSection = memo(function ConnectionSection({
 
                 {/* 已获取的模型列表 */}
                 {providerModels[selectedProvider.id] && providerModels[selectedProvider.id].length > 0 && (
-                  <div style={{ marginTop: "16px", padding: "12px", background: "var(--s-info-bg)", border: "1px solid rgba(96, 165, 250, 0.3)", borderRadius: "var(--s-radius-md)" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px", fontSize: "0.85rem", color: "var(--s-info)" }}>
-                      <span>✓</span>
-                      <span>已获取 {providerModels[selectedProvider.id].length} 个模型</span>
-                      <span style={{ marginLeft: "auto", fontSize: "0.75rem", color: "var(--s-text-muted)" }}>
-                        点击 + 添加到收藏
-                      </span>
+                  <div className="fetched-models-section">
+                    <div className="fetched-models-header">
+                      <span>✓ 已获取 {providerModels[selectedProvider.id].length} 个模型</span>
                     </div>
-                    <div style={{ maxHeight: "200px", overflowY: "auto" }}>
+                    <div className="fetched-models-list">
                       {providerModels[selectedProvider.id].map((model) => {
                         const isAdded = (selectedProvider.models || []).includes(model.id);
                         return (
                           <div
                             key={model.id}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              padding: "6px 8px",
-                              fontSize: "0.78rem",
-                              color: isAdded ? "var(--s-success)" : "var(--s-text-secondary)",
-                              background: isAdded ? "rgba(16, 185, 129, 0.08)" : "transparent",
-                              borderRadius: "var(--s-radius-sm)",
-                              marginBottom: "4px",
-                              transition: "all 0.15s",
-                            }}
+                            className={`model-item ${isAdded ? "added" : ""}`}
                           >
-                            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {isAdded && <span style={{ marginRight: "6px" }}>✓</span>}
+                            <span className="model-name" title={model.id}>
+                              {isAdded && <span style={{ marginRight: "4px" }}>✓</span>}
                               {model.name || model.id}
                             </span>
                             {model.context_window && (
-                              <span style={{ fontSize: "0.68rem", color: "var(--s-text-muted)", marginLeft: "8px", marginRight: "8px" }}>
+                              <span className="model-context">
                                 {model.context_window >= 1000000
                                   ? `${(model.context_window / 1000000).toFixed(1)}M`
                                   : `${Math.round(model.context_window / 1000)}K`}
                               </span>
                             )}
                             <button
+                              className={`add-model-btn ${isAdded ? "remove" : ""}`}
                               onClick={() => {
                                 const currentModels = selectedProvider.models || [];
                                 if (isAdded) {
@@ -807,25 +608,19 @@ export const ConnectionSection = memo(function ConnectionSection({
                                   }
                                 }
                               }}
-                              style={{
-                                width: "24px",
-                                height: "24px",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                background: isAdded ? "rgba(239, 68, 68, 0.15)" : "rgba(16, 185, 129, 0.15)",
-                                border: `1px solid ${isAdded ? "rgba(239, 68, 68, 0.3)" : "rgba(16, 185, 129, 0.3)"}`,
-                                borderRadius: "50%",
-                                color: isAdded ? "var(--s-danger)" : "var(--s-success)",
-                                cursor: "pointer",
-                                fontSize: "0.9rem",
-                                fontWeight: 700,
-                                flexShrink: 0,
-                                transition: "all 0.15s",
-                              }}
                               title={isAdded ? "移除模型" : "添加模型"}
                             >
-                              {isAdded ? "−" : "+"}
+                              {isAdded ? (
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                                </svg>
+                              ) : (
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                              )}
                             </button>
                           </div>
                         );
@@ -834,7 +629,7 @@ export const ConnectionSection = memo(function ConnectionSection({
                   </div>
                 )}
               </div>
-            </>
+            </div>
           ) : (
             <div className="empty-state">
               <div className="empty-state-icon">👈</div>

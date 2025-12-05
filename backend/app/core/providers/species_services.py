@@ -1,18 +1,5 @@
 """
 物种服务提供者 - 物种相关服务
-
-提供对物种服务的缓存访问：
-- niche_analyzer: 生态位分析
-- speciation_service: 物种分化
-- background_manager: 背景物种管理
-- tiering_service: 物种分层
-- reproduction_service: 繁殖计算
-- adaptation_service: 适应逻辑
-- hybridization_service: 物种杂交
-- gene_flow_service: 种群间基因流动
-- genetic_distance_calculator: 遗传距离计算
-- migration_advisor: 迁徙建议
-- species_generator: AI 物种生成
 """
 
 from __future__ import annotations
@@ -27,7 +14,6 @@ if TYPE_CHECKING:
     from ...services.species.background import BackgroundSpeciesManager
     from ...services.species.tiering import SpeciesTieringService
     from ...services.species.reproduction import ReproductionService
-    from ...services.species.adaptation import AdaptationService
     from ...services.species.hybridization import HybridizationService
     from ...services.species.gene_flow import GeneFlowService
     from ...services.species.genetic_distance import GeneticDistanceCalculator
@@ -109,14 +95,6 @@ class SpeciesServiceProvider:
                 global_carrying_capacity=self.settings.global_carrying_capacity,
                 turn_years=500_000,
             )
-        )
-    
-    @cached_property
-    def adaptation_service(self) -> 'AdaptationService':
-        from ...services.species.adaptation import AdaptationService
-        return self._get_or_override(
-            'adaptation_service',
-            lambda: AdaptationService(self.model_router)
         )
     
     @cached_property

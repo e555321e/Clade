@@ -9,6 +9,11 @@
 - 必需字段: all_species
 - 可选字段: branching_events
 - 降级策略: 基于 lineage_code 推断祖先
+
+【张量集成】
+- 使用 SpeciationMonitor 的分化信号
+- 优先采用张量检测的隔离和分歧数据
+- 集成地理隔离区域数和生态分化得分
 """
 from __future__ import annotations
 
@@ -47,9 +52,15 @@ class AncestryEmbeddingPlugin(EmbeddingPlugin):
     2. 遗传惯性评估
     3. 分化信号评估
     4. 血统相似度计算
+    
+    张量集成:
+    - 优先使用 SpeciationMonitor 的分化信号
+    - 集成隔离区域数和生态分化得分
     """
     
     required_context_fields = {"all_species"}
+    # 启用张量数据
+    use_tensor_data = True
     
     @property
     def name(self) -> str:
@@ -59,6 +70,7 @@ class AncestryEmbeddingPlugin(EmbeddingPlugin):
         """初始化"""
         self._ancestry_cache: dict[str, AncestryVector] = {}
         self._trait_history: dict[str, dict[str, List[float]]] = {}
+        self._tensor_speciation_signals: dict[str, dict] = {}  # 缓存张量分化信号
     
     def build_index(self, ctx: 'SimulationContext') -> int:
         """构建血统向量索引"""
@@ -229,8 +241,38 @@ class AncestryEmbeddingPlugin(EmbeddingPlugin):
         species: 'Species', 
         threshold: float = 0.6
     ) -> dict[str, Any]:
-        """判断是否应该发生物种分化"""
-        ancestry = self._ancestry_cache.get(species.lineage_code)
+        """判断是否应该发生物种分化
+        
+        【张量集成】优先使用张量分化信号
+        """
+        lineage_code = species.lineage_code
+        
+        # 【张量优先】检查张量分化信号
+        if self.has_tensor_data and self.has_tensor_speciation_signal(lineage_code):
+            # 获取详细的分化信息
+            isolation_regions = self.tensor_bridge.get_species_isolation_regions(lineage_code)
+            divergence_score = self.tensor_bridge.get_species_divergence_score(lineage_code)
+            
+            # 地理隔离（2+区域）或生态分化（>阈值）都触发分化
+            should_speciate = isolation_regions >= 2 or divergence_score >= threshold
+            
+            reason = []
+            if isolation_regions >= 2:
+                reason.append(f"地理隔离({isolation_regions}区域)")
+            if divergence_score >= threshold:
+                reason.append(f"生态分化({divergence_score:.2f})")
+            
+            return {
+                "should_speciate": should_speciate,
+                "tensor_triggered": True,
+                "isolation_regions": isolation_regions,
+                "divergence_score": round(divergence_score, 3),
+                "threshold": threshold,
+                "reason": ", ".join(reason) if reason else "张量信号检测",
+            }
+        
+        # 回退：使用血统向量距离
+        ancestry = self._ancestry_cache.get(lineage_code)
         if not ancestry or not ancestry.ancestor_codes:
             return {"should_speciate": False, "reason": "无祖先数据"}
         
@@ -249,6 +291,7 @@ class AncestryEmbeddingPlugin(EmbeddingPlugin):
         
         return {
             "should_speciate": should_speciate,
+            "tensor_triggered": False,
             "distance_from_parent": round(distance, 3),
             "threshold": threshold,
             "generation": ancestry.generation,

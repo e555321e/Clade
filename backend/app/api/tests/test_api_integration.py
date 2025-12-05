@@ -638,48 +638,4 @@ class TestServiceConfigInjectionContract:
         assert service._config.base_speciation_rate == 0.45
 
 
-# ============================================================================
-# AI 服务可观测性契约测试
-# ============================================================================
-
-class TestAIServiceObservabilityContract:
-    """AI 服务可观测性契约测试"""
-    
-    def test_ai_pressure_service_has_metrics(self):
-        """测试 AI 压力响应服务有指标接口"""
-        from ...services.species.ai_pressure_response import AIPressureResponseService
-        
-        router = MagicMock()
-        service = AIPressureResponseService(router=router)
-        
-        # 应该有 get_ai_metrics 方法
-        assert hasattr(service, 'get_ai_metrics')
-        metrics = service.get_ai_metrics()
-        
-        # 验证指标结构
-        assert "species_status_eval" in metrics
-        assert "count" in metrics["species_status_eval"]
-        assert "total_ms" in metrics["species_status_eval"]
-        assert "avg_ms" in metrics["species_status_eval"]
-    
-    def test_ai_pressure_service_reset_metrics(self):
-        """测试 AI 服务指标重置"""
-        from ...services.species.ai_pressure_response import AIPressureResponseService
-        
-        router = MagicMock()
-        service = AIPressureResponseService(router=router)
-        
-        # 模拟记录一些调用
-        service._record_ai_call("species_status_eval", 100.0)
-        service._record_ai_call("species_status_eval", 200.0)
-        
-        metrics = service.get_ai_metrics()
-        assert metrics["species_status_eval"]["count"] == 2
-        
-        # 重置指标
-        service.reset_ai_metrics()
-        
-        metrics = service.get_ai_metrics()
-        assert metrics["species_status_eval"]["count"] == 0
-        assert metrics["species_status_eval"]["total_ms"] == 0
 

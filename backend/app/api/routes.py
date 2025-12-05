@@ -111,7 +111,6 @@ from ..schemas.responses import (
     ExtinctionRiskItem,
     InterventionResponse,
 )
-from ..services.species.adaptation import AdaptationService
 from ..services.species.background import BackgroundConfig, BackgroundSpeciesManager
 from ..services.species.gene_flow import GeneFlowService
 from ..services.species.genetic_distance import GeneticDistanceCalculator
@@ -353,7 +352,6 @@ reproduction_service = ReproductionService(
     global_carrying_capacity=settings.global_carrying_capacity,  # 从配置读取
     turn_years=500_000,  # 每回合50万年
 )
-adaptation_service = AdaptationService(model_router)
 # 传入embedding_service以支持描述语义距离计算
 genetic_distance_calculator = GeneticDistanceCalculator(embedding_service=embedding_service)
 hybridization_service = HybridizationService(genetic_distance_calculator, router=model_router)
@@ -476,7 +474,6 @@ simulation_engine = SimulationEngine(
     migration_advisor=migration_advisor,
     map_manager=map_manager,
     reproduction_service=reproduction_service,
-    adaptation_service=adaptation_service,
     gene_flow_service=gene_flow_service,
     embedding_integration=embedding_integration,  # 【新增】Embedding集成服务
 )
@@ -789,16 +786,7 @@ async def run_turns(command: TurnCommand, background_tasks: BackgroundTasks):
         # 将推送函数传递给引擎
         simulation_engine._event_callback = push_simulation_event
         
-        # 【超时配置】从 UIConfig 读取并应用到 AI 服务
-        current_config = environment_repository.load_ui_config(ui_config_path)
-        simulation_engine.ai_pressure_service.set_timeout_config(
-            species_eval_timeout=current_config.ai_species_eval_timeout,
-            batch_eval_timeout=current_config.ai_batch_eval_timeout,
-            narrative_timeout=current_config.ai_narrative_timeout,
-        )
-        
-        # 【流式心跳】将事件回调传递给 AI 服务，启用流式心跳监测
-        simulation_engine.ai_pressure_service.set_event_callback(push_simulation_event)
+        # AI 压力路径已移除
         
         reports = await simulation_engine.run_turns_async(command)
         
@@ -1299,8 +1287,7 @@ async def create_save(request: CreateSaveRequest) -> dict:
         watchlist.clear()
         
         # 【新增】清空AI压力响应服务的缓存（连续危险回合数等）
-        if simulation_engine.ai_pressure_service:
-            simulation_engine.ai_pressure_service.clear_all_caches()
+        # AI 压力路径已移除
         
         # 【新增】清空分化服务的缓存（延迟请求等）
         simulation_engine.speciation.clear_all_caches()
@@ -1528,8 +1515,7 @@ async def load_game(request: LoadGameRequest) -> dict:
         watchlist.clear()
         
         # 【新增】清空AI压力响应服务的缓存（连续危险回合数等）
-        if simulation_engine.ai_pressure_service:
-            simulation_engine.ai_pressure_service.clear_all_caches()
+        # AI 压力路径已移除
         
         # 【新增】清空分化服务的缓存（延迟请求等）
         simulation_engine.speciation.clear_all_caches()

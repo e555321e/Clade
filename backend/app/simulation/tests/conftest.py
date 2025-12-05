@@ -224,7 +224,6 @@ def mock_engine():
     # 功能开关
     engine._use_tile_based_mortality = True
     engine._use_tectonic_system = False
-    engine._use_ai_pressure_response = False
     engine._use_embedding_integration = False
     
     engine.tectonic = None

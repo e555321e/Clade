@@ -40,7 +40,6 @@ from .stage_config import (
     StageRegistry,
     stage_registry,
     register_stage,
-    create_stage_config_from_engine_flags,
     load_stage_config_from_yaml,
     get_mode_description,
     get_mode_parameters,
@@ -82,9 +81,6 @@ from .stages import (
     AutoHybridizationStage,
     SubspeciesPromotionStage,
     # AI 阶段
-    AIStatusEvalStage,
-    AINarrativeStage,
-    AdaptationStage,
     SpeciationStage,
     # 后处理阶段
     BackgroundManagementStage,
@@ -128,6 +124,18 @@ from .logging_config import (
 
 # 导入插件阶段（自动注册）
 from . import plugin_stages
+
+# 张量计算阶段
+from .tensor_stages import (
+    TensorMortalityStage,
+    TensorDiffusionStage,
+    TensorReproductionStage,
+    TensorCompetitionStage,
+    TensorStateSyncStage,
+    TensorMetricsStage,
+    get_tensor_stages,
+    get_minimal_tensor_stages,
+)
 
 __all__ = [
     # 核心类
@@ -189,4 +197,13 @@ __all__ = [
     "configure_log_filter",
     "enable_debug_logging",
     "disable_debug_logging",
+    # 张量阶段
+    "TensorMortalityStage",
+    "TensorDiffusionStage",
+    "TensorReproductionStage",
+    "TensorCompetitionStage",
+    "TensorStateSyncStage",
+    "TensorMetricsStage",
+    "get_tensor_stages",
+    "get_minimal_tensor_stages",
 ]

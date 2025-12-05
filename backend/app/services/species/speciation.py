@@ -9,6 +9,7 @@ from typing import Iterable, Sequence, Callable, Awaitable, Any
 from ...models.species import LineageEvent, Species
 from ...models.config import SpeciationConfig
 from ...ai.model_router import staggered_gather
+from ...ai.prompts.species import SPECIES_PROMPTS
 
 logger = logging.getLogger(__name__)
 from ...repositories.genus_repository import genus_repository
@@ -23,6 +24,7 @@ from .speciation_rules import SpeciationRules, speciation_rules  # 【新增】�
 from .plant_evolution import plant_evolution_service, PLANT_MILESTONES  # 【植物演化】
 from .plant_competition import plant_competition_calculator  # 【植物竞争】
 from .description_enhancer import DescriptionEnhancerService  # 【描述增强】
+from ...tensor.tradeoff import TradeoffCalculator
 from ...core.config import get_settings
 from ...simulation.constants import get_time_config
 
@@ -56,12 +58,16 @@ class SpeciationService:
         self.max_deferred_requests = 60
         self._deferred_requests: list[dict[str, Any]] = []
         self._rule_fallback_species: list[tuple[Species, Species, str]] = []  # [(species, parent, speciation_type)]
+        self._tensor_state = None
         
         # 配置注入 - 如未提供则使用默认值并警告
         if config is None:
             logger.warning("[分化服务] config 未注入，使用默认值")
             config = SpeciationConfig()
         self._config = config
+        self._use_auto_tradeoff = getattr(config, "use_auto_tradeoff", getattr(_settings, "use_auto_tradeoff", False))
+        tradeoff_ratio = getattr(config, "tradeoff_ratio", getattr(_settings, "tradeoff_ratio", 0.7))
+        self.tradeoff_calculator = TradeoffCalculator(tradeoff_ratio=tradeoff_ratio)
         
         # 【新增】地块级数据缓存
         self._tile_mortality_cache: dict[str, dict[int, float]] = {}  # {lineage_code: {tile_id: death_rate}}
@@ -112,6 +118,10 @@ class SpeciationService:
         由 engine.py 从 TileBasedMortalityEngine.get_speciation_candidates() 获取后传入
         """
         self._speciation_candidates = candidates
+
+    def set_tensor_state(self, tensor_state) -> None:
+        """设置张量状态影子数据（可选）。"""
+        self._tensor_state = tensor_state
     
     def set_tile_adjacency(self, adjacency: dict[int, set[int]]) -> None:
         """设置地块邻接关系"""
@@ -1237,6 +1247,8 @@ class SpeciationService:
                 else:
                     self._queue_deferred_request(entry)
                     continue
+            if not use_fallback:
+                ai_content = self._normalize_ai_content(ai_content)
 
             required_fields = ["latin_name", "common_name", "description"]
             if not use_fallback and any(not ai_content.get(field) for field in required_fields):
@@ -1259,6 +1271,7 @@ class SpeciationService:
                     speciation_type=ctx["speciation_type"],
                     average_pressure=average_pressure,
                 )
+                ai_content = self._normalize_ai_content(ai_content)
 
             logger.info(
                 "[分化AI返回] latin_name: %s, common_name: %s, description长度: %s",
@@ -1597,6 +1610,19 @@ class SpeciationService:
             "batch_size": len(entries),
             "time_context": time_context,
         }
+        first_payload = entries[0]["payload"] if entries else {}
+        payload_data.update(
+            {
+                # 张量系统预先计算的预算约束，LLM 只需输出增益
+                "max_increase": 3.0,
+                "single_max": 2.0,
+                "era_caps": first_payload.get("trait_budget_summary", "依时代上限"),
+                "tradeoff_ratio": getattr(self.tradeoff_calculator, "tradeoff_ratio", getattr(self, "tradeoff_ratio", 0.7)),
+                # 为精简版prompt提供摘要
+                "parent_summary": species_list_escaped,
+                "trigger_context": pressure_summary,
+            }
+        )
         logger.debug(f"[分化批量] Payload keys: {list(payload_data.keys())}")
         return payload_data
     
@@ -1935,6 +1961,44 @@ class SpeciationService:
             return
         
         self._deferred_requests.append(entry)
+
+    def _normalize_ai_content(self, ai_content: Any) -> Any:
+        """将新格式的AI输出规范化为内部通用字段。
+        
+        - 如果提供了 innovations/gains，则汇总为 trait_changes
+        - 缺少 key_innovations 时从 innovations 中提取
+        """
+        if not isinstance(ai_content, dict):
+            return ai_content
+        
+        if not ai_content.get("trait_changes"):
+            aggregated: dict[str, float] = {}
+            key_innovations = list(ai_content.get("key_innovations") or [])
+            innovations = ai_content.get("innovations") or []
+            
+            if isinstance(innovations, list):
+                for inv in innovations:
+                    if not isinstance(inv, dict):
+                        continue
+                    name = inv.get("name")
+                    if name and name not in key_innovations:
+                        key_innovations.append(name)
+                    
+                    gains = inv.get("gains") or {}
+                    if isinstance(gains, dict):
+                        for trait, delta in gains.items():
+                            try:
+                                val = float(str(delta).replace("+", ""))
+                            except (ValueError, TypeError):
+                                continue
+                            aggregated[trait] = aggregated.get(trait, 0.0) + val
+            
+            if aggregated:
+                ai_content["trait_changes"] = aggregated
+            if key_innovations and not ai_content.get("key_innovations"):
+                ai_content["key_innovations"] = key_innovations
+        
+        return ai_content
     
     def _generate_rule_based_fallback(
         self,
@@ -2186,6 +2250,10 @@ class SpeciationService:
                     applied_changes[trait_name] = change_value
                 except (ValueError, TypeError):
                     pass
+        
+        # 1.1 使用自动代价计算器，为增益添加权衡代价
+        if self._use_auto_tradeoff and self.tradeoff_calculator:
+            applied_changes = self._apply_tradeoff_penalties(applied_changes, abstract)
         
         # 2. 强制权衡：如果只增不减，必须添加减少项
         applied_changes = self._enforce_trait_tradeoffs(abstract, applied_changes, new_code)
@@ -4275,6 +4343,34 @@ class SpeciationService:
             total_offspring -= 1
         
         return total_offspring
+    
+    def _apply_tradeoff_penalties(
+        self,
+        proposed_changes: dict[str, float],
+        current_traits: dict[str, float],
+    ) -> dict[str, float]:
+        """基于自动代价计算器为增益添加权衡代价。"""
+        if not proposed_changes or not self.tradeoff_calculator:
+            return proposed_changes
+        
+        gains = {k: v for k, v in proposed_changes.items() if v > 0}
+        if not gains:
+            return proposed_changes
+        
+        try:
+            penalties = self.tradeoff_calculator.calculate_penalties(gains, current_traits or {})
+        except Exception as e:
+            logger.debug(f"[权衡计算] 计算失败，跳过自动代价: {e}")
+            return proposed_changes
+        
+        if not penalties:
+            return proposed_changes
+        
+        merged = dict(proposed_changes)
+        for trait, delta in penalties.items():
+            merged[trait] = merged.get(trait, 0.0) + delta
+        logger.debug(f"[权衡计算] 自动代价: {penalties}")
+        return merged
     
     def _enforce_trait_tradeoffs(
         self, 

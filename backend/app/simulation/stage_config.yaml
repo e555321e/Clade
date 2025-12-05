@@ -58,9 +58,6 @@ modes:
       - name: ecological_intelligence
         enabled: false  # 极简模式禁用
         order: 52  # 在初步死亡率(50)后、迁徙(60)前，使AI能影响迁徙决策
-      - name: ai_status_eval
-        enabled: false
-        order: 85
       - name: speciation_data_transfer
         enabled: false
         order: 86
@@ -82,9 +79,6 @@ modes:
       - name: subspecies_promotion
         enabled: false
         order: 115
-      - name: ai_parallel_tasks
-        enabled: false
-        order: 120
       - name: background_management
         enabled: false
         order: 130
@@ -168,9 +162,6 @@ modes:
       - name: ecological_intelligence
         enabled: true  # 生态智能体评估
         order: 52  # 在初步死亡率(50)后、迁徙(60)前，使AI能影响迁徙决策
-      - name: ai_status_eval
-        enabled: false  # 禁用旧版AI状态评估（已被生态智能体替代）
-        order: 85
       - name: speciation_data_transfer
         enabled: true
         order: 86
@@ -192,12 +183,6 @@ modes:
       - name: subspecies_promotion
         enabled: true
         order: 115
-      - name: ai_parallel_tasks
-        enabled: false  # 【已废弃】叙事功能已迁移到 ecological_intelligence
-        order: 120
-      - name: adaptation
-        enabled: true  # 【启用】适应性演化
-        order: 121
       - name: speciation
         enabled: true  # 【关键修复】启用物种分化
         order: 122
@@ -300,9 +285,6 @@ modes:
       - name: ecological_intelligence
         enabled: true  # 生态智能体评估（新架构唯一数值修正来源）
         order: 52  # 在初步死亡率(50)后、迁徙(60)前，使AI能影响迁徙决策
-      - name: ai_status_eval
-        enabled: false  # [已废弃] 被 ecological_intelligence 替代
-        order: 85
       - name: speciation_data_transfer
         enabled: true
         order: 86
@@ -324,14 +306,8 @@ modes:
       - name: subspecies_promotion
         enabled: true
         order: 115
-      - name: ai_parallel_tasks
-        enabled: false  # [已废弃] 叙事由 ecological_intelligence 生成
-        order: 120
-      - name: adaptation
-        enabled: false  # [已废弃] 数值修改迁移到 ModifierApplicator
-        order: 121
       - name: speciation
-        enabled: false  # [已废弃] 分化信号由 ModifierApplicator 提供
+        enabled: true
         order: 122
       - name: background_management
         enabled: true
@@ -448,9 +424,6 @@ modes:
       - name: ecological_intelligence
         enabled: true  # 生态智能体评估（调试模式启用完整输出）
         order: 52  # 在初步死亡率(50)后、迁徙(60)前，使AI能影响迁徙决策
-      - name: ai_status_eval
-        enabled: false  # [已废弃] 被 ecological_intelligence 替代
-        order: 85
       - name: speciation_data_transfer
         enabled: true
         order: 86
@@ -472,14 +445,8 @@ modes:
       - name: subspecies_promotion
         enabled: true
         order: 115
-      - name: ai_parallel_tasks
-        enabled: false  # [已废弃] 叙事由 ecological_intelligence 生成
-        order: 120
-      - name: adaptation
-        enabled: false  # [已废弃] 数值修改迁移到 ModifierApplicator
-        order: 121
       - name: speciation
-        enabled: false  # [已废弃] 分化信号由 ModifierApplicator 提供
+        enabled: true
         order: 122
       - name: background_management
         enabled: true

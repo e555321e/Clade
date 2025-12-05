@@ -249,9 +249,6 @@ class PipelineStageConfig:
     food_web: StageConfig = field(default_factory=lambda: StageConfig(
         name="food_web", enabled=True, order=35
     ))
-    ai_status_eval: StageConfig = field(default_factory=lambda: StageConfig(
-        name="ai_status_eval", enabled=True, order=85
-    ))
     gene_activation: StageConfig = field(default_factory=lambda: StageConfig(
         name="gene_activation", enabled=True, order=95
     ))
@@ -266,9 +263,6 @@ class PipelineStageConfig:
     ))
     subspecies_promotion: StageConfig = field(default_factory=lambda: StageConfig(
         name="subspecies_promotion", enabled=True, order=115
-    ))
-    ai_parallel_tasks: StageConfig = field(default_factory=lambda: StageConfig(
-        name="ai_parallel_tasks", enabled=True, order=120
     ))
     background_management: StageConfig = field(default_factory=lambda: StageConfig(
         name="background_management", enabled=True, order=130
@@ -308,14 +302,12 @@ class PipelineStageConfig:
             self.preliminary_mortality,
             self.migration,
             self.final_mortality,
-            self.ai_status_eval,
             self.population_update,
             self.gene_activation,
             self.gene_flow,
             self.genetic_drift,
             self.auto_hybridization,
             self.subspecies_promotion,
-            self.ai_parallel_tasks,
             self.background_management,
             self.build_report,
             self.save_map_snapshot,
@@ -347,7 +339,6 @@ DEFAULT_STAGE_CONFIG = PipelineStageConfig()
 
 def create_stage_config_from_engine_flags(
     use_tectonic: bool = True,
-    use_ai_pressure: bool = True,
     use_embedding: bool = True,
     use_tile_mortality: bool = True,
 ) -> PipelineStageConfig:
@@ -355,7 +346,6 @@ def create_stage_config_from_engine_flags(
     
     Args:
         use_tectonic: 是否启用板块系统
-        use_ai_pressure: 是否启用 AI 压力响应
         use_embedding: 是否启用 Embedding 集成
         use_tile_mortality: 是否启用地块死亡率
     
@@ -367,10 +357,6 @@ def create_stage_config_from_engine_flags(
     # 根据功能开关禁用相应阶段
     if not use_tectonic:
         config.disable_stage("tectonic_movement")
-    
-    if not use_ai_pressure:
-        config.disable_stage("ai_status_eval")
-        config.disable_stage("ai_parallel_tasks")
     
     if not use_embedding:
         config.disable_stage("embedding_hooks")
@@ -807,9 +793,6 @@ def _register_default_stages() -> None:
         AutoHybridizationStage,
         SubspeciesPromotionStage,
         # AI 阶段
-        AIStatusEvalStage,
-        AINarrativeStage,
-        AdaptationStage,
         SpeciationStage,
         # 后处理阶段
         BackgroundManagementStage,
@@ -858,10 +841,6 @@ def _register_default_stages() -> None:
     stage_registry.register("subspecies_promotion", SubspeciesPromotionStage)
     
     # AI 阶段
-    stage_registry.register("ai_status_eval", AIStatusEvalStage)
-    stage_registry.register("ai_narrative", AINarrativeStage)
-    stage_registry.register("ai_parallel_tasks", AINarrativeStage)  # alias
-    stage_registry.register("adaptation", AdaptationStage)
     stage_registry.register("speciation", SpeciationStage)
     
     # 后处理阶段

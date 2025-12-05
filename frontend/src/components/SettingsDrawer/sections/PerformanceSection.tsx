@@ -23,7 +23,7 @@ const PRESETS = [
       ai_timeout: 30,
       ai_narrative_enabled: false,
       turn_report_llm_enabled: true,
-      max_concurrent_requests: 5,
+      ai_concurrency_limit: 5,
     },
   },
   {
@@ -35,7 +35,7 @@ const PRESETS = [
       ai_timeout: 60,
       ai_narrative_enabled: false,
       turn_report_llm_enabled: true,
-      max_concurrent_requests: 3,
+      ai_concurrency_limit: 3,
     },
   },
   {
@@ -47,7 +47,7 @@ const PRESETS = [
       ai_timeout: 180,
       ai_narrative_enabled: true,
       turn_report_llm_enabled: true,
-      max_concurrent_requests: 2,
+      ai_concurrency_limit: 2,
     },
   },
   {
@@ -59,7 +59,7 @@ const PRESETS = [
       ai_timeout: 300,
       ai_narrative_enabled: true,
       turn_report_llm_enabled: true,
-      max_concurrent_requests: 2,
+      ai_concurrency_limit: 2,
     },
   },
 ];
@@ -88,40 +88,17 @@ export const PerformanceSection = memo(function PerformanceSection({
 
       {/* 快速配置预设 */}
       <Card title="快速配置" icon="🚀" desc="一键应用预设">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px" }}>
+        <div className="preset-grid">
           {PRESETS.map((preset) => (
             <button
               key={preset.id}
               onClick={() => applyPreset(preset)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "14px",
-                padding: "16px",
-                background: "var(--s-bg-glass)",
-                border: "1px solid var(--s-border)",
-                borderRadius: "var(--s-radius-md)",
-                cursor: "pointer",
-                transition: "all 0.2s",
-                textAlign: "left",
-              }}
-              onMouseOver={(e) => {
-                e.currentTarget.style.background = "var(--s-bg-active)";
-                e.currentTarget.style.borderColor = "var(--s-primary)";
-              }}
-              onMouseOut={(e) => {
-                e.currentTarget.style.background = "var(--s-bg-glass)";
-                e.currentTarget.style.borderColor = "var(--s-border)";
-              }}
+              className="preset-btn"
             >
-              <span style={{ fontSize: "1.8rem" }}>{preset.icon}</span>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: "0.92rem", color: "var(--s-text)" }}>
-                  {preset.name}
-                </div>
-                <div style={{ fontSize: "0.78rem", color: "var(--s-text-muted)", marginTop: "2px" }}>
-                  {preset.desc}
-                </div>
+              <span className="preset-icon">{preset.icon}</span>
+              <div className="preset-info">
+                <div className="preset-name">{preset.name}</div>
+                <div className="preset-desc">{preset.desc}</div>
               </div>
             </button>
           ))}
@@ -164,11 +141,11 @@ export const PerformanceSection = memo(function PerformanceSection({
         <NumberInput
           label="最大并发请求数"
           desc="同时处理的 AI 请求数量，过高可能触发限流"
-          value={config.max_concurrent_requests || 3}
+          value={config.ai_concurrency_limit || 3}
           min={1}
           max={10}
           step={1}
-          onChange={(v) => handleUpdate("max_concurrent_requests", v)}
+          onChange={(v) => handleUpdate("ai_concurrency_limit", v)}
           suffix="个"
         />
       </Card>
@@ -189,33 +166,17 @@ export const PerformanceSection = memo(function PerformanceSection({
 
       {/* 超时机制说明 */}
       <Card title="超时机制说明" icon="📋">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "14px" }}>
+        <div className="feature-grid">
           {[
             { icon: "⏱️", title: "超时降级", desc: "AI 超时后使用基于规则的快速评估代替" },
             { icon: "🔄", title: "并行处理", desc: "多个物种的评估会并行进行，提高效率" },
             { icon: "💓", title: "流式心跳", desc: "AI 处理中发送心跳，前端实时感知进度" },
             { icon: "⚠️", title: "注意事项", desc: "过短的超时会导致更多规则降级，质量下降" },
           ].map((item, idx) => (
-            <div
-              key={idx}
-              style={{
-                display: "flex",
-                gap: "12px",
-                padding: "14px",
-                background: idx === 3 ? "var(--s-warning-bg)" : "var(--s-bg-glass)",
-                border: `1px solid ${idx === 3 ? "rgba(251, 191, 36, 0.3)" : "var(--s-border)"}`,
-                borderRadius: "var(--s-radius-md)",
-              }}
-            >
-              <span style={{ fontSize: "1.4rem", flexShrink: 0 }}>{item.icon}</span>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: "0.88rem", color: "var(--s-text)" }}>
-                  {item.title}
-                </div>
-                <div style={{ fontSize: "0.78rem", color: "var(--s-text-muted)", marginTop: "4px", lineHeight: 1.5 }}>
-                  {item.desc}
-                </div>
-              </div>
+            <div key={idx} className="feature-item">
+              <span className="feature-item-icon">{item.icon}</span>
+              <div className="feature-item-title">{item.title}</div>
+              <div className="feature-item-desc">{item.desc}</div>
             </div>
           ))}
         </div>

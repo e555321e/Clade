@@ -29,6 +29,9 @@ dev = [
     "imageio>=2.31.0",
     "lz4>=4.0.0",
 ]
+gpu = [
+    "taichi>=1.7.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

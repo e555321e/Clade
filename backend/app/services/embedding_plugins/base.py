@@ -1,6 +1,11 @@
 """Embedding 插件基类
 
 所有向量扩展插件的基类，提供统一的生命周期管理。
+
+【张量集成】
+- 插件可通过 self.tensor_bridge 访问张量数据
+- 使用 self.get_tensor_distribution(code) 获取物种分布
+- 使用 self.has_tensor_speciation_signal(code) 检查分化信号
 """
 from __future__ import annotations
 
@@ -9,11 +14,12 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from ..system.embedding import EmbeddingService
     from ...simulation.context import SimulationContext
+    from .tensor_bridge import TensorEmbeddingBridge, TensorSpeciesDistribution
 
 logger = logging.getLogger(__name__)
 
@@ -60,12 +66,19 @@ class EmbeddingPlugin(ABC):
     - 每个插件声明 required_context_fields 指定依赖的 Context 字段
     - 声明 optional_context_fields 指定可选但影响质量的字段
     - 如果必需字段缺失，插件应降级处理而非抛异常
+    
+    张量集成:
+    - 通过 tensor_bridge 访问张量数据（种群分布、分化信号）
+    - 优先使用张量数据，避免重复计算
+    - 声明 use_tensor_data = True 启用张量集成
     """
     
     # 子类可覆盖：声明依赖的 Context 字段
     required_context_fields: set[str] = set()
     # 子类可覆盖：可选但影响质量的字段
     optional_context_fields: set[str] = set()
+    # 子类可覆盖：是否使用张量数据
+    use_tensor_data: bool = True
     
     def __init__(
         self, 
@@ -80,6 +93,9 @@ class EmbeddingPlugin(ABC):
         # 统计信息
         self._stats = PluginStats()
         self._degraded_mode = False
+        
+        # 张量桥接（在on_turn_end中初始化）
+        self._tensor_bridge: Optional['TensorEmbeddingBridge'] = None
     
     @property
     @abstractmethod
@@ -121,6 +137,10 @@ class EmbeddingPlugin(ABC):
         """回合结束时的钩子"""
         if not self._initialized:
             return
+        
+        # 【张量集成】同步张量桥接
+        if self.use_tensor_data:
+            self._sync_tensor_bridge(ctx)
         
         turn = ctx.turn_index
         if self._should_update(turn):
@@ -366,4 +386,82 @@ class EmbeddingPlugin(ABC):
             logger.error(f"[{self.name}] 嵌入失败: {e}")
             self._stats.errors += 1
             return []
+    
+    # ==================== 张量集成方法 ====================
+    
+    def _sync_tensor_bridge(self, ctx: 'SimulationContext') -> None:
+        """同步张量桥接器"""
+        try:
+            from .tensor_bridge import get_tensor_bridge
+            self._tensor_bridge = get_tensor_bridge()
+            if not self._tensor_bridge.is_synced:
+                self._tensor_bridge.sync_from_context(ctx)
+        except Exception as e:
+            logger.debug(f"[{self.name}] 张量桥接同步失败: {e}")
+            self._tensor_bridge = None
+    
+    @property
+    def tensor_bridge(self) -> Optional['TensorEmbeddingBridge']:
+        """获取张量桥接器"""
+        return self._tensor_bridge
+    
+    @property
+    def has_tensor_data(self) -> bool:
+        """是否有可用的张量数据"""
+        return self._tensor_bridge is not None and self._tensor_bridge.is_synced
+    
+    def get_tensor_distribution(
+        self, 
+        lineage_code: str
+    ) -> Optional['TensorSpeciesDistribution']:
+        """获取物种的张量分布数据
+        
+        Args:
+            lineage_code: 物种谱系编码
+            
+        Returns:
+            物种分布数据，如果不可用返回None
+        """
+        if not self.has_tensor_data:
+            return None
+        return self._tensor_bridge.get_species_distribution(lineage_code)
+    
+    def get_tensor_tile_species(self, tile_id: str) -> list[str]:
+        """获取地块上的物种列表（从张量数据）
+        
+        Args:
+            tile_id: 地块ID
+            
+        Returns:
+            物种编码列表
+        """
+        if not self.has_tensor_data:
+            return []
+        return self._tensor_bridge.get_tile_species_codes(tile_id)
+    
+    def has_tensor_speciation_signal(self, lineage_code: str) -> bool:
+        """检查物种是否有张量分化信号
+        
+        Args:
+            lineage_code: 物种谱系编码
+            
+        Returns:
+            是否有分化信号
+        """
+        if not self.has_tensor_data:
+            return False
+        return self._tensor_bridge.has_speciation_signal(lineage_code)
+    
+    def get_tensor_divergence_score(self, lineage_code: str) -> float:
+        """获取物种的生态分化得分（从张量数据）
+        
+        Args:
+            lineage_code: 物种谱系编码
+            
+        Returns:
+            分化得分 (0-1)
+        """
+        if not self.has_tensor_data:
+            return 0.0
+        return self._tensor_bridge.get_species_divergence_score(lineage_code)
 

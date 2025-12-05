@@ -4,6 +4,11 @@ Pipeline Executor - 流水线执行器
 该模块实现了按顺序执行 Stage 的流水线组件。
 支持同步和异步阶段的混合执行，以及统一的错误处理。
 包含健康监控与时间统计功能。
+
+【张量化重构】
+- 集成 TensorMetricsCollector 自动采集张量系统性能数据
+- 在回合开始时重置当前回合指标
+- 在回合结束时收集并记录指标
 """
 
 from __future__ import annotations
@@ -20,6 +25,20 @@ if TYPE_CHECKING:
     from .stages import Stage, StageResult
 
 logger = logging.getLogger(__name__)
+
+# 张量监控（延迟导入以避免循环依赖）
+_tensor_collector = None
+
+def _get_tensor_collector():
+    """获取张量指标收集器（延迟初始化）"""
+    global _tensor_collector
+    if _tensor_collector is None:
+        try:
+            from ..tensor import get_global_collector
+            _tensor_collector = get_global_collector()
+        except ImportError:
+            pass
+    return _tensor_collector
 
 
 # ============================================================================
@@ -385,6 +404,11 @@ class Pipeline:
         stage_metrics: list[StageMetrics] = []
         overall_success = True
         
+        # 【张量监控】重置当前回合指标
+        tensor_collector = _get_tensor_collector()
+        if tensor_collector:
+            tensor_collector.reset_current()
+        
         # 使用过滤后的阶段列表
         stages_to_execute = self._effective_stages
         
@@ -394,6 +418,7 @@ class Pipeline:
                 logger.info(f"  [{s.order:3d}] {s.name}")
         
         for stage in stages_to_execute:
+            logger.info(f"[Pipeline] -> 开始阶段: {stage.name} (order={stage.order})")
             # 执行前回调
             for callback in self._before_stage_callbacks:
                 try:
@@ -454,7 +479,8 @@ class Pipeline:
             
             # 记录时间
             if self.config.log_timing:
-                logger.debug(f"[Pipeline] {stage.name}: {stage_duration:.1f}ms")
+                status_icon = "✅" if result.success else "❌"
+                logger.info(f"[Pipeline] <- {status_icon} {stage.name}: {stage_duration:.1f}ms")
             
             # 发送阶段结束事件
             if self.config.emit_stage_events:
@@ -473,6 +499,17 @@ class Pipeline:
                     logger.warning(f"[Pipeline] 后置回调失败: {e}")
         
         total_duration = (time.perf_counter() - start_time) * 1000
+        
+        # 【张量监控】如果 TensorMetricsStage 未执行，手动结束回合收集
+        # 确保即使张量阶段被跳过，监控数据也能正确记录
+        if tensor_collector:
+            # 检查是否有张量阶段执行
+            tensor_stage_executed = any(
+                "张量" in s.stage_name for s in stage_metrics
+            )
+            if not tensor_stage_executed:
+                # 手动结束回合（不记录日志）
+                tensor_collector.end_turn(ctx.turn_index)
         
         # 构建流水线监控指标
         pipeline_metrics = PipelineMetrics(

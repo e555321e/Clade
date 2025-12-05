@@ -175,16 +175,8 @@ export const EmbeddingSection = memo(function EmbeddingSection({
         </div>
 
         {!effectiveProviderId && (
-          <div style={{
-            padding: "12px 16px",
-            background: "var(--s-warning-bg)",
-            border: "1px solid rgba(251, 191, 36, 0.3)",
-            borderRadius: "var(--s-radius-md)",
-            color: "var(--s-warning)",
-            fontSize: "0.85rem",
-            marginTop: "12px",
-          }}>
-            ⚠️ 未配置 Embedding 将无法使用语义搜索功能
+          <div className="info-box warning" style={{ marginTop: "12px", marginBottom: 0 }}>
+             ⚠️ 未配置 Embedding 将无法使用语义搜索功能
           </div>
         )}
 
@@ -219,7 +211,7 @@ export const EmbeddingSection = memo(function EmbeddingSection({
                 <div className="form-label-desc">启用后可同时向服务商发送多个批次</div>
               </div>
               <div className="form-control" style={{ gap: "10px" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <label className="checkbox-label">
                   <input
                     type="checkbox"
                     checked={concurrencyEnabled}
@@ -228,21 +220,14 @@ export const EmbeddingSection = memo(function EmbeddingSection({
                   <span>允许多并发请求</span>
                 </label>
                 {concurrencyEnabled && (
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <div className="inline-input-group">
                     <input
                       type="number"
                       min={2}
                       max={16}
                       value={concurrencyLimit}
                       onChange={(e) => handleConcurrencyLimitChange(parseInt(e.target.value, 10))}
-                      style={{
-                        width: "80px",
-                        padding: "6px 8px",
-                        background: "var(--s-bg-deep)",
-                        border: "1px solid var(--s-border)",
-                        borderRadius: "var(--s-radius-sm)",
-                        color: "var(--s-text)",
-                      }}
+                      className="input-sm"
                     />
                     <span style={{ fontSize: "0.8rem", color: "var(--s-text-muted)" }}>建议 2 - 8</span>
                   </div>
@@ -257,7 +242,7 @@ export const EmbeddingSection = memo(function EmbeddingSection({
                 <div className="form-label-desc">仅对关键地块计算语义，减少 API 压力</div>
               </div>
               <div className="form-control" style={{ gap: "10px" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <label className="checkbox-label">
                   <input
                     type="checkbox"
                     checked={hotspotOnly}
@@ -266,21 +251,14 @@ export const EmbeddingSection = memo(function EmbeddingSection({
                   <span>只对热点地块启用语义</span>
                 </label>
                 {hotspotOnly && (
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <div className="inline-input-group">
                     <input
                       type="number"
                       min={50}
                       max={5120}
                       value={hotspotLimit}
                       onChange={(e) => handleHotspotLimitChange(parseInt(e.target.value, 10))}
-                      style={{
-                        width: "100px",
-                        padding: "6px 8px",
-                        background: "var(--s-bg-deep)",
-                        border: "1px solid var(--s-border)",
-                        borderRadius: "var(--s-radius-sm)",
-                        color: "var(--s-text)",
-                      }}
+                      className="input-sm"
                     />
                     <span style={{ fontSize: "0.8rem", color: "var(--s-text-muted)" }}>最大热点地块数</span>
                   </div>
@@ -300,16 +278,7 @@ export const EmbeddingSection = memo(function EmbeddingSection({
                   value={embeddingModel || ""}
                   onChange={(e) => handleModelChange(e.target.value)}
                   placeholder="输入模型名称..."
-                  style={{
-                    width: "100%",
-                    maxWidth: "280px",
-                    padding: "8px 12px",
-                    background: "var(--s-bg-deep)",
-                    border: "1px solid var(--s-border)",
-                    borderRadius: "var(--s-radius-md)",
-                    color: "var(--s-text)",
-                    fontSize: "0.88rem",
-                  }}
+                  style={{ width: "100%", maxWidth: "280px" }}
                 />
               </div>
             </div>
@@ -343,34 +312,13 @@ export const EmbeddingSection = memo(function EmbeddingSection({
 
       {/* 推荐模型 */}
       <Card title="推荐 Embedding 模型" icon="📌">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "14px" }}>
+        <div className="model-grid">
           {/* Qwen-8B - 高精度推荐 */}
-          <div style={{
-            padding: "18px",
-            background: "var(--s-bg-active)",
-            border: "1px solid var(--s-primary)",
-            borderRadius: "var(--s-radius-md)",
-            position: "relative",
-          }}>
-            <div style={{
-              position: "absolute",
-              top: "-8px",
-              right: "14px",
-              background: "var(--s-primary)",
-              color: "white",
-              fontSize: "0.68rem",
-              padding: "2px 10px",
-              borderRadius: "10px",
-            }}>
-              推荐
-            </div>
-            <h4 style={{ margin: "0 0 6px", fontSize: "0.95rem", color: "var(--s-text)" }}>
-              Qwen3-Embedding-8B
-            </h4>
-            <p style={{ margin: "0 0 10px", fontSize: "0.78rem", color: "var(--s-text-muted)" }}>
-              硅基流动 / 阿里云
-            </p>
-            <ul style={{ margin: 0, paddingLeft: "16px", fontSize: "0.78rem", color: "var(--s-text-secondary)" }}>
+          <div className="model-card recommended">
+            <div className="model-tag">推荐</div>
+            <h4 className="model-name">Qwen3-Embedding-8B</h4>
+            <p className="model-provider">硅基流动 / 阿里云</p>
+            <ul className="model-specs">
               <li>4096 维向量</li>
               <li>最高精度</li>
               <li>中英文双语优化</li>
@@ -378,19 +326,10 @@ export const EmbeddingSection = memo(function EmbeddingSection({
           </div>
 
           {/* Qwen-4B - 性价比 */}
-          <div style={{
-            padding: "18px",
-            background: "var(--s-bg-glass)",
-            border: "1px solid var(--s-border)",
-            borderRadius: "var(--s-radius-md)",
-          }}>
-            <h4 style={{ margin: "0 0 6px", fontSize: "0.95rem", color: "var(--s-text)" }}>
-              Qwen3-Embedding-4B
-            </h4>
-            <p style={{ margin: "0 0 10px", fontSize: "0.78rem", color: "var(--s-text-muted)" }}>
-              硅基流动 / 阿里云
-            </p>
-            <ul style={{ margin: 0, paddingLeft: "16px", fontSize: "0.78rem", color: "var(--s-text-secondary)" }}>
+          <div className="model-card">
+            <h4 className="model-name">Qwen3-Embedding-4B</h4>
+            <p className="model-provider">硅基流动 / 阿里云</p>
+            <ul className="model-specs">
               <li>2560 维向量</li>
               <li>性价比最高</li>
               <li>速度更快</li>
@@ -398,19 +337,10 @@ export const EmbeddingSection = memo(function EmbeddingSection({
           </div>
 
           {/* OpenAI */}
-          <div style={{
-            padding: "18px",
-            background: "var(--s-bg-glass)",
-            border: "1px solid var(--s-border)",
-            borderRadius: "var(--s-radius-md)",
-          }}>
-            <h4 style={{ margin: "0 0 6px", fontSize: "0.95rem", color: "var(--s-text)" }}>
-              text-embedding-3-small
-            </h4>
-            <p style={{ margin: "0 0 10px", fontSize: "0.78rem", color: "var(--s-text-muted)" }}>
-              OpenAI
-            </p>
-            <ul style={{ margin: 0, paddingLeft: "16px", fontSize: "0.78rem", color: "var(--s-text-secondary)" }}>
+          <div className="model-card">
+            <h4 className="model-name">text-embedding-3-small</h4>
+            <p className="model-provider">OpenAI</p>
+            <ul className="model-specs">
               <li>1536 维向量</li>
               <li>稳定可靠</li>
               <li>全球可用</li>
@@ -418,19 +348,10 @@ export const EmbeddingSection = memo(function EmbeddingSection({
           </div>
 
           {/* BGE */}
-          <div style={{
-            padding: "18px",
-            background: "var(--s-bg-glass)",
-            border: "1px solid var(--s-border)",
-            borderRadius: "var(--s-radius-md)",
-          }}>
-            <h4 style={{ margin: "0 0 6px", fontSize: "0.95rem", color: "var(--s-text)" }}>
-              BGE-M3
-            </h4>
-            <p style={{ margin: "0 0 10px", fontSize: "0.78rem", color: "var(--s-text-muted)" }}>
-              BAAI / 智源
-            </p>
-            <ul style={{ margin: 0, paddingLeft: "16px", fontSize: "0.78rem", color: "var(--s-text-secondary)" }}>
+          <div className="model-card">
+            <h4 className="model-name">BGE-M3</h4>
+            <p className="model-provider">BAAI / 智源</p>
+            <ul className="model-specs">
               <li>1024 维向量</li>
               <li>开源模型</li>
               <li>多语言支持</li>

@@ -857,3 +857,4 @@ def get_ecological_realism_service(
     
     return _ecological_realism_service
 
+

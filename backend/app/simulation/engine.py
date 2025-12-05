@@ -36,8 +36,6 @@ from ..schemas.requests import TurnCommand
 from ..schemas.responses import TurnReport
 
 # 服务导入
-from ..services.species.adaptation import AdaptationService
-from ..services.species.ai_pressure_response import create_ai_pressure_service
 from ..services.species.gene_activation import GeneActivationService
 from ..services.species.gene_flow import GeneFlowService
 from ..services.species.trophic_interaction import TrophicInteractionService
@@ -65,6 +63,8 @@ from .species import MortalityEngine
 from .tile_based_mortality import TileBasedMortalityEngine
 from ..services.analytics.embedding_integration import EmbeddingIntegrationService
 from ..services.tectonic import TectonicIntegration, create_tectonic_integration
+from ..tensor.config import TensorConfig
+from pathlib import Path
 
 
 class SimulationEngine:
@@ -109,7 +109,6 @@ class SimulationEngine:
         migration_advisor: MigrationAdvisor,
         map_manager: MapStateManager,
         reproduction_service: ReproductionService,
-        adaptation_service: AdaptationService,
         gene_flow_service: GeneFlowService,
         embedding_integration: EmbeddingIntegrationService | None = None,
         resource_manager = None,  # Resource/NPP management
@@ -135,17 +134,19 @@ class SimulationEngine:
         self.migration_advisor = migration_advisor
         self.map_manager = map_manager
         self.reproduction_service = reproduction_service
-        self.adaptation_service = adaptation_service
         self.gene_flow_service = gene_flow_service
         self.resource_manager = resource_manager
         self.ecological_realism_service = ecological_realism_service
         self.configs = configs or {}
+        tensor_balance_path = self.configs.get("tensor_balance_path")
+        self.tensor_config = TensorConfig.from_yaml(
+            tensor_balance_path or (Path(__file__).resolve().parent.parent / "config" / "tensor_balance.yaml")
+        )
         
         # === 内部创建的服务 ===
         self.gene_activation_service = GeneActivationService()
         self.tile_mortality = TileBasedMortalityEngine()
         self.tile_mortality.set_embedding_service(embeddings)
-        self.ai_pressure_service = create_ai_pressure_service(router)
         self.food_web_manager = FoodWebManager()
         self.trophic_service = TrophicInteractionService()
         
@@ -159,9 +160,11 @@ class SimulationEngine:
         
         # === 功能开关 ===
         self._use_tile_based_mortality = True
-        self._use_ai_pressure_response = True
         self._use_embedding_integration = True
         self._use_tectonic_system = True
+        # 【张量系统开关】
+        self._use_tensor_mortality = self.tensor_config.use_tensor_mortality
+        self._use_tensor_speciation = self.tensor_config.use_tensor_speciation
         
         # === 板块构造系统 ===
         self.tectonic: TectonicIntegration | None = None
@@ -200,11 +203,13 @@ class SimulationEngine:
             loader = StageLoader()
             stages = loader.load_stages_for_mode(mode, validate=True)
             
+            stage_timeout = self.configs.get("stage_timeout", 120)
             config = PipelineConfig(
                 continue_on_error=True,
                 log_timing=True,
                 emit_stage_events=True,
                 validate_dependencies=False,
+                stage_timeout=stage_timeout,
                 debug_mode=(mode == "debug"),
             )
             
@@ -242,11 +247,20 @@ class SimulationEngine:
         elif not hasattr(self, '_pipeline') or self._pipeline is None:
             self._init_pipeline("standard")
         
+        # 获取 UI 配置
+        from ..core.config_service import ConfigService
+        try:
+            config_service = ConfigService()
+            ui_config = config_service.get_ui_config()
+        except Exception:
+            ui_config = None
+        
         # 创建上下文
         ctx = SimulationContext(
             turn_index=self.turn_counter,
             command=command,
             event_callback=self._event_callback,
+            ui_config=ui_config,
         )
         
         logger.info(f"[Pipeline] 执行回合 {self.turn_counter}")

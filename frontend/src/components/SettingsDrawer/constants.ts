@@ -301,6 +301,17 @@ export const DEFAULT_PRESSURE_INTENSITY_CONFIG: PressureIntensityConfig = {
   
   // 温度修饰系数
   temperature_effect_per_unit: 0.8,  // 每单位 = 0.8°C
+  
+  // 张量压力桥接参数
+  thermal_multiplier: 3.0,           // 温度压力乘数
+  toxin_base_mortality: 0.06,        // 毒性基础死亡率 6%
+  drought_base_mortality: 0.05,      // 干旱基础死亡率 5%
+  anoxic_base_mortality: 0.08,       // 缺氧基础死亡率 8%
+  direct_mortality_rate: 0.04,       // 直接死亡率 4%
+  radiation_base_mortality: 0.04,    // 辐射基础死亡率 4%
+  autotroph_toxin_benefit: 0.15,     // 化能自养受益 15%
+  aerobe_sensitivity: 0.6,           // 需氧生物敏感度
+  multi_pressure_decay: 0.7,         // 多压力衰减系数
 };
 
 export const DEFAULT_MAP_ENVIRONMENT_CONFIG: MapEnvironmentConfig = {

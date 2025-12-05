@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable, Set, List
 
+import numpy as np
+
 if TYPE_CHECKING:
     from .context import SimulationContext
     from .engine import SimulationEngine
@@ -32,6 +34,7 @@ from ..services.species.extinction_checker import ExtinctionChecker
 from ..services.species.reemergence import ReemergenceService
 from ..services.analytics.turn_report import TurnReportService
 from ..services.analytics.population_snapshot import PopulationSnapshotService
+from ..tensor.speciation_monitor import SpeciationMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +241,6 @@ class StageOrder(Enum):
     HUNGER_MIGRATION = 66
     POST_MIGRATION_NICHE = 70
     FINAL_MORTALITY = 80
-    AI_STATUS_EVAL = 85
     SPECIATION_DATA_TRANSFER = 86
     POPULATION_UPDATE = 90
     GENE_ACTIVATION = 95
@@ -246,7 +248,7 @@ class StageOrder(Enum):
     GENETIC_DRIFT = 105
     AUTO_HYBRIDIZATION = 110
     SUBSPECIES_PROMOTION = 115
-    AI_PARALLEL_TASKS = 120
+    SPECIATION = 125
     BACKGROUND_MANAGEMENT = 130
     BUILD_REPORT = 140
     SAVE_MAP_SNAPSHOT = 150
@@ -579,7 +581,7 @@ class TectonicMovementStage(BaseStage):
                 ctx.modifiers[key] = ctx.modifiers.get(key, 0) + value
             
             # 【新增】触发资源系统事件脉冲
-            self._apply_resource_event_pulses(ctx, ctx.tectonic_result, map_tiles)
+            self._apply_resource_event_pulses(ctx, ctx.tectonic_result, map_tiles, engine)
         
         except Exception as e:
             logger.warning(f"[板块系统] 运行失败: {e}")
@@ -591,6 +593,7 @@ class TectonicMovementStage(BaseStage):
         ctx: "SimulationContext",
         tectonic_result,
         map_tiles: list,
+        engine: "SimulationEngine" = None,
     ):
         """将板块/地质事件转换为资源脉冲"""
         try:
@@ -1388,6 +1391,37 @@ class PopulationUpdateStage(BaseStage):
                     f"(死亡{death_rate:.1%}, 存活{survivors:,}, 繁殖+{effective_gain:,}){mod_info}"
                 )
         
+        # ===== 张量影子状态回写（线性地块分布）=====
+        t_state = getattr(ctx, "tensor_state", None)
+        if t_state and hasattr(t_state, "pop") and hasattr(t_state, "species_map"):
+            try:
+                # 【张量化重构】使用 HybridCompute 进行种群计算
+                from ..tensor import get_compute
+                compute = get_compute()
+                
+                tile_count = t_state.pop.shape[-1]
+                for item in ctx.combined_results:
+                    code = item.species.lineage_code
+                    idx = t_state.species_map.get(code)
+                    if idx is None:
+                        continue
+                    old_slice = t_state.pop[idx]
+                    total = float(old_slice.sum())
+                    if total <= 0:
+                        # 均匀分配到所有地块
+                        new_slice = np.full_like(old_slice, item.final_population / max(1, tile_count))
+                    else:
+                        weights = old_slice / total
+                        new_slice = weights * item.final_population
+                    t_state.pop[idx] = new_slice
+                
+                # 使用 HybridCompute 裁剪种群数值
+                t_state.pop = compute.clip_population(t_state.pop, min_val=0)
+                ctx.tensor_state = t_state
+                logger.debug(f"[种群更新] 已将新种群写回张量影子状态 (后端={compute.backend})")
+            except Exception as e:
+                logger.warning(f"[种群更新] 张量影子回写失败: {e}")
+        
         # 应用最终种群
         for species in ctx.species_batch:
             if species.lineage_code in ctx.new_populations:
@@ -1653,24 +1687,66 @@ class SpeciationDataTransferStage(BaseStage):
         logger.debug("传递数据给分化服务...")
         
         if hasattr(engine, 'speciation') and ctx.combined_results:
+            tensor_state = None
             # 【关键修复】使用 TileBasedMortalityEngine 获取完整的地块级分化候选数据
             # 原代码只传递了 death_rate 和 population，但 speciation.py 期望完整的地块级数据
             if engine._use_tile_based_mortality and hasattr(engine, 'tile_mortality'):
                 # 调用正确的方法获取完整的候选数据（包含 candidate_tiles, tile_populations, 
                 # tile_mortality, is_isolated, clusters, mortality_gradient 等字段）
                 candidates = engine.tile_mortality.get_speciation_candidates()
+                if hasattr(engine.tile_mortality, "export_tensor_state"):
+                    tensor_state = engine.tile_mortality.export_tensor_state()
                 logger.info(f"[分化数据传递] 从 TileBasedMortalityEngine 获取 {len(candidates)} 个候选物种")
             else:
-                # 回退到简单数据（兼容旧逻辑，但分化效果会大打折扣）
                 candidates = {}
-                for result in ctx.combined_results:
-                    candidates[result.species.lineage_code] = {
-                        "death_rate": result.death_rate,
-                        "population": result.species.morphology_stats.get("population", 0),
-                    }
-                logger.warning("[分化数据传递] 未使用地块级死亡率引擎，分化数据不完整")
+                logger.warning("[分化数据传递] 未获取到张量/地块数据，分化候选为空")
             
             engine.speciation.set_speciation_candidates(candidates)
+            if tensor_state is not None:
+                ctx.tensor_state = tensor_state
+                engine.speciation.set_tensor_state(tensor_state)
+                try:
+                    # 【张量化重构】使用 SpeciationMonitor 检测分化信号
+                    from ..tensor import get_global_collector, TensorConfig
+                    
+                    # 获取张量配置
+                    tensor_config = getattr(engine, "tensor_config", TensorConfig())
+                    
+                    if tensor_config.use_tensor_speciation:
+                        collector = get_global_collector()
+                        with collector.track_speciation_detection():
+                            monitor = SpeciationMonitor(species_map=tensor_state.species_map)
+                            triggers = monitor.get_speciation_triggers(
+                                tensor_state,
+                                threshold=tensor_config.divergence_threshold
+                            )
+                        
+                        # 统计触发类型
+                        isolation_count = sum(1 for t in triggers if t.type == "geographic_isolation")
+                        divergence_count = sum(1 for t in triggers if t.type == "ecological_divergence")
+                        
+                        if isolation_count > 0:
+                            collector.record_isolation_detection(isolation_count)
+                        if divergence_count > 0:
+                            collector.record_divergence_detection(divergence_count)
+                        
+                        ctx.tensor_trigger_codes = {t.lineage_code for t in triggers}
+                        logger.info(
+                            f"[分化数据传递] 张量触发信号: {len(ctx.tensor_trigger_codes)} 个物种 "
+                            f"(地理隔离={isolation_count}, 生态分歧={divergence_count})"
+                        )
+                    else:
+                        ctx.tensor_trigger_codes = set()
+                        logger.debug("[分化数据传递] 张量分化检测已禁用")
+                except Exception as e:
+                    logger.warning(f"[分化数据传递] 张量触发检测失败: {e}")
+                    ctx.tensor_trigger_codes = set()
+                    # 记录回退
+                    try:
+                        from ..tensor import get_global_collector
+                        get_global_collector().record_ai_fallback()
+                    except Exception:
+                        pass
 
 
 class GeneActivationStage(BaseStage):
@@ -2084,217 +2160,6 @@ class SubspeciesPromotionStage(BaseStage):
             logger.info(f"[亚种晋升] {ctx.promotion_count} 个亚种可能晋升")
 
 
-# ============================================================================
-# AI 相关阶段
-# ============================================================================
-
-class AIStatusEvalStage(BaseStage):
-    """AI 状态评估阶段
-    
-    使用 AI 评估物种当前状态，为后续决策提供支持。
-    """
-    
-    def __init__(self):
-        super().__init__(StageOrder.AI_STATUS_EVAL.value, "AI状态评估", is_async=True)
-    
-    def get_dependency(self) -> StageDependency:
-        return StageDependency(
-            requires_stages={"最终死亡率"},
-            requires_fields={"combined_results", "modifiers"},
-            writes_fields={"ai_status_evals", "emergency_responses", "pressure_context"},
-        )
-    
-    async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
-        if not engine._use_ai_pressure_response:
-            logger.debug("[AI状态评估] AI 压力响应已禁用")
-            return
-        
-        logger.info("开始 AI 状态评估...")
-        ctx.emit_event("stage", "🤖 AI 状态评估", "AI")
-        
-        try:
-            # 构建压力上下文
-            pressure_parts = []
-            for key, value in (ctx.modifiers or {}).items():
-                if abs(value) > 0.1:
-                    pressure_parts.append(f"{key}: {value:+.1f}")
-            ctx.pressure_context = "; ".join(pressure_parts) if pressure_parts else "环境稳定"
-            
-            # 评估关键物种
-            if hasattr(engine, 'ai_status_evaluator') and engine.ai_status_evaluator:
-                species_to_eval = []
-                for result in ctx.critical_results + ctx.focus_results:
-                    if result.death_rate > 0.1:
-                        species_to_eval.append({
-                            "species": result.species,
-                            "death_rate": result.death_rate,
-                            "population": result.survivors,
-                        })
-                
-                if species_to_eval:
-                    evals = await asyncio.wait_for(
-                        engine.ai_status_evaluator.batch_evaluate(
-                            species_to_eval, ctx.modifiers, ctx.major_events
-                        ),
-                        timeout=60
-                    )
-                    ctx.ai_status_evals = evals or {}
-                    
-                    # 提取紧急响应
-                    for code, eval_result in ctx.ai_status_evals.items():
-                        if hasattr(eval_result, 'emergency_actions') and eval_result.emergency_actions:
-                            ctx.emergency_responses.extend(eval_result.emergency_actions)
-                    
-                    logger.info(f"[AI状态评估] 评估了 {len(ctx.ai_status_evals)} 个物种")
-        
-        except asyncio.TimeoutError:
-            logger.warning("[AI状态评估] 超时")
-        except Exception as e:
-            logger.error(f"[AI状态评估] 失败: {e}")
-
-
-class AINarrativeStage(BaseStage):
-    """AI 叙事生成阶段
-    
-    为物种生成叙事描述。
-    """
-    
-    def __init__(self):
-        super().__init__(StageOrder.AI_PARALLEL_TASKS.value, "AI叙事生成", is_async=True)
-    
-    def get_dependency(self) -> StageDependency:
-        return StageDependency(
-            requires_stages=set(),  # 无强依赖
-            optional_stages={"AI状态评估"},  # AI状态评估可选
-            requires_fields={"critical_results", "focus_results", "modifiers"},
-            writes_fields={"narrative_results"},
-        )
-    
-    async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
-        if not engine._use_ai_pressure_response:
-            logger.debug("[AI叙事] AI 压力响应已禁用")
-            return
-        
-        logger.info("开始生成物种叙事...")
-        ctx.emit_event("stage", "📖 生成物种叙事", "AI")
-        
-        try:
-            if not hasattr(engine, 'ai_pressure_service') or not engine.ai_pressure_service:
-                return
-            
-            # 【新增】设置事件回调，确保并行任务能发送心跳
-            engine.ai_pressure_service.set_event_callback(ctx.emit_event)
-            
-            # 准备物种数据
-            species_data = []
-            for result in ctx.critical_results + ctx.focus_results:
-                events = []
-                if hasattr(result, 'death_causes') and result.death_causes:
-                    events.append(f"主要压力: {result.death_causes}")
-                species_data.append({
-                    "species": result.species,
-                    "tier": result.tier,
-                    "death_rate": result.death_rate,
-                    "status_eval": ctx.ai_status_evals.get(result.species.lineage_code),
-                    "events": events,
-                })
-            
-            if not species_data:
-                return
-            
-            # 构建环境描述
-            global_env = "; ".join([
-                f"{k}: {v:.1f}" for k, v in (ctx.modifiers or {}).items() if abs(v) > 0.1
-            ]) or "环境稳定"
-            major_events_str = ", ".join([e.kind for e in ctx.major_events]) if ctx.major_events else "无"
-            
-            # 生成叙事
-            ctx.narrative_results = await asyncio.wait_for(
-                engine.ai_pressure_service.generate_species_narratives(
-                    species_data,
-                    ctx.turn_index,
-                    global_env,
-                    major_events_str,
-                ),
-                timeout=180
-            )
-            
-            # 应用叙事到结果
-            if ctx.narrative_results:
-                narrative_map = {nr.lineage_code: nr for nr in ctx.narrative_results}
-                for result in ctx.critical_results + ctx.focus_results:
-                    code = result.species.lineage_code
-                    if code in narrative_map:
-                        nr = narrative_map[code]
-                        result.ai_narrative = nr.narrative
-                        result.ai_headline = getattr(nr, 'headline', '')
-                        result.ai_mood = getattr(nr, 'mood', '')
-                
-                logger.info(f"[AI叙事] 生成了 {len(ctx.narrative_results)} 个叙事")
-        
-        except asyncio.TimeoutError:
-            logger.warning("[AI叙事] 超时")
-            ctx.narrative_results = []
-        except Exception as e:
-            logger.error(f"[AI叙事] 失败: {e}")
-            ctx.narrative_results = []
-
-
-class AdaptationStage(BaseStage):
-    """适应性演化阶段
-    
-    处理物种对环境压力的适应性变化。
-    """
-    
-    def __init__(self):
-        super().__init__(StageOrder.AI_PARALLEL_TASKS.value + 1, "适应性演化", is_async=True)
-    
-    def get_dependency(self) -> StageDependency:
-        return StageDependency(
-            requires_stages={"种群更新"},
-            requires_fields={"species_batch", "modifiers", "combined_results"},
-            writes_fields={"adaptation_events"},
-        )
-    
-    async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
-        if not engine._use_ai_pressure_response:
-            logger.debug("[适应性演化] AI 压力响应已禁用")
-            return
-        
-        logger.info("开始适应性演化...")
-        ctx.emit_event("stage", "🧬 适应性演化", "进化")
-        
-        try:
-            if not hasattr(engine, 'adaptation_service') or not engine.adaptation_service:
-                return
-            
-            ctx.adaptation_events = await asyncio.wait_for(
-                engine.adaptation_service.apply_adaptations_async(
-                    ctx.species_batch,
-                    ctx.modifiers,
-                    ctx.turn_index,
-                    ctx.pressures,
-                    mortality_results=ctx.combined_results,
-                    event_callback=ctx.emit_event,  # 【新增】传递事件回调
-                ),
-                timeout=300
-            )
-            
-            if ctx.adaptation_events:
-                logger.info(f"[适应性演化] {len(ctx.adaptation_events)} 个物种发生适应")
-                ctx.emit_event("info", f"适应演化: {len(ctx.adaptation_events)} 个物种", "进化")
-                
-                # 保存更新
-                from ..repositories.species_repository import species_repository
-                for species in ctx.species_batch:
-                    species_repository.upsert(species)
-        
-        except asyncio.TimeoutError:
-            logger.warning("[适应性演化] 超时")
-            ctx.adaptation_events = []
-        except Exception as e:
-            logger.error(f"[适应性演化] 失败: {e}")
-            ctx.adaptation_events = []
 
 
 class SpeciationStage(BaseStage):
@@ -2308,12 +2173,12 @@ class SpeciationStage(BaseStage):
     """
     
     def __init__(self):
-        super().__init__(StageOrder.AI_PARALLEL_TASKS.value + 2, "物种分化", is_async=True)
+        super().__init__(StageOrder.SPECIATION.value, "物种分化", is_async=True)
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
             requires_stages={"种群更新"},  # 【修复】改为依赖种群更新，而非适应性演化（后者可能被禁用）
-            optional_stages={"生态智能体评估", "适应性演化"},  # 适应性演化改为可选
+            optional_stages=set(),
             requires_fields={"species_batch", "combined_results", "critical_results", "focus_results", "modifiers"},
             writes_fields={"branching_events"},
         )
@@ -2327,33 +2192,55 @@ class SpeciationStage(BaseStage):
         use_modifier = modifier is not None and len(modifier._assessments) > 0
         
         try:
-            # 【关键】通过 ModifierApplicator 识别高分化信号物种
+            # 【张量化重构】分化候选主要来自张量系统，LLM 信号作为补充
             speciation_candidates = set()
             evolution_directions = {}
             
+            # 1. 首先获取张量触发信号（主要来源）
+            tensor_trigger_codes = getattr(ctx, "tensor_trigger_codes", set()) or set()
+            if tensor_trigger_codes:
+                speciation_candidates |= tensor_trigger_codes
+                logger.info(f"[分化] 张量系统识别 {len(tensor_trigger_codes)} 个分化候选")
+                ctx.emit_event(
+                    "info",
+                    f"🧬 张量系统识别 {len(tensor_trigger_codes)} 个分化候选",
+                    "分化"
+                )
+            
+            # 2. 如果有 ModifierApplicator（LLM 评估启用），作为补充来源
             if use_modifier:
+                ai_candidates = 0
                 for result in ctx.critical_results + ctx.focus_results:
                     code = result.species.lineage_code
-                    # 检查分化信号（阈值从0.6降到0.5，更容易触发分化）
-                    if modifier.should_speciate(code, threshold=0.5):
+                    # 只添加张量未识别的物种
+                    if code not in speciation_candidates and modifier.should_speciate(code, threshold=0.5):
                         speciation_candidates.add(code)
+                        ai_candidates += 1
                         # 获取演化方向
                         directions = modifier.get_evolution_direction(code)
                         if directions:
                             evolution_directions[code] = directions
-                        logger.info(
-                            f"[分化候选] {result.species.common_name}: "
-                            f"信号={modifier.get_speciation_signal(code):.2f}, "
-                            f"方向={directions[:2] if directions else '无'}"
+                        logger.debug(
+                            f"[分化候选] AI 补充: {result.species.common_name}: "
+                            f"信号={modifier.get_speciation_signal(code):.2f}"
                         )
                 
+                if ai_candidates > 0:
+                    logger.info(f"[分化] AI 补充 {ai_candidates} 个分化候选")
+            
+            # 3. 如果既没有张量触发也没有 LLM 信号，基于规则检测
+            if not speciation_candidates:
+                # 基于死亡率和种群的规则检测
+                for result in ctx.critical_results + ctx.focus_results:
+                    pop = result.species.morphology_stats.get("population", 0)
+                    death_rate = result.death_rate
+                    # 高种群 + 中等死亡率 = 分化候选
+                    if pop >= 5000 and 0.1 <= death_rate <= 0.5:
+                        speciation_candidates.add(result.species.lineage_code)
+                        logger.debug(f"[分化候选] 规则检测: {result.species.common_name}")
+                
                 if speciation_candidates:
-                    logger.info(f"[分化] AI 识别 {len(speciation_candidates)} 个高分化信号物种")
-                    ctx.emit_event(
-                        "info",
-                        f"🧬 AI 识别 {len(speciation_candidates)} 个分化候选",
-                        "分化"
-                    )
+                    logger.info(f"[分化] 规则系统识别 {len(speciation_candidates)} 个分化候选")
             
             # Embedding 集成：获取演化提示
             if engine._use_embedding_integration and hasattr(engine, 'embedding_integration'):
@@ -2887,6 +2774,9 @@ class EmbeddingPluginsStage(BaseStage):
         logger.debug("[EmbeddingPlugins] 执行插件回合结束钩子...")
         ctx.emit_event("stage", "🔌 Embedding 扩展插件", "AI")
         
+        # 【张量集成】重置并同步张量桥接器
+        self._sync_tensor_bridge(ctx)
+        
         try:
             # 调用所有插件的 on_turn_end
             self._manager.on_turn_end(ctx)
@@ -2897,9 +2787,46 @@ class EmbeddingPluginsStage(BaseStage):
             
             if plugin_count > 0:
                 logger.info(f"[EmbeddingPlugins] {plugin_count} 个插件已更新")
+            
+            # 【张量集成】记录桥接器统计
+            self._log_tensor_bridge_stats()
                 
         except Exception as e:
             logger.warning(f"[EmbeddingPlugins] 执行失败: {e}")
+    
+    def _sync_tensor_bridge(self, ctx: SimulationContext) -> None:
+        """同步张量桥接器"""
+        try:
+            from ..services.embedding_plugins.tensor_bridge import reset_tensor_bridge, get_tensor_bridge
+            
+            # 重置并同步
+            reset_tensor_bridge()
+            bridge = get_tensor_bridge()
+            
+            if ctx.tensor_state is not None:
+                success = bridge.sync_from_context(ctx)
+                if success:
+                    logger.debug("[EmbeddingPlugins] 张量桥接器已同步")
+                else:
+                    logger.debug("[EmbeddingPlugins] 张量桥接器同步失败（无数据）")
+        except Exception as e:
+            logger.debug(f"[EmbeddingPlugins] 张量桥接器初始化失败: {e}")
+    
+    def _log_tensor_bridge_stats(self) -> None:
+        """记录张量桥接器统计"""
+        try:
+            from ..services.embedding_plugins.tensor_bridge import get_tensor_bridge
+            bridge = get_tensor_bridge()
+            if bridge.is_synced:
+                summary = bridge.get_summary()
+                logger.debug(
+                    f"[EmbeddingPlugins] 张量桥接: "
+                    f"物种={summary['species_count']}, "
+                    f"地块={summary['tile_count']}, "
+                    f"分化信号={summary['speciation_signals']}"
+                )
+        except Exception:
+            pass
 
 
 class SaveHistoryStage(BaseStage):
@@ -3004,9 +2931,16 @@ class FinalizeStage(BaseStage):
 # 阶段注册表
 # ============================================================================
 
-def get_default_stages() -> list[BaseStage]:
-    """获取默认的阶段列表（按顺序排列）"""
-    return sorted([
+def get_default_stages(include_tensor: bool = True) -> list[BaseStage]:
+    """获取默认的阶段列表（按顺序排列）
+    
+    Args:
+        include_tensor: 是否包含张量计算阶段（默认启用）
+    
+    Returns:
+        按执行顺序排列的阶段列表
+    """
+    stages = [
         InitStage(),
         ParsePressuresStage(),
         MapEvolutionStage(),
@@ -3019,10 +2953,7 @@ def get_default_stages() -> list[BaseStage]:
         MigrationStage(),
         FinalMortalityStage(),
         PopulationUpdateStage(),
-        AIStatusEvalStage(),
         SpeciationDataTransferStage(),  # 【关键修复】分化数据传递阶段
-        AINarrativeStage(),
-        AdaptationStage(),
         SpeciationStage(),
         BackgroundManagementStage(),
         BuildReportStage(),
@@ -3033,5 +2964,14 @@ def get_default_stages() -> list[BaseStage]:
         SaveHistoryStage(),
         ExportDataStage(),
         FinalizeStage(),
-    ], key=lambda s: s.order)
+    ]
+    
+    # 【张量化重构】添加张量计算阶段
+    if include_tensor:
+        from .tensor_stages import get_tensor_stages
+        tensor_stages = get_tensor_stages()
+        stages.extend(tensor_stages)
+        logger.debug(f"[管线] 已添加 {len(tensor_stages)} 个张量阶段")
+    
+    return sorted(stages, key=lambda s: s.order)
 

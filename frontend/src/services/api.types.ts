@@ -490,6 +490,20 @@ export interface PressureIntensityConfig {
   
   // 温度修饰系数
   temperature_effect_per_unit?: number;  // 每单位温度修饰的效果（°C），默认 0.8
+  
+  // ============ 张量压力桥接参数 ============
+  // 各因子基础死亡率
+  thermal_multiplier?: number;         // 温度压力乘数（每单位压力=多少°C），默认 3.0
+  toxin_base_mortality?: number;       // 毒性基础死亡率，默认 0.06
+  drought_base_mortality?: number;     // 干旱基础死亡率，默认 0.05
+  anoxic_base_mortality?: number;      // 缺氧基础死亡率，默认 0.08
+  direct_mortality_rate?: number;      // 直接死亡率，默认 0.04
+  radiation_base_mortality?: number;   // 辐射基础死亡率，默认 0.04
+  
+  // 特殊机制
+  autotroph_toxin_benefit?: number;    // 化能自养生物在毒性环境中的受益系数，默认 0.15
+  aerobe_sensitivity?: number;         // 需氧生物对缺氧的敏感度，默认 0.6
+  multi_pressure_decay?: number;       // 多压力边际递减系数，默认 0.7
 }
 
 /**

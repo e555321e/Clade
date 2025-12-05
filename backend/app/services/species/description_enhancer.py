@@ -274,3 +274,4 @@ def create_description_enhancer(router: 'ModelRouter') -> DescriptionEnhancerSer
     """创建描述增强服务实例"""
     # router 仅用于兼容接口，不再传递
     return DescriptionEnhancerService(router=None)
+

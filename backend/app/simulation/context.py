@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     )
     from ..services.species.niche import NicheMetrics
     from ..services.species.tiering import TieringResult
-    from ..services.species.ai_pressure_response import SpeciesStatusEval
     from ..services.tectonic import TectonicStepResult
     from ..services.ecology.resource_manager import ResourceSnapshot
     from .species import MortalityResult
@@ -211,6 +210,15 @@ class SimulationContext:
     biological_assessment_results: dict = field(default_factory=dict)  # {lineage_code: BiologicalAssessment}
     species_priority_partition: Any = None  # PartitionResult
     modifier_applicator: Any = None  # ModifierApplicator 实例
+    
+    # === 张量系统 ===
+    tensor_state: Any = None  # TensorState 影子状态
+    tensor_trigger_codes: set[str] = field(default_factory=set)  # 张量分化触发的物种编码
+    tensor_metrics: Any = None  # TensorMetrics 监控指标
+    pressure_overlay: Any = None  # PressureTensorOverlay 压力张量叠加层
+    
+    # === 配置 ===
+    ui_config: Any = None  # UIConfig 配置（用于获取用户设置的参数）
     
     # === 回调函数 ===
     event_callback: Callable[[str, str, str], None] | None = None

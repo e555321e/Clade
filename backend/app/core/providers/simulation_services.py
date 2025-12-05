@@ -127,14 +127,26 @@ class SimulationServiceProvider:
         """Get configuration dictionary for SimulationEngine
         
         Returns:
-            dict: {ecology, mortality, speciation, food_web} config objects
+            dict: {ecology, mortality, speciation, food_web, 张量系统开关} config objects
         """
         ui_config = self.config_service.get_ui_config()
+        speciation_config = self.config_service.get_speciation()
+        settings = self.settings
+        
         return {
             "ecology": self.config_service.get_ecology_balance(),
             "mortality": self.config_service.get_mortality(),
-            "speciation": self.config_service.get_speciation(),
+            "speciation": speciation_config,
             "food_web": getattr(ui_config, 'food_web', None),
+            # 【张量系统配置】
+            "use_tensor_mortality": getattr(settings, "use_tensor_mortality", True),
+            "use_tensor_speciation": getattr(speciation_config, "use_tensor_speciation", 
+                                             getattr(settings, "use_tensor_speciation", True)),
+            "use_auto_tradeoff": getattr(speciation_config, "use_auto_tradeoff",
+                                         getattr(settings, "use_auto_tradeoff", True)),
+            "tradeoff_ratio": getattr(speciation_config, "tradeoff_ratio",
+                                      getattr(settings, "tradeoff_ratio", 0.7)),
+            "tensor_balance_path": getattr(settings, "tensor_balance_path", None),
         }
     
     @cached_property
@@ -160,7 +172,6 @@ class SimulationServiceProvider:
                 migration_advisor=self.migration_advisor,
                 map_manager=self.map_manager,
                 reproduction_service=self.reproduction_service,
-                adaptation_service=self.adaptation_service,
                 gene_flow_service=self.gene_flow_service,
                 embedding_integration=self.embedding_integration,
                 resource_manager=self.resource_manager,

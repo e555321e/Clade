@@ -17,12 +17,14 @@ import logging
 import time as time_module
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from sqlmodel import select
 from starlette.responses import Response
+from pydantic import BaseModel, Field
+import yaml
 
 from ..schemas.requests import (
     CreateSaveRequest,
@@ -38,6 +40,7 @@ from ..schemas.responses import (
     SpeciesSnapshot,
     TurnReport,
 )
+from ..tensor.config import TensorConfig
 from .dependencies import (
     get_config,
     get_container,
@@ -57,6 +60,71 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="", tags=["simulation"])
+
+
+# ========== 张量配置 API ==========
+
+
+class TensorConfigPayload(BaseModel):
+    """张量配置更新载体（可部分更新）"""
+    use_tensor_mortality: bool | None = None
+    use_tensor_speciation: bool | None = None
+    use_auto_tradeoff: bool | None = None
+    balance: dict[str, Any] | None = None
+    tradeoff: dict[str, Any] | None = None
+    energy_costs: dict[str, float] | None = None  # 便捷入口，等价于 tradeoff.energy_costs
+    competition_map: dict[str, list] | None = None  # 便捷入口，等价于 tradeoff.competition_map
+    default_penalty_pool: list[str] | None = None  # 便捷入口，等价于 tradeoff.default_penalty_pool
+
+
+def _deep_merge(dst: dict, src: dict) -> dict:
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            dst[k] = _deep_merge(dst.get(k, {}), v)
+        else:
+            dst[k] = v
+    return dst
+
+
+@router.get("/tensor/config")
+def get_tensor_config(container: "ServiceContainer" = Depends(get_container)) -> dict:
+    """获取张量配置（供前端展示/调试）"""
+    path = Path(container.settings.tensor_balance_path)
+    cfg = TensorConfig.from_yaml(path)
+    return {"path": str(path), "config": cfg.to_dict()}
+
+
+@router.put("/tensor/config")
+def update_tensor_config(
+    payload: TensorConfigPayload,
+    container: "ServiceContainer" = Depends(get_container),
+) -> dict:
+    """更新张量配置（写回 yaml 并热加载到引擎）"""
+    path = Path(container.settings.tensor_balance_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    current: dict[str, Any] = {}
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            current = yaml.safe_load(f) or {}
+    updates = payload.dict(exclude_none=True)
+    # 便捷字段映射到 tradeoff
+    tradeoff = updates.setdefault("tradeoff", {})
+    if "energy_costs" in updates:
+        tradeoff["energy_costs"] = updates.pop("energy_costs")
+    if "competition_map" in updates:
+        tradeoff["competition_map"] = updates.pop("competition_map")
+    if "default_penalty_pool" in updates:
+        tradeoff["default_penalty_pool"] = updates.pop("default_penalty_pool")
+    merged = _deep_merge(current, updates)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(merged, f, allow_unicode=True)
+    cfg = TensorConfig.from_yaml(path)
+    # 热加载到引擎实例
+    container.simulation_engine.tensor_config = cfg
+    # 同步张量开关
+    container.simulation_engine._use_tensor_mortality = cfg.use_tensor_mortality
+    container.simulation_engine._use_tensor_speciation = cfg.use_tensor_speciation
+    return {"path": str(path), "config": cfg.to_dict()}
 
 
 # ========== 辅助函数 ==========
@@ -297,17 +365,7 @@ async def run_turns(
         # 设置事件回调
         engine._event_callback = lambda t, m, c="其他", **kw: session.push_event(t, m, c, **kw)
         
-        # 配置 AI 超时
-        config = container.config_service.get_ui_config()
-        if hasattr(engine, 'ai_pressure_service') and engine.ai_pressure_service:
-            engine.ai_pressure_service.set_timeout_config(
-                species_eval_timeout=config.ai_species_eval_timeout,
-                batch_eval_timeout=config.ai_batch_eval_timeout,
-                narrative_timeout=config.ai_narrative_timeout,
-            )
-            engine.ai_pressure_service.set_event_callback(
-                lambda t, m, c="其他", **kw: session.push_event(t, m, c, **kw)
-            )
+        # AI 压力路径已移除
         
         # 执行推演
         reports = await engine.run_turns_async(command)
@@ -455,8 +513,7 @@ async def create_save(
         dispersal_engine.clear_caches()
         session.clear_pressure_queue()
         
-        if hasattr(engine, 'ai_pressure_service') and engine.ai_pressure_service:
-            engine.ai_pressure_service.clear_all_caches()
+        # AI 压力路径已移除
         engine.speciation.clear_all_caches()
         
         embedding_integration = EmbeddingIntegrationService(container.embedding_service)
@@ -675,8 +732,7 @@ async def load_game(
         habitat_manager.clear_all_caches()
         dispersal_engine.clear_caches()
         
-        if hasattr(engine, 'ai_pressure_service') and engine.ai_pressure_service:
-            engine.ai_pressure_service.clear_all_caches()
+        # AI 压力路径已移除
         engine.speciation.clear_all_caches()
         
         # 加载存档

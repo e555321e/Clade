@@ -91,7 +91,6 @@
 - `FoodWebManager`: 食物网维护
 
 #### AI/ML 服务
-- `AIPressureResponseService`: AI 压力评估
 - `EmbeddingIntegrationService`: 向量嵌入集成
 
 ### 3. 数据访问层 (Repository Layer)
@@ -129,9 +128,8 @@
 | 50 | `preliminary_mortality` | `ctx.tiered` | `ctx.preliminary_mortality` | 初步死亡率 |
 | 60 | `migration` | `ctx.preliminary_mortality` | `ctx.migration_events`, `ctx.migration_count` | 迁徙执行 |
 | 80 | `final_mortality` | `ctx.species_batch` | `ctx.combined_results` | 最终死亡率 |
-| 85 | `ai_status_eval` | `ctx.combined_results` | `ctx.ai_status_evals` | AI 评估 |
 | 90 | `population_update` | `ctx.combined_results` | `ctx.new_populations` | 种群更新 |
-| 120 | `ai_parallel_tasks` | - | `ctx.adaptation_events`, `ctx.branching_events` | AI 并行任务 |
+| 122 | `speciation` | 张量触发、`ctx.species_batch` | `ctx.branching_events` | 物种分化 |
 | 140 | `build_report` | all | `ctx.report` | 构建报告 |
 | 170 | `save_history` | `ctx.report` | - | 保存历史 |
 

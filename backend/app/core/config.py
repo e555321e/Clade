@@ -65,6 +65,16 @@ class Settings(BaseSettings):
     # 世代数缩放参数（用于调节快速繁殖生物的演化速率）
     generation_scale_factor: float = Field(default=8.0, alias="GENERATION_SCALE_FACTOR")
     
+    # ========== 张量系统配置 ==========
+    # 是否使用张量死亡率计算（替代 LLM 状态评估）
+    use_tensor_mortality: bool = Field(default=True, alias="USE_TENSOR_MORTALITY")
+    # 是否使用张量分化检测（SpeciationMonitor）
+    use_tensor_speciation: bool = Field(default=True, alias="USE_TENSOR_SPECIATION")
+    # 是否使用自动代价计算器（TradeoffCalculator）
+    use_auto_tradeoff: bool = Field(default=True, alias="USE_AUTO_TRADEOFF")
+    # 代价/增益比例 (0.5-1.0)
+    tradeoff_ratio: float = Field(default=0.7, alias="TRADEOFF_RATIO")
+    
     # ========== 物种分化平衡参数 ==========
     # 分化冷却期（回合数）：分化后多少回合内不能再次分化
     # 【早期分化优化】改为 0，允许连续分化（代码中 turn<5 时额外跳过冷却）
@@ -105,6 +115,12 @@ class Settings(BaseSettings):
     log_dir: str = Field(default=str(PROJECT_ROOT / "data/logs"))
     log_to_file: bool = Field(default=True, alias="LOG_TO_FILE")
     log_to_console: bool = Field(default=True, alias="LOG_TO_CONSOLE")
+
+    # 张量配置文件路径（供前端/运维调整）
+    tensor_balance_path: str = Field(
+        default=str(PROJECT_ROOT / "backend" / "app" / "config" / "tensor_balance.yaml"),
+        alias="TENSOR_BALANCE_PATH",
+    )
 
     model_config = {
         "env_file": str(PROJECT_ROOT / ".env"),

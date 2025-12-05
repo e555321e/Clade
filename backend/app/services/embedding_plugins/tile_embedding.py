@@ -6,6 +6,11 @@
 - 必需字段: all_tiles, all_species
 - 可选字段: all_habitats, populations
 - 降级策略: 无 all_tiles 时跳过索引；缺少关键字段时使用简化向量
+
+【张量集成优化】
+- 优先从 TensorState 获取物种分布数据
+- 避免重复计算 species_distribution 映射
+- 使用张量环境数据补充地块信息
 """
 from __future__ import annotations
 
@@ -90,10 +95,16 @@ class TileBiomePlugin(EmbeddingPlugin):
     2. 构建向量索引
     3. 物种-地块匹配度计算
     4. 生态热点识别
+    
+    张量集成:
+    - 优先从 TensorState 获取物种分布
+    - 使用张量环境数据增强地块信息
     """
     
     # 声明依赖的 Context 字段
     required_context_fields = {"all_tiles", "all_species"}
+    # 启用张量数据
+    use_tensor_data = True
     
     @property
     def name(self) -> str:
@@ -103,12 +114,16 @@ class TileBiomePlugin(EmbeddingPlugin):
         """初始化"""
         self._profile_cache: dict[str, TileProfile] = {}
         self._species_distribution: dict[str, list[str]] = {}  # tile_id -> [species_codes]
+        self._using_tensor_data = False  # 追踪是否使用了张量数据
     
     def build_tile_profiles(
         self, 
         ctx: 'SimulationContext'
     ) -> dict[str, TileProfile]:
-        """从 Context 构建地块档案"""
+        """从 Context 构建地块档案
+        
+        【张量集成】优先从 TensorState 获取物种分布数据
+        """
         profiles: dict[str, TileProfile] = {}
         
         tiles = ctx.all_tiles or []
@@ -118,28 +133,40 @@ class TileBiomePlugin(EmbeddingPlugin):
         
         # 构建物种分布映射
         self._species_distribution.clear()
-        missing_populations = 0
+        self._using_tensor_data = False
         
-        for sp in (ctx.all_species or []):
-            populations = getattr(sp, 'populations', None)
-            if populations is None:
-                missing_populations += 1
-                continue
+        # 【张量优先】尝试从张量桥接获取物种分布
+        if self.has_tensor_data:
+            tensor_dist = self.tensor_bridge.to_legacy_species_distribution()
+            if tensor_dist:
+                self._species_distribution = tensor_dist
+                self._using_tensor_data = True
+                logger.debug(f"[{self.name}] 使用张量数据: {len(tensor_dist)} 个地块有物种分布")
+        
+        # 回退：从物种对象提取分布
+        if not self._using_tensor_data:
+            missing_populations = 0
             
-            for pop in populations:
-                if isinstance(pop, dict):
-                    tile_id = pop.get("tile_id", pop.get("habitat_id", ""))
-                else:
-                    tile_id = getattr(pop, 'tile_id', getattr(pop, 'habitat_id', ''))
+            for sp in (ctx.all_species or []):
+                populations = getattr(sp, 'populations', None)
+                if populations is None:
+                    missing_populations += 1
+                    continue
                 
-                if tile_id:
-                    tile_id = str(tile_id)
-                    if tile_id not in self._species_distribution:
-                        self._species_distribution[tile_id] = []
-                    self._species_distribution[tile_id].append(sp.lineage_code)
-        
-        if missing_populations > 0:
-            logger.debug(f"[{self.name}] {missing_populations} 个物种缺少 populations 字段")
+                for pop in populations:
+                    if isinstance(pop, dict):
+                        tile_id = pop.get("tile_id", pop.get("habitat_id", ""))
+                    else:
+                        tile_id = getattr(pop, 'tile_id', getattr(pop, 'habitat_id', ''))
+                    
+                    if tile_id:
+                        tile_id = str(tile_id)
+                        if tile_id not in self._species_distribution:
+                            self._species_distribution[tile_id] = []
+                        self._species_distribution[tile_id].append(sp.lineage_code)
+            
+            if missing_populations > 0:
+                logger.debug(f"[{self.name}] {missing_populations} 个物种缺少 populations 字段")
         
         # 归一化栖息地信息（list[Habitat] -> dict）
         raw_habitats = getattr(ctx, 'all_habitats', None)

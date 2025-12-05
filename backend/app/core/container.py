@@ -131,9 +131,6 @@ class ServiceContainer(
             self.habitat_manager.clear_all_caches()
             self.dispersal_engine.clear_caches()
             
-            if self.simulation_engine.ai_pressure_service:
-                self.simulation_engine.ai_pressure_service.clear_all_caches()
-            
             self.simulation_engine.speciation.clear_all_caches()
             self.embedding_integration.clear_all_caches()
             

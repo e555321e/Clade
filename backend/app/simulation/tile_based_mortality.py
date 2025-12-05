@@ -31,6 +31,7 @@ from ..services.species.predation import PredationService
 from ..services.geo.suitability import get_habitat_type_mask as unified_habitat_mask
 from ..core.config import get_settings, PROJECT_ROOT
 from ..models.config import EcologyBalanceConfig, MortalityConfig, SpeciationConfig
+from ..tensor.state import TensorState
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +210,7 @@ class TileBasedMortalityEngine:
         # 【新增】地块死亡率缓存（供其他服务使用）
         self._last_mortality_matrix: np.ndarray | None = None
         self._last_species_lineage_to_idx: dict[str, int] = {}
+        self._last_tensor_state: TensorState | None = None
         
         # 【修复】累积存活数据（跨多个evaluate批次）
         self._accumulated_tile_survivors: dict[str, dict[int, int]] = {}
@@ -528,6 +530,33 @@ class TileBasedMortalityEngine:
     def get_tile_adjacency(self) -> dict[int, set[int]]:
         """获取地块邻接关系（供其他服务使用）"""
         return self._tile_adjacency
+
+    def _build_tensor_state(self) -> None:
+        """构建影子 TensorState（线性化地块维度）。"""
+        if (
+            self._population_matrix is None
+            or self._tile_env_matrix is None
+            or not self._last_species_lineage_to_idx
+        ):
+            self._last_tensor_state = None
+            return
+
+        pop_tensor = self._population_matrix.T[:, np.newaxis, :]  # (S, 1, T)
+        env_tensor = self._tile_env_matrix.T[:, np.newaxis, :]    # (C, 1, T)
+        species_map = dict(self._last_species_lineage_to_idx)
+        species_params = np.zeros((pop_tensor.shape[0], 0), dtype=np.float64)
+
+        self._last_tensor_state = TensorState(
+            env=env_tensor,
+            pop=pop_tensor,
+            species_params=species_params,
+            masks={},
+            species_map=species_map,
+        )
+
+    def export_tensor_state(self) -> TensorState | None:
+        """获取最新 TensorState 影子数据。"""
+        return self._last_tensor_state
     
     def get_species_tile_mortality(self, lineage_code: str) -> dict[int, float]:
         """获取指定物种在各地块的死亡率
@@ -1033,6 +1062,8 @@ class TileBasedMortalityEngine:
         
         # 【修复】累积本批次的存活数据（而不是只保留最后一批）
         self._accumulate_batch_results(species_list, batch_population_matrix, mortality_matrix)
+        # 构建 TensorState 影子数据，供张量化路径或后续阶段使用
+        self._build_tensor_state()
         
         # ========== 阶段3: 汇总各地块结果 ==========
         results = self._aggregate_tile_results(

@@ -84,7 +84,6 @@ class TestPipeline:
     @pytest.fixture
     def mock_engine(self):
         engine = MagicMock()
-        engine._use_ai_pressure_response = False
         engine._use_embedding_integration = False
         return engine
     

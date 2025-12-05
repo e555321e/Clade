@@ -67,25 +67,15 @@ export const AutosaveSection = memo(function AutosaveSection({
 
       {/* 存档说明 */}
       <Card title="存档说明" icon="📋">
-        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <div className="info-list">
           {[
             { icon: "🔹", text: "自动存档会在每次回合结束后检查是否需要保存" },
             { icon: "🔹", text: "自动存档文件命名格式：autosave_N_日期时间" },
             { icon: "🔹", text: "自动存档不会覆盖手动存档，两者独立管理" },
             { icon: "🔹", text: "建议保留至少 2 个自动存档槽位以防数据损坏" },
           ].map((item, idx) => (
-            <div
-              key={idx}
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                gap: "10px",
-                fontSize: "0.88rem",
-                color: "var(--s-text-secondary)",
-                lineHeight: 1.6,
-              }}
-            >
-              <span style={{ color: "var(--s-accent)", flexShrink: 0 }}>{item.icon}</span>
+            <div key={idx} className="info-list-item">
+              <span className="info-list-icon">{item.icon}</span>
               <span>{item.text}</span>
             </div>
           ))}
@@ -94,14 +84,7 @@ export const AutosaveSection = memo(function AutosaveSection({
 
       {/* 存档位置提示 */}
       <InfoBox variant="info" title="存档位置">
-        存档文件保存在 <code style={{
-          background: "rgba(0, 0, 0, 0.3)",
-          padding: "2px 6px",
-          borderRadius: "4px",
-          fontFamily: "var(--s-font-mono)",
-          fontSize: "0.85rem",
-          color: "var(--s-accent)",
-        }}>data/saves/</code> 目录下，可以手动备份或复制到其他设备。
+        存档文件保存在 <code className="path-code">data/saves/</code> 目录下，可以手动备份或复制到其他设备。
       </InfoBox>
     </div>
   );

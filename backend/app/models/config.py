@@ -264,6 +264,16 @@ class ReproductionConfig(BaseModel):
 
     # 极端死亡率阈值：超过此值繁殖效率直接减半
     extreme_mortality_threshold: float = 0.85  # 【平衡】从0.80提升到0.85
+    
+    # ========== 张量系统配置 ==========
+    # 是否使用自动代价计算器（TradeoffCalculator）
+    use_auto_tradeoff: bool = True
+    # 代价/增益比例 (0.5-1.0)，0.7 表示增加2点需要减少1.4点
+    tradeoff_ratio: float = 0.7
+    # 是否使用张量分化检测（SpeciationMonitor）
+    use_tensor_speciation: bool = True
+    # 张量分化检测的分歧阈值
+    tensor_divergence_threshold: float = 0.5
 
 
 class MortalityConfig(BaseModel):
@@ -916,6 +926,26 @@ class PressureIntensityConfig(BaseModel):
     # ========== 温度修饰系数 ==========
     # 每单位温度修饰的效果（°C）
     temperature_effect_per_unit: float = 0.8
+    
+    # ========== 张量压力桥接参数 ==========
+    # 温度压力乘数：每单位压力等于多少°C
+    thermal_multiplier: float = 3.0
+    # 毒性基础死亡率：每单位毒性压力的死亡率
+    toxin_base_mortality: float = 0.06
+    # 干旱基础死亡率：每单位干旱压力的死亡率
+    drought_base_mortality: float = 0.05
+    # 缺氧基础死亡率：每单位缺氧压力的死亡率
+    anoxic_base_mortality: float = 0.08
+    # 直接死亡率：每单位直接死亡压力的死亡率
+    direct_mortality_rate: float = 0.04
+    # 辐射基础死亡率：每单位辐射压力的死亡率
+    radiation_base_mortality: float = 0.04
+    # 化能自养受益系数：自养生物在毒性环境中的受益
+    autotroph_toxin_benefit: float = 0.15
+    # 需氧生物敏感度：需氧生物对缺氧的敏感度
+    aerobe_sensitivity: float = 0.6
+    # 多压力衰减系数：多压力时的边际递减
+    multi_pressure_decay: float = 0.7
 
 
 class GameplayConfig(BaseModel):
@@ -954,6 +984,96 @@ class GameplayConfig(BaseModel):
     show_advanced_metrics: bool = False
 
 
+class TensorUIConfig(BaseModel):
+    """张量系统可调参数（前端可配置）
+    
+    所有参数默认与 tensor_balance.yaml 一致，可在 UI 中调节并写回。
+    """
+    model_config = ConfigDict(extra="ignore")
+
+    # 开关
+    use_tensor_mortality: bool = Field(
+        default=True, description="张量死亡率（默认开启）"
+    )
+    use_tensor_speciation: bool = Field(
+        default=True, description="张量分化检测（默认开启）"
+    )
+    use_auto_tradeoff: bool = Field(
+        default=True, description="自动代价计算（默认开启）"
+    )
+
+    # 温度与死亡率
+    temp_optimal: float = Field(default=20.0, description="最适温度 (°C)")
+    temp_tolerance: float = Field(default=15.0, description="温度容忍 (°C)")
+    temp_optimal_shift_per_100_turns: float = Field(
+        default=0.0, description="每100回合最适温度漂移 (°C)"
+    )
+    temp_tolerance_shift_per_100_turns: float = Field(
+        default=0.0, description="每100回合容忍度变化 (°C)"
+    )
+    temp_channel_idx: int = Field(default=1, description="温度通道索引")
+
+    # 种群动态
+    diffusion_rate: float = Field(default=0.1, description="基础扩散率")
+    diffusion_rate_growth_per_100_turns: float = Field(
+        default=0.0, description="扩散率增长/100回合"
+    )
+    birth_rate: float = Field(default=0.1, description="基础出生率")
+    birth_rate_growth_per_100_turns: float = Field(
+        default=0.0, description="出生率增长/100回合"
+    )
+    competition_strength: float = Field(default=0.01, description="竞争强度")
+    competition_decay_per_100_turns: float = Field(
+        default=0.0, description="竞争衰减/100回合"
+    )
+    capacity_multiplier: float = Field(
+        default=10000.0, description="承载力乘数 (植被×系数)"
+    )
+    veg_capacity_sensitivity: float = Field(
+        default=0.0, description="承载力对平均植被敏感度 (avg_veg-0.5)"
+    )
+
+    # 分化检测
+    divergence_threshold: float = Field(default=0.5, description="环境分歧阈值")
+    divergence_normalizer: float = Field(default=10.0, description="方差归一化除数")
+
+    # 适应度
+    fitness_min: float = Field(default=0.1, description="最低适应度，避免除零")
+
+    # 权衡
+    tradeoff_ratio: float = Field(default=0.7, description="代价/增益比例")
+    energy_costs: dict[str, float] = Field(
+        default_factory=lambda: {
+            "运动能力": 1.5,
+            "智力": 2.0,
+            "繁殖速度": 1.0,
+            "耐寒性": 0.6,
+            "耐热性": 0.6,
+            "物理防御": 0.7,
+            "感知能力": 1.2,
+            "社会性": 0.8,
+            "体型": 1.0,
+        },
+        description="能量成本权重（高成本属性增益代价更高）",
+    )
+    competition_map: dict[str, list] = Field(
+        default_factory=lambda: {
+            "运动能力": ["物理防御", "体型", "繁殖速度"],
+            "物理防御": ["运动能力", "繁殖速度"],
+            "耐寒性": ["耐热性", "繁殖速度"],
+            "耐热性": ["耐寒性", "繁殖速度"],
+            "智力": ["繁殖速度", "体型"],
+            "感知能力": ["繁殖速度"],
+            "体型": ["运动能力", "繁殖速度"],
+        },
+        description="属性竞争关系（优先从这些属性扣减）",
+    )
+    default_penalty_pool: list[str] = Field(
+        default_factory=lambda: ["繁殖速度", "运动能力", "社会性"],
+        description="默认代价候选池（当无明确竞争关系时）",
+    )
+
+
 class UIConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -982,38 +1102,29 @@ class UIConfig(BaseModel):
     autosave_interval: int = 1     # 每N回合自动保存一次
     autosave_max_slots: int = 5    # 最大自动保存槽位数
     
-    # 6. AI 推演超时配置
-    ai_species_eval_timeout: int = 60    # 单物种AI评估超时（秒）
-    ai_batch_eval_timeout: int = 180     # 整体批量评估超时（秒）
-    ai_narrative_timeout: int = 60       # 物种叙事生成超时（秒）
-    ai_speciation_timeout: int = 120     # 物种分化评估超时（秒）
-    
     # 7. 负载均衡配置
     load_balance_enabled: bool = False   # 是否启用多服务商负载均衡
     load_balance_strategy: str = "round_robin"  # 负载均衡策略: round_robin, random, least_latency
     
-    # 8. AI 叙事开关
-    ai_narrative_enabled: bool = False   # 是否启用 AI 生成物种叙事（默认关闭，节省 API 调用）
-    
-    # 9. 回合报告 LLM 开关（与物种叙事分开）
+    # 8. 回合报告 LLM 开关（与物种叙事分开）
     turn_report_llm_enabled: bool = True  # 是否启用 LLM 生成回合总结（默认开启）
     
-    # 10. 物种分化配置
+    # 9. 物种分化配置
     speciation: SpeciationConfig = Field(default_factory=SpeciationConfig)
     
-    # 11. 生态平衡配置
+    # 10. 生态平衡配置
     ecology_balance: EcologyBalanceConfig = Field(default_factory=EcologyBalanceConfig)
     
-    # 12. 繁殖配置
+    # 11. 繁殖配置
     reproduction: ReproductionConfig = Field(default_factory=ReproductionConfig)
     
-    # 13. 死亡率配置
+    # 12. 死亡率配置
     mortality: MortalityConfig = Field(default_factory=MortalityConfig)
     
-    # 14. 压力强度配置
+    # 13. 压力强度配置
     pressure_intensity: PressureIntensityConfig = Field(default_factory=PressureIntensityConfig)
     
-    # 15. 游戏模式配置
+    # 14. 游戏模式配置
     gameplay: GameplayConfig = Field(default_factory=GameplayConfig)
     
     # 15. 地图环境配置
@@ -1027,6 +1138,9 @@ class UIConfig(BaseModel):
     
     # 18. 生态拟真配置
     ecological_realism: EcologicalRealismConfig = Field(default_factory=EcologicalRealismConfig)
+    
+    # 19. 张量系统配置（供前端调整并写回 tensor_balance.yaml）
+    tensor: TensorUIConfig = Field(default_factory=TensorUIConfig)
     
     # --- Legacy Fields (Keep for migration) ---
     ai_provider: str | None = None

@@ -49,7 +49,7 @@
 #### Windows 用户
 
 **安装 Python：**
-1. 点击上面的链接，下载最新版 Python
+1. 点击上面的链接，下载3.12.9版本的 Python（如果已经安装新版本没事，启动脚本会自动识别3.12版本的Python）
 2. 运行安装程序时，**一定要勾选 "Add Python to PATH"**（这很重要！）
 3. 点击 "Install Now" 完成安装
 
@@ -65,11 +65,11 @@ node --version
 ```
 如果都显示版本号，说明安装成功！
 
-#### Mac 用户
+#### Mac 用户（未经测试）
 
 推荐使用 Homebrew 安装：
 ```bash
-brew install python@3.11 node
+brew install python@3.12 node
 ```
 
 #### Linux 用户
@@ -77,10 +77,10 @@ brew install python@3.11 node
 ```bash
 # Ubuntu/Debian
 sudo apt update
-sudo apt install python3.11 python3.11-venv nodejs npm
+sudo apt install python3.12 python3.12-venv nodejs npm
 
 # Fedora
-sudo dnf install python3.11 nodejs
+sudo dnf install python3.12 nodejs
 ```
 
 </details>
@@ -169,7 +169,7 @@ npm run dev
 
 </details>
 
-#### 🍎 Mac / 🐧 Linux 用户
+#### 🍎 Mac / 🐧 Linux 用户（未经测试）
 
 打开终端，依次运行：
 
@@ -362,6 +362,31 @@ Clade/
 - **前端**：React + TypeScript + Vite + D3.js
 - **AI**：支持 OpenAI API 兼容的任何服务
 
+
+---
+
+## ⚙️ 张量配置（前端可调）
+
+- 读取当前配置：`GET /tensor/config`，返回 `{ path, config }`，`config` 结构同 `UIConfig.tensor`/`tensor_balance.yaml`。
+- 更新配置：`PUT /tensor/config`，支持部分字段（深度合并），示例：
+  ```json
+  {
+    "use_tensor_mortality": true,
+    "balance": {
+      "temp_optimal": 22,
+      "birth_rate_growth_per_100_turns": 0.02
+    },
+    "energy_costs": { "运动能力": 1.6 }
+  }
+  ```
+  更新后会写回 `tensor_balance.yaml` 并热加载引擎，张量开关同步。
+- 前端表单字段（参考 `UIConfig.tensor` 描述）：
+  - 开关：张量死亡率/分化检测/自动代价
+  - 温度：最适/容忍度、每100回合漂移/变化、温度通道索引
+  - 种群动态：扩散率与增长、出生率与增长、竞争强度与衰减、承载力乘数、植被敏感度
+  - 分化检测：分歧阈值、方差归一化
+  - 适应度：最低适应度
+  - 代价：tradeoff_ratio、energy_costs、competition_map、default_penalty_pool
 
 ---
 

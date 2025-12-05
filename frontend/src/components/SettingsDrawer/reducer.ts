@@ -40,6 +40,11 @@ export function createDefaultConfig(): UIConfig {
     ai_timeout: 60,
     embedding_provider: null,
     speciation: { ...DEFAULT_SPECIATION_CONFIG },
+    reproduction: { ...DEFAULT_REPRODUCTION_CONFIG },
+    mortality: { ...DEFAULT_MORTALITY_CONFIG },
+    ecology_balance: { ...DEFAULT_ECOLOGY_BALANCE_CONFIG },
+    map_environment: { ...DEFAULT_MAP_ENVIRONMENT_CONFIG },
+    pressure_intensity: { ...DEFAULT_PRESSURE_INTENSITY_CONFIG },
     // AI 功能开关
     turn_report_llm_enabled: true,      // 默认开启 LLM 回合报告
     ai_narrative_enabled: false,        // 默认关闭物种叙事
@@ -412,6 +417,11 @@ export function createInitialState(config: UIConfig): SettingsState {
     providers: getInitialProviders(config),
     capability_routes: config.capability_routes || {},
     speciation: { ...DEFAULT_SPECIATION_CONFIG, ...(config.speciation || {}) },
+    reproduction: { ...DEFAULT_REPRODUCTION_CONFIG, ...(config.reproduction || {}) },
+    mortality: { ...DEFAULT_MORTALITY_CONFIG, ...(config.mortality || {}) },
+    ecology_balance: { ...DEFAULT_ECOLOGY_BALANCE_CONFIG, ...(config.ecology_balance || {}) },
+    map_environment: { ...DEFAULT_MAP_ENVIRONMENT_CONFIG, ...(config.map_environment || {}) },
+    pressure_intensity: { ...DEFAULT_PRESSURE_INTENSITY_CONFIG, ...(config.pressure_intensity || {}) },
   };
 
   return {
@@ -438,4 +448,3 @@ export function createInitialState(config: UIConfig): SettingsState {
     modelFetchError: {},
   };
 }
-

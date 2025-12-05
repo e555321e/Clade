@@ -7,7 +7,7 @@ import type { ProviderConfig, CapabilityRouteConfig } from "@/services/api.types
 import type { SettingsAction, CapabilityDef } from "../types";
 import { AI_CAPABILITIES } from "../constants";
 import { getProviderLogo } from "../reducer";
-import { SectionHeader, Card, SliderRow, InfoBox } from "../common/Controls";
+import { SectionHeader, Card, InfoBox, SelectRow, NumberInput } from "../common/Controls";
 
 interface Props {
   providers: Record<string, ProviderConfig>;
@@ -106,108 +106,60 @@ export const ModelsSection = memo(function ModelsSection({
     return (
       <div
         key={cap.key}
-        style={{
-          background: "var(--s-bg-glass)",
-          border: "1px solid var(--s-border)",
-          borderTop: `2px solid ${groupColor}`,
-          borderRadius: "var(--s-radius-md)",
-          padding: "14px",
-          transition: "all 0.2s",
-        }}
+        className="capability-card"
+        style={{ borderTopColor: groupColor }}
       >
         {/* 头部 */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            <strong style={{ fontSize: "0.9rem", color: "var(--s-text)" }}>{cap.label}</strong>
-            <span
-              style={{
-                fontSize: "0.65rem",
-                padding: "2px 6px",
-                borderRadius: "4px",
-                fontWeight: 500,
-                background:
-                  cap.parallel === "batch"
-                    ? "rgba(245, 158, 11, 0.15)"
-                    : cap.parallel === "concurrent"
-                    ? "rgba(99, 102, 241, 0.15)"
-                    : "rgba(100, 116, 139, 0.15)",
-                color:
-                  cap.parallel === "batch"
-                    ? "#fbbf24"
-                    : cap.parallel === "concurrent"
-                    ? "#a5b4fc"
-                    : "#94a3b8",
-              }}
-            >
+        <div className="capability-header">
+          <div className="capability-title">
+            <strong>{cap.label}</strong>
+            <span className={`parallel-badge ${cap.parallel || "single"}`}>
               {cap.parallel === "batch" ? "批量" : cap.parallel === "concurrent" ? "并发" : "单次"}
             </span>
           </div>
         </div>
 
-        <p style={{ fontSize: "0.78rem", color: "var(--s-text-muted)", margin: "0 0 10px", lineHeight: 1.4 }}>
-          {cap.desc}
-        </p>
+        <p className="capability-desc">{cap.desc}</p>
 
         {/* 当前生效配置 */}
         {(selectedProviderIds.length > 0 || effective) && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "6px 10px",
-              background: "rgba(0, 0, 0, 0.2)",
-              borderRadius: "var(--s-radius-sm)",
-              fontSize: "0.72rem",
-              marginBottom: "10px",
-              flexWrap: "wrap",
-            }}
-          >
-            <span style={{ color: "var(--s-text-muted)" }}>当前:</span>
+          <div className="capability-effective">
+            <span className="effective-label">当前:</span>
             {selectedProviderIds.length > 0 ? (
-              selectedProviderIds.map((pid, idx) => {
-                const p = providers[pid];
-                return (
-                  <span key={pid} style={{ display: "flex", alignItems: "center", gap: "2px" }}>
-                    {idx > 0 && <span style={{ color: "var(--s-text-muted)", margin: "0 2px" }}>+</span>}
-                    <span style={{ color: "var(--s-primary-light)" }}>{p?.name || pid}</span>
-                  </span>
-                );
-              })
+              <div className="effective-value">
+                {selectedProviderIds.map((pid, idx) => {
+                  const p = providers[pid];
+                  return (
+                    <span key={pid} style={{ display: "flex", alignItems: "center", gap: "2px" }}>
+                      {idx > 0 && <span className="effective-separator">+</span>}
+                      <span className="effective-provider">{p?.name || pid}</span>
+                    </span>
+                  );
+                })}
+              </div>
             ) : effective ? (
-              <>
-                <span style={{ color: "var(--s-primary-light)" }}>{effective.provider}</span>
-                <span style={{ color: "var(--s-text-muted)" }}>/</span>
-                <span style={{ color: "var(--s-accent)", maxWidth: "80px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <div className="effective-value" style={{ flex: 1 }}>
+                <span className="effective-provider">{effective.provider}</span>
+                <span className="effective-separator">/</span>
+                <span className="effective-model" title={effective.model}>
                   {effective.model}
                 </span>
-                <span
-                  style={{
-                    marginLeft: "auto",
-                    fontSize: "0.62rem",
-                    background: "rgba(100, 116, 139, 0.2)",
-                    color: "#94a3b8",
-                    padding: "1px 5px",
-                    borderRadius: "3px",
-                  }}
-                >
-                  默认
-                </span>
-              </>
+                <span className="effective-badge">默认</span>
+              </div>
             ) : null}
           </div>
         )}
 
         {/* 配置选项 */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "10px", paddingTop: "8px", borderTop: "1px solid rgba(255, 255, 255, 0.05)" }}>
+        <div className="capability-config">
           {/* 可用服务商池 - 多选 */}
           <div>
-            <div style={{ fontSize: "0.72rem", color: "var(--s-text-muted)", marginBottom: "6px" }}>
-              可用服务商（点击选择，可多选）
+            <div className="config-label" style={{ marginBottom: "6px" }}>
+              可用服务商
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
               {providerList.length === 0 ? (
-                <span style={{ fontSize: "0.75rem", color: "var(--s-text-muted)", fontStyle: "italic" }}>
+                <span className="text-muted italic text-xs">
                   请先配置服务商
                 </span>
               ) : (
@@ -217,6 +169,7 @@ export const ModelsSection = memo(function ModelsSection({
                     <button
                       key={p.id}
                       onClick={() => toggleProvider(p.id)}
+                      className={`provider-chip ${isSelected ? "selected" : ""}`}
                       style={{
                         display: "flex",
                         alignItems: "center",
@@ -231,7 +184,7 @@ export const ModelsSection = memo(function ModelsSection({
                         transition: "all 0.15s",
                       }}
                     >
-                      {isSelected && <span style={{ fontSize: "0.7rem" }}>✓</span>}
+                      {isSelected && <span>✓</span>}
                       <span>{getProviderLogo(p)}</span>
                       <span>{p.name}</span>
                     </button>
@@ -240,7 +193,7 @@ export const ModelsSection = memo(function ModelsSection({
               )}
             </div>
             {selectedProviderIds.length === 0 && providerList.length > 0 && (
-              <div style={{ fontSize: "0.68rem", color: "var(--s-text-muted)", marginTop: "4px", fontStyle: "italic" }}>
+              <div className="text-muted text-xs mt-1 italic">
                 未选择则使用全局默认
               </div>
             )}
@@ -248,8 +201,8 @@ export const ModelsSection = memo(function ModelsSection({
 
           {/* 模型选择 - 当只选择一个服务商时显示 */}
           {selectedProviderIds.length === 1 && (
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ fontSize: "0.72rem", color: "var(--s-text-muted)", minWidth: "45px" }}>模型</span>
+            <div className="config-row">
+              <span className="config-label">模型</span>
               <select
                 value={route.model || ""}
                 onChange={(e) =>
@@ -260,15 +213,7 @@ export const ModelsSection = memo(function ModelsSection({
                     value: e.target.value || null,
                   })
                 }
-                style={{
-                  flex: 1,
-                  padding: "4px 8px",
-                  background: "var(--s-bg-deep)",
-                  border: "1px solid var(--s-border)",
-                  borderRadius: "var(--s-radius-sm)",
-                  color: "var(--s-text)",
-                  fontSize: "0.78rem",
-                }}
+                className="config-select"
               >
                 <option value="">使用服务商默认</option>
                 {getProviderModels(selectedProviderIds[0]).map((m) => (
@@ -281,8 +226,8 @@ export const ModelsSection = memo(function ModelsSection({
           )}
 
           {/* 超时设置 */}
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ fontSize: "0.72rem", color: "var(--s-text-muted)", minWidth: "45px" }}>超时</span>
+          <div className="config-row timeout">
+            <span className="config-label">超时</span>
             <input
               type="number"
               value={route.timeout || cap.defaultTimeout}
@@ -297,18 +242,9 @@ export const ModelsSection = memo(function ModelsSection({
                   value: parseInt(e.target.value) || cap.defaultTimeout,
                 })
               }
-              style={{
-                width: "60px",
-                padding: "4px 8px",
-                background: "var(--s-bg-deep)",
-                border: "1px solid var(--s-border)",
-                borderRadius: "var(--s-radius-sm)",
-                color: "var(--s-text)",
-                fontSize: "0.78rem",
-                textAlign: "center",
-              }}
+              className="timeout-input"
             />
-            <span style={{ fontSize: "0.72rem", color: "var(--s-text-muted)" }}>秒</span>
+            <span className="timeout-unit">秒</span>
           </div>
         </div>
       </div>
@@ -325,114 +261,47 @@ export const ModelsSection = memo(function ModelsSection({
 
       {/* 全局默认配置 */}
       <Card title="全局默认" icon="🌐" desc="未单独配置的能力将使用此设置">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "14px" }}>
-          {/* 默认服务商 */}
-          <div>
-            <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "var(--s-text-secondary)", marginBottom: "8px" }}>
-              默认服务商
-            </label>
-            <select
+        <div className="global-config-panel">
+          <div className="global-config-grid">
+            <SelectRow
+              label="默认服务商"
               value={aiProvider || ""}
-              onChange={(e) =>
-                dispatch({ type: "UPDATE_GLOBAL", field: "ai_provider", value: e.target.value || null })
-              }
-              style={{
-                width: "100%",
-                padding: "10px 14px",
-                background: "var(--s-bg-deep)",
-                border: "1px solid var(--s-border)",
-                borderRadius: "var(--s-radius-md)",
-                color: "var(--s-text)",
-                fontSize: "0.88rem",
-              }}
-            >
-              <option value="">请选择服务商</option>
-              {providerList.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {getProviderLogo(p)} {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
+              options={[
+                { value: "", label: "请选择服务商" },
+                ...providerList.map(p => ({ value: p.id, label: `${getProviderLogo(p)} ${p.name}` }))
+              ]}
+              onChange={(v) => dispatch({ type: "UPDATE_GLOBAL", field: "ai_provider", value: v || null })}
+            />
 
-          {/* 默认模型 */}
-          <div>
-            <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "var(--s-text-secondary)", marginBottom: "8px" }}>
-              默认模型
-            </label>
-            <select
+            <SelectRow
+              label="默认模型"
               value={aiModel || ""}
-              onChange={(e) =>
-                dispatch({ type: "UPDATE_GLOBAL", field: "ai_model", value: e.target.value || null })
-              }
+              options={[
+                { value: "", label: "请选择模型" },
+                ...(aiProvider ? getProviderModels(aiProvider).map(m => ({ value: m, label: m })) : [])
+              ]}
+              onChange={(v) => dispatch({ type: "UPDATE_GLOBAL", field: "ai_model", value: v || null })}
               disabled={!aiProvider}
-              style={{
-                width: "100%",
-                padding: "10px 14px",
-                background: "var(--s-bg-deep)",
-                border: "1px solid var(--s-border)",
-                borderRadius: "var(--s-radius-md)",
-                color: "var(--s-text)",
-                fontSize: "0.88rem",
-                opacity: aiProvider ? 1 : 0.5,
-              }}
-            >
-              <option value="">请选择模型</option>
-              {aiProvider &&
-                getProviderModels(aiProvider).map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-            </select>
+              placeholder={!aiProvider ? "需先选择服务商" : "请选择模型"}
+            />
+
+            <NumberInput
+              label="默认超时"
+              value={aiTimeout}
+              min={10}
+              max={300}
+              step={10}
+              onChange={(v) => dispatch({ type: "UPDATE_GLOBAL", field: "ai_timeout", value: v || 60 })}
+              suffix="秒"
+            />
           </div>
 
-          {/* 默认超时 */}
-          <div>
-            <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "var(--s-text-secondary)", marginBottom: "8px" }}>
-              默认超时
-            </label>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <input
-                type="number"
-                value={aiTimeout}
-                min={10}
-                max={300}
-                step={10}
-                onChange={(e) =>
-                  dispatch({ type: "UPDATE_GLOBAL", field: "ai_timeout", value: parseInt(e.target.value) || 60 })
-                }
-                style={{
-                  width: "100px",
-                  padding: "10px 14px",
-                  background: "var(--s-bg-deep)",
-                  border: "1px solid var(--s-border)",
-                  borderRadius: "var(--s-radius-md)",
-                  color: "var(--s-text)",
-                  fontSize: "0.88rem",
-                  textAlign: "center",
-                }}
-              />
-              <span style={{ color: "var(--s-text-muted)", fontSize: "0.88rem" }}>秒</span>
+          {!aiProvider && (
+            <div className="config-warning">
+              ⚠️ 请先选择默认服务商，否则 AI 功能将无法正常使用
             </div>
-          </div>
+          )}
         </div>
-
-        {!aiProvider && (
-          <div
-            style={{
-              marginTop: "16px",
-              padding: "12px 16px",
-              background: "var(--s-warning-bg)",
-              border: "1px solid rgba(251, 191, 36, 0.3)",
-              borderRadius: "var(--s-radius-md)",
-              color: "var(--s-warning)",
-              fontSize: "0.88rem",
-            }}
-          >
-            ⚠️ 请先选择默认服务商，否则 AI 功能将无法正常使用
-          </div>
-        )}
       </Card>
 
       {/* 能力分组 */}
@@ -441,19 +310,19 @@ export const ModelsSection = memo(function ModelsSection({
         if (capabilities.length === 0) return null;
 
         return (
-          <Card
-            key={group.key}
-            title={group.title}
-            icon={group.icon}
-            desc={`${capabilities.length} 项能力`}
-          >
-            <p style={{ fontSize: "0.82rem", color: "var(--s-text-muted)", margin: "0 0 14px" }}>
-              {group.desc}
-            </p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "12px" }}>
+          <div key={group.key} className="capability-group">
+            <div className="group-header" style={{ borderLeftColor: group.color, background: `linear-gradient(90deg, ${group.color}1a, transparent)` }}>
+              <div className="group-icon" style={{ color: group.color }}>{group.icon}</div>
+              <div className="group-title-area">
+                <h3 className="group-title">{group.title}</h3>
+                <p className="group-desc">{group.desc}</p>
+              </div>
+              <div className="group-count">{capabilities.length} 项</div>
+            </div>
+            <div className="capabilities-grid">
               {capabilities.map((cap) => renderCapabilityCard(cap, group.color))}
             </div>
-          </Card>
+          </div>
         );
       })}
 

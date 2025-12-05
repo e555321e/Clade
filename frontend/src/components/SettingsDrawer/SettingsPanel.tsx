@@ -231,8 +231,8 @@ export function SettingsPanel({ config, onClose, onSave }: Props) {
           <ModelsSection
             providers={state.form.providers || {}}
             capabilityRoutes={state.form.capability_routes || {}}
-            aiProvider={state.form.ai_provider}
-            aiModel={state.form.ai_model}
+            aiProvider={state.form.ai_provider ?? null}
+            aiModel={state.form.ai_model ?? null}
             aiTimeout={state.form.ai_timeout || 60}
             dispatch={dispatch}
           />
@@ -333,7 +333,11 @@ export function SettingsPanel({ config, onClose, onSave }: Props) {
 
           {/* 内容区 */}
           <main className="settings-content">
-            <div className="content-scroll">{renderContent()}</div>
+            <div className="content-scroll">
+              <div key={state.tab} className="section-page">
+                {renderContent()}
+              </div>
+            </div>
           </main>
         </div>
 

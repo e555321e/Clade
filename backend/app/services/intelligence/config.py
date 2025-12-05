@@ -38,7 +38,9 @@ class IntelligenceConfig:
     potential_weight: float = 0.3
 
     # LLM invocation settings
-    enable_llm_calls: bool = True
+    # 【张量化重构】默认禁用 LLM 调用，张量系统已替代 mortality_modifier 和 speciation_signal
+    # 可通过 YAML 配置显式开启：intelligence.enable_llm_calls: true
+    enable_llm_calls: bool = False
     use_parallel_batches: bool = True
     llm_timeout_seconds: float = 60.0
 

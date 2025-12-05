@@ -366,7 +366,7 @@ SPECIES_PROMPTS = {
 1. 拉丁学名（按上述规则）
 2. 中文俗名（自然有画面感）
 3. 120-180字生物学描述（必须包含食性和栖息环境！）
-4. 关键演化创新点
+4. 关键演化特征
 5. 分化事件摘要和原因
 
 === 输出格式 ===
@@ -379,7 +379,7 @@ SPECIES_PROMPTS = {
     "diet_type": "继承或调整食性类型",
     "prey_species": ["继承或调整猎物列表"],
     "prey_preferences": {{"物种代码": 偏好比例}},
-    "key_innovations": ["1-3个创新点"],
+    "key_innovations": ["1-3个演化特征（器官/能力/形态）"],
     "trait_changes": {{"增强属性": "+数值", "减弱属性": "-数值"}},
     "morphology_changes": {{"body_length_cm": 0.8-1.3倍}},
     "event_description": "30-50字分化摘要",
@@ -532,7 +532,7 @@ SPECIES_PROMPTS = {
     {food_chain_status}
 
 === 任务目标 ===
-生成一个新物种（JSON格式），继承父系核心特征，渐进式创新适应压力，属性有增必有减。
+生成一个新物种（JSON格式），继承父系核心特征，渐进式演化适应压力，属性有增必有减。
 
 === 输出格式规范 ===
 返回标准 JSON 对象：
@@ -542,7 +542,7 @@ SPECIES_PROMPTS = {
     "description": "120-180字生物学描述，含食性和栖息环境",
     "habitat_type": "栖息地类型",
     "trophic_level": 1.0-5.5,
-    "key_innovations": ["演化创新点"],
+    "key_innovations": ["演化特征列表"],
     "trait_changes": {{"特质名称": "+数值"}}, 
     "morphology_changes": {{"统计名称": 倍数}},
     "event_description": "30-50字分化摘要",
@@ -569,84 +569,55 @@ SPECIES_PROMPTS = {
 
 只返回JSON对象。
 """,
-    "speciation_batch": """你是演化生物学家，批量推演动物物种的分化事件。
+    "speciation_batch": """你是演化生物学家，为以下物种分化设计**创意性演化内容**。
 
-**必须返回JSON格式，包含所有请求物种的分化结果。**
+=== 📊 演化预算（系统已计算，必须遵守）===
+- 总增益上限: {max_increase}
+- 单项上限: {single_max}
+- 时代属性上限: {era_caps}
+- 代价比例: {tradeoff_ratio}（系统自动计算代价，勿手动写削弱项）
 
-=== 环境背景 ===
-压力强度：{average_pressure:.2f}/10 | 压力来源：{pressure_summary}
-地形变化：{map_changes_summary} | 重大事件：{major_events_summary}
+=== 父系物种摘要 ===
+{parent_summary}
 
-=== 待分化物种 ===
-{species_list}
+=== 🌍 分化触发背景 ===
+{trigger_context}
 
-=== ⚠️ 硬性约束（违反将被系统强制修正）===
-
-【属性权衡】⚠️ 最重要！查看每个物种的【属性预算】：
-- 增加的属性值总和 ≤ 预算中的"增加≤+X"值（通常+2~+4）
-- 减少的属性值总和 ≥ 预算中的"减少≥-X"值（通常-1~-2）
-- 单项变化不超过±2.0
-- 必须有增有减，增减要平衡！
-- ✅ 正确: {{"耐寒性": "+1.0", "光照需求": "+0.5", "繁殖速度": "-0.8"}} (增+1.5, 减-0.8)
-- ❌ 错误: {{"耐寒性": "+3.0", "体型": "+2.0", "速度": "+1.5"}} (增+6.5超预算, 无减少)
-
-【营养级】只能变化±0.5（见每个物种条目的允许范围）
-
-【器官演化】⚠️ 最常见错误！
-- current_stage 必须与【器官约束】中给出的当前阶段一致
-- 新器官：current_stage=0 → target_stage=1
-- 已有器官：target_stage ≤ current_stage + 2
-- ✅ 父系sensory=1 → {{"current_stage": 1, "target_stage": 2}}
-- ❌ 父系sensory=1 → {{"current_stage": 4}} 会被修正
-
-【分化策略】
-- 高压区域（死亡率>50%）：演化抗逆性特征
-- 低压区域（死亡率<30%）：演化竞争性特征
-- 地理隔离：不同区域应有性状分歧
+=== 任务 ===
+1) 只输出演化特征与增益，不要提供任何代价/惩罚，系统会自动权衡。
+2) 为每个演化特征（器官/能力/形态）写出用途，并在 gains 中给出数值，必须在预算内且不超单项上限。
+3) 为每个物种生成拉丁学名、中文俗名、100-150字描述与分化事件摘要。
+4) 输出 JSON 对象，results 数组与输入 request_id 对应。
 
 === 输出格式 ===
-{{
-    "results": [
-        {{
-            "request_id": "请求ID",
-            "latin_name": "拉丁学名",
-            "common_name": "中文俗名",
-            "description": "100-150字描述",
-            "habitat_type": "marine/coastal/freshwater/terrestrial/aerial",
-            "trophic_level": 父代±0.5,
-            "key_innovations": ["创新点"],
-            "trait_changes": {{"增强属性": "+值", "减弱属性": "-值"}},
-            "morphology_changes": {{"body_length_cm": 0.8-1.3倍}},
-            "event_description": "30字分化摘要",
-            "reason": "分化原因",
-            "organ_evolution": [
-                {{"category": "器官类别", "action": "enhance/initiate", "current_stage": 当前阶段, "target_stage": 目标阶段, "structure_name": "结构名", "description": "变化描述"}}
-            ]
-        }}
-    ]
-}}
+{
+  "results": [
+    {
+      "request_id": "请求ID",
+      "latin_name": "学名",
+      "common_name": "中文俗名",
+      "description": "100-150字描述",
+      "innovations": [
+        {
+          "name": "演化特征名称",
+          "type": "organ/ability/morphology",
+          "description": "作用机理",
+          "gains": {"属性名": +数值}
+        }
+      ],
+      "event_description": "分化叙事"
+    }
+  ]
+}
 
-=== 命名规则 ===
-名字要像真实物种，自然、有依据。可自由组合创造！
-
-【拉丁学名】常用词根组合：
-- 地理/栖息地：borealis(北方)、australis(南方)、orientalis(东方)、montanus(山地)、abyssalis(深渊)、littoralis(沿岸)、pelagicus(远洋)
-- 形态特征：longus(长)、brevis(短)、magnus(大)、spinosus(多刺)、pinnatus(有鳍)、cornutus(有角)、armatus(有甲)、dentatus(有齿)
-- 颜色：niger(黑)、albus(白)、ruber(红)、aureus(金)、viridis(绿)、caeruleus(蓝)
-- 生态/习性：thermalis(热泉)、glacialis(冰川)、noctis(夜行)、velox(快速)、vorax(贪食)、ferox(凶猛)
-- 人名后缀：-i(属格，如darwini达尔文的)、-orum(复数属格)、-ae(女性属格)
-- 地名化：sinensis(中国)、japonicus(日本)、americanus(美洲)
-
-【中文俗名】多种风格可选：
+=== 命名提示（中文俗名可选风格）===
 - 环境+形态+类群：风崖长鳍鱼、玄渊盲螈、霜脊游龙
-- 人名+氏+类群：邓氏鱼、李氏螈、陈氏虫（纪念发现者/科学家）
+- 人名+氏+类群：邓氏鱼、李氏螈、陈氏虫
 - 地名+类群：澄江虫、热河鸟、辽西龙
 - 特征直译：三叶虫、盾皮鱼、棘皮动物
 - 行为/习性：伏击蟹、滤食贝、穴居蛇
-- ❌ 避免搞笑/卡通化/无意义组合
 
-只返回JSON。
-""",
+严格输出 JSON，不要使用 Markdown，不要包含代价或负向改动。""",
 
     "species_description_update": """你是科学记录员。该物种经历了漫长的渐进式演化，其数值特征已发生显著变化，但文字描述尚未更新。请重写描述以匹配当前数值。
 
@@ -667,7 +638,8 @@ SPECIES_PROMPTS = {
    - 必须将【数值变化】转化为生物学特征（例如：耐寒性大幅提升 -> "演化出了厚实的皮下脂肪层"）。
    - 结合【环境背景】解释适应性变化的原因（例如："为应对冰河时期的严寒..."）。
    - 如果有属性退化，也要提及（例如：视觉退化 -> "眼睛逐渐退化为感光点"）。
-2. 保持科学性与沉浸感。
+2. 避免与物种无关的泛化描述；不要加入未给出的祖先特征。百分比/倍数类表述需给出基准（如“体长由3cm增至4cm”），不要写“增加30%”这类无基准的模糊表述。
+3. 保持科学性与沉浸感。
 
 === 输出格式 ===
 返回标准 JSON 对象：
@@ -1006,7 +978,7 @@ SPECIATION_FRAGMENTS = {
 """,
     "constraints": """=== 约束条件 ===
 1. 权衡：净变化必须平衡（有增必有减）。
-2. 创新：必须回应区域特定的压力。
+2. 演化特征：必须针对该区域压力给出具体适应（器官/能力/形态）。
 3. 营养级：保持在 {trophic_range} 范围内。
 4. 预算：{trait_budget_summary}
 """,
@@ -1017,7 +989,7 @@ SPECIATION_FRAGMENTS = {
     "description": "描述...",
     "habitat_type": "...",
     "trophic_level": ...,
-    "key_innovations": [...],
+    "key_innovations": ["演化特征列表"],
     "trait_changes": {{"增强属性": "+值", "减弱属性": "-值"}},
     "morphology_changes": {{...}},
     "event_description": "...",
