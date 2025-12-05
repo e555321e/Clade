@@ -114,8 +114,8 @@ function WelcomePage() {
           <ul>
             <li><strong>地质演变系统</strong>：板块漂移、造山运动等功能已设计但尚未真正启用</li>
             <li><strong>气候长期变化</strong>：冰河期循环、温室效应等系统仍在调试</li>
-            <li><strong>部分高级生态模块</strong>：互利共生网络、适应性滞后等正在优化</li>
-            <li><strong>平衡性调整</strong>：物种参数、死亡率公式仍在持续迭代</li>
+            <li><strong>互利共生网络</strong>：传粉、种子散布等共生关系正在开发</li>
+            <li><strong>平衡性调整</strong>：张量系统参数、死亡率公式仍在持续迭代</li>
           </ul>
           <p className="dev-notice-footer">
             感谢你的参与！如遇到问题或有建议，欢迎向口袋反馈。
@@ -160,12 +160,12 @@ function WelcomePage() {
 
       <div className="guide-features">
         <div className="feature-card">
-          <div className="feature-icon" style={{ background: "rgba(167, 139, 250, 0.2)", color: "#a78bfa" }}>
-            <Sparkles size={20} />
+          <div className="feature-icon" style={{ background: "rgba(251, 146, 60, 0.2)", color: "#fb923c" }}>
+            <Activity size={20} />
           </div>
           <div className="feature-text">
-            <strong>涌现式叙事</strong>
-            <span>故事从生态系统的运行中自然涌现，每局游戏都独一无二</span>
+            <strong>张量计算引擎</strong>
+            <span>NumPy + SciPy 驱动的高性能生态模拟，毫秒级计算数百物种</span>
           </div>
         </div>
         <div className="feature-card">
@@ -179,11 +179,11 @@ function WelcomePage() {
         </div>
         <div className="feature-card">
           <div className="feature-icon" style={{ background: "rgba(56, 189, 248, 0.2)", color: "#38bdf8" }}>
-            <Activity size={20} />
+            <Sparkles size={20} />
           </div>
           <div className="feature-text">
-            <strong>AI 深度集成</strong>
-            <span>AI 生成物种、撰写叙事、分析生态动态、提供智能建议</span>
+            <strong>AI 叙事生成</strong>
+            <span>AI 生成新物种、撰写叙事，规则引擎处理背景物种节省 Token</span>
           </div>
         </div>
         <div className="feature-card">
@@ -256,22 +256,22 @@ function TimePage() {
         <div className="sequence-item">
           <div className="sequence-number">2</div>
           <div className="sequence-content">
-            <strong>生态拟真计算</strong>
-            <span>Allee 效应、密度依赖疾病、环境随机性、适应滞后等高级模块</span>
+            <strong>物种分档</strong>
+            <span>将物种分为 Critical（关键）、Focus（关注）、Background（背景）三档，分配计算资源</span>
           </div>
         </div>
         <div className="sequence-item">
           <div className="sequence-number">3</div>
           <div className="sequence-content">
-            <strong>食物网维护</strong>
-            <span>检查捕食关系、修复断裂的食物链、计算营养级联效应</span>
+            <strong>生态拟真计算</strong>
+            <span>Allee 效应、密度依赖疾病、环境随机性等高级模块</span>
           </div>
         </div>
         <div className="sequence-item">
           <div className="sequence-number">4</div>
           <div className="sequence-content">
-            <strong>死亡率计算</strong>
-            <span>每个地块独立计算：环境压力、资源竞争、捕食压力、疾病、随机事件</span>
+            <strong>张量死亡率计算</strong>
+            <span>使用 NumPy 张量并行计算所有地块的死亡率：温度适应、竞争压力、捕食压力、疾病</span>
           </div>
         </div>
         <div className="sequence-item">
@@ -291,15 +291,15 @@ function TimePage() {
         <div className="sequence-item">
           <div className="sequence-number">7</div>
           <div className="sequence-content">
-            <strong>演化分化检测</strong>
-            <span>检查地理隔离、种群规模、选择压力，决定是否产生新物种</span>
+            <strong>张量分化检测</strong>
+            <span>检测地理隔离（scipy 连通区域分析）和生态分歧（环境方差），触发分化信号</span>
           </div>
         </div>
         <div className="sequence-item">
           <div className="sequence-number">8</div>
           <div className="sequence-content">
-            <strong>AI 智能评估</strong>
-            <span>分析生态动态、识别关键事件、生成叙事报告、提供游戏建议</span>
+            <strong>物种分化生成</strong>
+            <span>AI 为关键物种生成新物种描述，背景物种使用规则引擎生成（节省 Token）</span>
           </div>
         </div>
       </div>
@@ -624,20 +624,23 @@ function PopulationPage() {
       </div>
 
       <div className="guide-intro">
-        <h3>死亡率计算</h3>
+        <h3>张量死亡率计算</h3>
         <p>
-          每个地块独立计算每个物种的死亡率。死亡率是多重压力的叠加，但有上限（通常不超过 95%，除非极端灾难）：
+          使用 <strong>NumPy 张量</strong>并行计算所有地块的死亡率。
+          死亡率是多重压力的叠加，但有上限（通常不超过 95%，除非极端灾难）：
         </p>
         <ul className="guide-list">
-          <li><strong>基础死亡率</strong>：物种固有的自然死亡率（寿命相关）</li>
-          <li><strong>环境压力</strong>：温度偏离最适值、湿度不适、海拔限制</li>
-          <li><strong>资源短缺</strong>：超过承载力时的饥饿，按 (N-K)/N 比例增加</li>
+          <li><strong>温度适应</strong>：基于物种最适温度和容忍度计算温度压力张量</li>
           <li><strong>竞争压力</strong>：生态位重叠物种的竞争强度 × 相对种群密度</li>
           <li><strong>捕食压力</strong>：捕食者数量 × 捕食效率 × 反捕食能力修正</li>
+          <li><strong>资源短缺</strong>：超过承载力时的饥饿，按 (N-K)/N 比例增加</li>
           <li><strong>疾病压力</strong>：高密度时疾病爆发风险增加（密度依赖）</li>
           <li><strong>Allee 效应</strong>：种群过小时额外死亡率（繁殖困难、群体防御崩溃）</li>
           <li><strong>随机事件</strong>：环境随机变异带来的额外压力</li>
         </ul>
+        <p>
+          <em>张量系统可以在毫秒级完成数百物种在数千地块的死亡率计算。</em>
+        </p>
       </div>
 
       <div className="guide-intro">
@@ -778,16 +781,26 @@ function EvolutionPage() {
       </div>
 
       <div className="guide-intro">
-        <h3>分化的必要条件</h3>
-        <p>当一个物种满足以下条件时，可能发生分化：</p>
+        <h3>张量分化检测</h3>
+        <p>
+          Clade 使用<strong>张量系统</strong>（NumPy + SciPy）进行分化检测，完全不消耗 LLM Token。
+          当物种满足以下条件时，系统会触发分化信号：
+        </p>
       </div>
 
       <div className="speciation-conditions">
         <div className="condition-item">
           <div className="condition-icon">🏝️</div>
           <div className="condition-text">
-            <strong>地理隔离</strong>
-            <span>种群分布在不连通的地块集群，无法进行基因交流。山脉、海洋、沙漠都可以成为隔离屏障。</span>
+            <strong>地理隔离检测</strong>
+            <span>使用 scipy.ndimage.label 分析种群分布的连通区域。当种群分布在 ≥2 个不连通地块集群时触发。</span>
+          </div>
+        </div>
+        <div className="condition-item">
+          <div className="condition-icon">🌡️</div>
+          <div className="condition-text">
+            <strong>生态分歧检测</strong>
+            <span>计算物种分布区域内的环境方差。当同一物种在不同地块的环境差异超过阈值时触发。</span>
           </div>
         </div>
         <div className="condition-item">
@@ -800,15 +813,8 @@ function EvolutionPage() {
         <div className="condition-item">
           <div className="condition-icon">⚡</div>
           <div className="condition-text">
-            <strong>选择压力差异</strong>
-            <span>不同隔离区的环境条件不同，导致自然选择方向不同。相同环境下的种群不会分化。</span>
-          </div>
-        </div>
-        <div className="condition-item">
-          <div className="condition-icon">⏳</div>
-          <div className="condition-text">
-            <strong>时间积累</strong>
-            <span>分化需要足够多的世代让遗传差异积累。微生物分化快，大型动物分化慢。</span>
+            <strong>分化限制</strong>
+            <span>每回合最多 20 个物种进行 AI 分化，背景物种使用规则引擎生成，防止 Token 爆炸。</span>
           </div>
         </div>
       </div>
@@ -1219,16 +1225,29 @@ function AdvancedPage() {
       </div>
 
       <div className="guide-intro">
-        <h3>AI 智能系统</h3>
+        <h3>张量计算系统</h3>
         <p>
-          Clade 深度集成 AI 能力，不仅用于生成内容，更用于<strong>生态分析和平衡</strong>：
+          Clade 的核心计算引擎基于 <strong>NumPy + SciPy</strong> 张量系统，提供高性能生态模拟：
         </p>
         <ul className="guide-list">
+          <li><strong>张量死亡率</strong>：并行计算数百物种在数千地块的死亡率，毫秒级完成</li>
+          <li><strong>张量分化检测</strong>：使用连通区域分析检测地理隔离，无 LLM 消耗</li>
+          <li><strong>自动代价权衡</strong>：物种特质的增益与代价自动平衡（TradeoffCalculator）</li>
+          <li><strong>影子状态</strong>：维护独立的张量状态，与数据库解耦提高效率</li>
+        </ul>
+      </div>
+
+      <div className="guide-intro">
+        <h3>AI 叙事系统</h3>
+        <p>
+          AI 能力专注于<strong>创意生成</strong>，数值计算交给张量系统：
+        </p>
+        <ul className="guide-list">
+          <li><strong>物种分化</strong>：AI 为新物种生成名称、描述、器官演化（每回合最多 20 个）</li>
+          <li><strong>杂交创造</strong>：AI 融合双亲特征，创造独特的混种生物</li>
+          <li><strong>回合叙事</strong>：AI 撰写回合报告，记录关键事件和演化故事</li>
+          <li><strong>规则引擎</strong>：背景物种使用规则引擎生成，零 Token 消耗</li>
           <li><strong>语义生态位</strong>：使用嵌入向量表示生态位，自动推断物种间关系</li>
-          <li><strong>物种生成</strong>：AI 根据你的描述设计在生态上合理的物种</li>
-          <li><strong>叙事生成</strong>：AI 撰写回合报告，记录关键事件和演化故事</li>
-          <li><strong>平衡修正</strong>：AI 评估不合理的参数并提供修正建议</li>
-          <li><strong>趋势分析</strong>：识别生态系统的长期趋势和潜在风险</li>
         </ul>
       </div>
 
