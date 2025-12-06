@@ -2427,12 +2427,13 @@ class BuildReportStage(BaseStage):
         
         if skip_report:
             logger.info(f"[报告] 回合 {ctx.turn_index} 跳过报告生成 (auto_reports=False)")
-            # 创建一个最简报告，只包含基本信息
+            # 创建一个最简报告，但仍包含物种数据
+            species_data = self._build_simple_species_data(ctx)
             ctx.report = TurnReport(
                 turn_index=ctx.turn_index,
                 narrative=f"回合 {ctx.turn_index} 完成。",
                 pressures_summary="",
-                species=[],
+                species=species_data,
                 branching_events=ctx.branching_events or [],
                 major_events=ctx.major_events or [],
             )
@@ -2485,18 +2486,127 @@ class BuildReportStage(BaseStage):
             logger.warning("[报告生成] 超时，使用简单模式")
             ctx.emit_event("warning", "⏱️ AI 超时，使用快速模式", "报告")
             
-            # 构建简单报告
+            # 构建简单报告，但仍包含物种数据
             from ..schemas.responses import TurnReport
+            species_data = self._build_simple_species_data(ctx)
             ctx.report = TurnReport(
                 turn_index=ctx.turn_index,
                 narrative="本回合报告生成超时。",
                 pressures_summary=str(ctx.modifiers),
-                species=[],
+                species=species_data,
                 branching_events=ctx.branching_events,
                 major_events=ctx.major_events,
             )
         except Exception as e:
             logger.error(f"[报告生成] 失败: {e}")
+    
+    def _build_simple_species_data(self, ctx: SimulationContext) -> list:
+        """从上下文中构建简单的物种快照列表（用于跳过报告或超时时）"""
+        from ..schemas.responses import SpeciesSnapshot
+        
+        species_data = []
+        
+        # 计算总种群（用于计算 population_share）
+        total_population = 0
+        if ctx.combined_results:
+            for result in ctx.combined_results:
+                if hasattr(result, 'final_population'):
+                    total_population += result.final_population or 0
+                elif hasattr(result, 'species'):
+                    total_population += result.species.morphology_stats.get("population", 0)
+        
+        if total_population == 0:
+            total_population = 1  # 避免除零
+        
+        # 从 combined_results 构建物种快照
+        if ctx.combined_results:
+            for result in ctx.combined_results:
+                if hasattr(result, 'species') and hasattr(result, 'death_rate'):
+                    species = result.species
+                    pop = getattr(result, 'final_population', 0) or species.morphology_stats.get("population", 0)
+                    initial_pop = getattr(result, 'initial_population', 0) or pop
+                    deaths = getattr(result, 'deaths', 0)
+                    births = getattr(result, 'births', 0)
+                    
+                    species_data.append(SpeciesSnapshot(
+                        lineage_code=species.lineage_code,
+                        latin_name=species.latin_name,
+                        common_name=species.common_name,
+                        population=pop,
+                        population_share=pop / total_population,
+                        deaths=deaths,
+                        death_rate=result.death_rate,
+                        net_change_rate=(pop - initial_pop) / max(1, initial_pop),
+                        ecological_role=self._get_ecological_role(species.trophic_level),
+                        status=species.status,
+                        notes=[],
+                        is_background=getattr(result, 'is_background', False),
+                        trophic_level=species.trophic_level,
+                        initial_population=initial_pop,
+                        births=births,
+                        survivors=getattr(result, 'survivors', 0),
+                    ))
+        
+        # 如果没有 combined_results，尝试从 species_batch 构建
+        if not species_data and ctx.species_batch:
+            for species in ctx.species_batch:
+                pop = species.morphology_stats.get("population", 0)
+                species_data.append(SpeciesSnapshot(
+                    lineage_code=species.lineage_code,
+                    latin_name=species.latin_name,
+                    common_name=species.common_name,
+                    population=pop,
+                    population_share=pop / total_population if total_population > 0 else 0,
+                    deaths=0,
+                    death_rate=0.0,
+                    net_change_rate=0.0,
+                    ecological_role=self._get_ecological_role(species.trophic_level),
+                    status=species.status,
+                    notes=[],
+                    is_background=species.is_background,
+                    trophic_level=species.trophic_level,
+                    initial_population=pop,
+                    births=0,
+                    survivors=pop,
+                ))
+        
+        # 添加灭绝物种
+        if ctx.all_species:
+            existing_codes = {s.lineage_code for s in species_data}
+            for species in ctx.all_species:
+                if species.status == "extinct" and species.lineage_code not in existing_codes:
+                    species_data.append(SpeciesSnapshot(
+                        lineage_code=species.lineage_code,
+                        latin_name=species.latin_name,
+                        common_name=species.common_name,
+                        population=0,
+                        population_share=0,
+                        deaths=0,
+                        death_rate=1.0,
+                        net_change_rate=-1.0,
+                        ecological_role=self._get_ecological_role(species.trophic_level),
+                        status="extinct",
+                        notes=[],
+                        is_background=species.is_background,
+                        trophic_level=species.trophic_level,
+                        initial_population=0,
+                        births=0,
+                        survivors=0,
+                    ))
+        
+        logger.info(f"[报告] 简单模式构建物种数据: {len(species_data)} 个物种")
+        return species_data
+    
+    def _get_ecological_role(self, trophic_level: float) -> str:
+        """根据营养级获取生态角色"""
+        if trophic_level <= 1.0:
+            return "producer"
+        elif trophic_level <= 2.0:
+            return "primary_consumer"
+        elif trophic_level <= 3.0:
+            return "secondary_consumer"
+        else:
+            return "apex_predator"
 
 
 class SaveMapSnapshotStage(BaseStage):
