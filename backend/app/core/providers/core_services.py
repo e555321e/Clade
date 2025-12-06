@@ -154,6 +154,13 @@ class CoreServiceProvider:
                         model=self.settings.speciation_model,
                         extra_body={"response_format": {"type": "json_object"}}
                     ),
+                    
+                    # Species generation (requires LLM)
+                    "species_generation": ModelConfig(
+                        provider="openai", 
+                        model=self.settings.speciation_model,
+                        extra_body={"response_format": {"type": "json_object"}}
+                    ),
                 },
                 base_url=self.settings.ai_base_url,
                 api_key=self.settings.ai_api_key,
