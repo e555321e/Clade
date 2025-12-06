@@ -227,6 +227,19 @@ class SpeciationService:
                     direct_offspring_map[parent] = []
                 direct_offspring_map[parent].append(sp)
         
+        # 【新增】本回合亲本子代计数（共享杂交/分化）
+        from collections import Counter
+        turn_offspring_counts: Counter[str] = Counter()
+        for sp in all_species:
+            parent = sp.parent_code
+            if parent and getattr(sp, "created_turn", -1) == turn_index:
+                turn_offspring_counts[parent] += 1
+        # 共享给后续阶段（如自动杂交）
+        try:
+            ctx.turn_offspring_counts = turn_offspring_counts  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        
         for result in mortality_results:
             species = result.species
             lineage_code = species.lineage_code
@@ -235,6 +248,7 @@ class SpeciationService:
             # 检查该物种是否已达到最大直接后代数量
             max_direct_offspring = spec_config.max_direct_offspring
             count_only_alive = spec_config.count_only_alive_offspring
+            max_offspring_per_parent_per_turn = spec_config.max_hybrids_per_parent_per_turn
             
             direct_children = direct_offspring_map.get(lineage_code, [])
             if count_only_alive:
@@ -250,6 +264,16 @@ class SpeciationService:
                     f"直接后代数量({alive_children_count})已达上限({max_direct_offspring})，跳过分化"
                 )
                 continue
+            
+            # 【新增】按回合限制：杂交/分化共享计数
+            if max_offspring_per_parent_per_turn and max_offspring_per_parent_per_turn > 0:
+                turn_children = turn_offspring_counts.get(lineage_code, 0)
+                if turn_children >= max_offspring_per_parent_per_turn:
+                    logger.debug(
+                        f"[分化限制-本回合] {species.common_name}: "
+                        f"本回合子代数({turn_children})已达上限({max_offspring_per_parent_per_turn})，跳过分化"
+                    )
+                    continue
             
             # ========== 【种群数量门槛检查】==========
             # 整体种群低于最小门槛的物种不允许分化
@@ -1321,7 +1345,21 @@ class SpeciationService:
             )
             logger.info(f"[分化] 新物种 {new_species.common_name} created_turn={new_species.created_turn} (传入的turn_index={turn_index})")
             new_species = species_repository.upsert(new_species)
+            # 记录本回合亲本子代计数（与杂交共享上限）
+            parent_code = ctx["parent"].lineage_code
+            try:
+                turn_offspring_counts[parent_code] += 1
+                ctx.turn_offspring_counts = turn_offspring_counts  # type: ignore[attr-defined]
+            except Exception:
+                pass
             logger.info(f"[分化] upsert后 {new_species.common_name} created_turn={new_species.created_turn}")
+            # 记录本回合亲本子代计数（与杂交共享上限）
+            parent_code = ctx["parent"].lineage_code
+            try:
+                turn_offspring_counts[parent_code] += 1
+                ctx.turn_offspring_counts = turn_offspring_counts  # type: ignore[attr-defined]
+            except Exception:
+                pass
             
             # 【描述增强】如果使用了规则fallback，将物种加入增强队列
             if ai_content.get("_is_rule_fallback"):

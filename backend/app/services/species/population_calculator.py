@@ -153,15 +153,20 @@ class PopulationCalculator:
         # 【新增】随机变化：±20%，避免完全相同
         random_factor = 0.8 + random.random() * 0.4  # 0.8 - 1.2
         
-        # 计算最终值
+        # 计算最终值（基础值）
         initial_pop = int(base_initial * trophic_modifier * weight_modifier * random_factor)
+        
+        # 【调高开局规模】加速前几回合接近承载力
+        # 让剧本开局的物种在1-3回合内形成竞争
+        INITIAL_BOOST = 5.0
+        initial_pop = int(initial_pop * INITIAL_BOOST)
         
         # 应用栖息地质量
         habitat_quality = max(0.5, min(2.0, habitat_quality))
         initial_pop = int(initial_pop * habitat_quality)
         
         # 边界限制（扩大范围以体现差异）
-        initial_pop = max(2_000, min(initial_pop, 2_000_000))
+        initial_pop = max(10_000, min(initial_pop, 10_000_000))
         
         return initial_pop
     

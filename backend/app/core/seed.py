@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 
@@ -29,8 +29,8 @@ A_SCENARIO = [
         "morphology_stats": {
             # 【平衡调整】从小族群开始演化
             # 初始种群较小，让物种有增长空间
-            # 微藻作为生产者，初始 10万，通过繁殖增长到承载力
-            "population": 100000,  # 10万（从小族群开始）
+            # 微藻作为生产者，初始 500万，加速前几回合形成食物网
+            "population": 5000000,  # 500万
             "body_length_cm": 0.0008,
             "body_weight_g": 0.000000001,  # 1纳克
             "body_surface_area_cm2": 0.000002,
@@ -89,7 +89,6 @@ A_SCENARIO = [
         "habitat_type": "marine",  # 海洋生物
         "trophic_level": 2.0,  # T2: 初级消费者（吃微藻的浮游动物）
         "diet_type": "herbivore",  # 【新增】草食性
-        # 【关键修复】建立食物链关系
         "prey_species": ["A1"],  # 捕食微藻
         "prey_preferences": {"A1": 1.0},  # 100%依赖微藻
         "description": (
@@ -99,8 +98,7 @@ A_SCENARIO = [
         ),
         "morphology_stats": {
             # 【平衡调整】从小族群开始演化
-            # 初级消费者，初始 2万，让生态金字塔逐渐形成
-            "population": 20000,  # 2万（从小族群开始）
+            "population": 500000,  
             "body_length_cm": 0.0015,
             "body_weight_g": 0.000000003,  # 3纳克
             "body_surface_area_cm2": 0.000007,
@@ -167,8 +165,8 @@ A_SCENARIO = [
         ),
         "morphology_stats": {
             # 【平衡调整】从小族群开始演化
-            # 深海生态系统的基础生产者，初始 5万
-            "population": 50000,  # 5万（从小族群开始）
+            # 深海生态系统的基础生产者，初始 25万
+            "population": 250000,  # 25万
             "body_length_cm": 0.0005,
             "body_weight_g": 0.0000000005,  # 0.5纳克
             "body_surface_area_cm2": 0.000001,
@@ -244,7 +242,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "经历150万年演化，已形成稳定的群体协作机制。"
         ),
         "morphology_stats": {
-            "population": 800000,  # 80万群体
+            "population": 1600000,  # 160万群体
             "body_length_cm": 0.2,  # 2mm群体
             "body_weight_g": 0.00001,
             "body_surface_area_cm2": 0.12,
@@ -308,7 +306,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "为后续陆地生态系统的建立奠定了基础。"
         ),
         "morphology_stats": {
-            "population": 500000,
+            "population": 1000000,
             "body_length_cm": 0.5,
             "body_weight_g": 0.001,
             "body_surface_area_cm2": 0.3,
@@ -377,7 +375,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "是淡水生态系统的基础生产者，支撑着整个淡水食物链。"
         ),
         "morphology_stats": {
-            "population": 1200000,
+            "population": 2400000,
             "body_length_cm": 0.001,
             "body_weight_g": 0.0000001,
             "body_surface_area_cm2": 0.000003,
@@ -434,7 +432,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "是深海生态系统的基础，支撑着独特的深海食物链。"
         ),
         "morphology_stats": {
-            "population": 300000,
+            "population": 600000,
             "body_length_cm": 0.0003,
             "body_weight_g": 0.0000000003,
             "body_surface_area_cm2": 0.0000005,
@@ -497,7 +495,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "繁殖迅速，是海洋食物链中重要的次级生产者。"
         ),
         "morphology_stats": {
-            "population": 400000,
+            "population": 800000,
             "body_length_cm": 0.01,
             "body_weight_g": 0.00000005,
             "body_surface_area_cm2": 0.0003,
@@ -562,7 +560,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "移动缓慢但稳定，壳体提供了良好的保护。"
         ),
         "morphology_stats": {
-            "population": 150000,
+            "population": 300000,
             "body_length_cm": 0.8,
             "body_weight_g": 0.3,
             "body_surface_area_cm2": 1.5,
@@ -627,7 +625,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "对水质敏感，常被用作环境指示生物。"
         ),
         "morphology_stats": {
-            "population": 600000,
+            "population": 1200000,
             "body_length_cm": 0.2,
             "body_weight_g": 0.0001,
             "body_surface_area_cm2": 0.1,
@@ -692,7 +690,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "夜间活动，白天躲避在石头或树皮下避免干燥。"
         ),
         "morphology_stats": {
-            "population": 200000,
+            "population": 400000,
             "body_length_cm": 1.5,
             "body_weight_g": 0.5,
             "body_surface_area_cm2": 2.0,
@@ -759,7 +757,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "生活史包含水螅体和水母体两种形态的世代交替。"
         ),
         "morphology_stats": {
-            "population": 100000,
+            "population": 200000,
             "body_length_cm": 3.0,
             "body_weight_g": 5.0,
             "body_surface_area_cm2": 30.0,
@@ -824,7 +822,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "夜间上升到浅层捕食，白天下沉到深处休息。"
         ),
         "morphology_stats": {
-            "population": 50000,
+            "population": 100000,
             "body_length_cm": 5.0,
             "body_weight_g": 30.0,
             "body_surface_area_cm2": 50.0,
@@ -896,7 +894,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "皮肤需保持湿润，不能远离水源。"
         ),
         "morphology_stats": {
-            "population": 80000,
+            "population": 160000,
             "body_length_cm": 5.0,
             "body_weight_g": 2.0,
             "body_surface_area_cm2": 8.0,
@@ -963,7 +961,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "游泳能力出色，是当时海洋中最危险的掠食者。"
         ),
         "morphology_stats": {
-            "population": 15000,
+            "population": 30000,
             "body_length_cm": 30.0,
             "body_weight_g": 500.0,
             "body_surface_area_cm2": 400.0,
@@ -1036,7 +1034,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "具有毒腺，毒液可麻痹猎物。敏捷的捕食者。"
         ),
         "morphology_stats": {
-            "population": 25000,
+            "population": 50000,
             "body_length_cm": 20.0,
             "body_weight_g": 15.0,
             "body_surface_area_cm2": 80.0,
@@ -1107,7 +1105,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "是生态系统物质循环的关键环节，默默维持着生态平衡。"
         ),
         "morphology_stats": {
-            "population": 5000000,  # 以群落计
+            "population": 10000000,  # 以群落计
             "body_length_cm": 0.0002,
             "body_weight_g": 0.0000000001,
             "body_surface_area_cm2": 0.0000001,
@@ -1161,7 +1159,7 @@ THRIVING_ECOSYSTEM_SCENARIO = [
             "与化能细菌形成紧密的互利共生关系。"
         ),
         "morphology_stats": {
-            "population": 30000,
+            "population": 60000,
             "body_length_cm": 40.0,
             "body_weight_g": 80.0,
             "body_surface_area_cm2": 200.0,

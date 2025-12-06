@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
@@ -120,7 +120,31 @@ class EnvironmentRepository:
     def write_habitats(self, habitats: Iterable[HabitatPopulation]) -> None:
         with session_scope() as session:
             for habitat in habitats:
-                session.add(habitat)
+                # 容错：确保类型合法，避免 sqlite "type 'set' is not supported"
+                try:
+                    if not isinstance(habitat.population, int):
+                        habitat.population = int(habitat.population or 0)
+                except Exception:
+                    habitat.population = 0
+                
+                ti = getattr(habitat, "turn_index", 0)
+                if not isinstance(ti, int):
+                    # 如果传入了 set/list 等异常类型，回退为最大值或 0
+                    try:
+                        if isinstance(ti, (set, list, tuple)):
+                            ti = max(ti) if ti else 0
+                        else:
+                            ti = int(ti)
+                    except Exception:
+                        ti = 0
+                    habitat.turn_index = ti
+                    logger.warning(f"[环境仓储] 修正非法 turn_index 类型为 {ti}")
+                
+                try:
+                    session.add(habitat)
+                except Exception as e:
+                    logger.error(f"[环境仓储] 写入栖息地失败: {e} | habitat={habitat}")
+                    raise
 
     def latest_habitats(
         self,

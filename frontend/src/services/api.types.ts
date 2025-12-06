@@ -418,6 +418,7 @@ export interface SpeciationConfig {
   auto_hybridization_chance?: number;   // 自动杂交检测概率
   hybridization_success_rate?: number;  // 杂交成功率
   max_hybrids_per_turn?: number;        // 每回合最多杂交数量
+  max_hybrids_per_parent_per_turn?: number; // 单亲本每回合杂交子代上限
   min_population_for_hybridization?: number;  // 杂交所需的最小种群数量
   
   // ========== 灭绝阈值 ==========

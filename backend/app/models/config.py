@@ -134,6 +134,8 @@ class SpeciationConfig(BaseModel):
     hybridization_success_rate: float = 0.35
     # 每回合最多杂交数量
     max_hybrids_per_turn: int = 2
+    # 每个亲本每回合允许产生的杂交子代上限
+    max_hybrids_per_parent_per_turn: int = 1
     # 杂交所需的最小生物量（每个亲本物种，kg）
     # 设为 20,000 kg 确保双亲都有足够规模
     min_population_for_hybridization: int = 20000

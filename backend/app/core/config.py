@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 from pathlib import Path
@@ -103,6 +103,8 @@ class Settings(BaseSettings):
     hybridization_success_rate: float = Field(default=0.35, alias="HYBRIDIZATION_SUCCESS_RATE")
     # 每回合最多杂交数量
     max_hybrids_per_turn: int = Field(default=2, alias="MAX_HYBRIDS_PER_TURN")
+    # 每个亲本每回合允许产生的杂交子代上限
+    max_hybrids_per_parent_per_turn: int = Field(default=1, alias="MAX_HYBRIDS_PER_PARENT_PER_TURN")
     
     # ========== AI 功能开关 ==========
     # 回合报告 LLM 叙事开关（与 AI 物种叙事分开控制）

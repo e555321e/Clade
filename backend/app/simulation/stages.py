@@ -1903,6 +1903,20 @@ class AutoHybridizationStage(BaseStage):
         existing_codes = {sp.lineage_code for sp in ctx.species_batch}
         hybrids_created = 0
         checked_pairs = set()
+        # 共享分化/杂交的本回合子代计数
+        from collections import Counter
+        turn_offspring_counts = getattr(ctx, "turn_offspring_counts", None)
+        if not isinstance(turn_offspring_counts, Counter):
+            turn_offspring_counts = Counter()
+            for sp in ctx.species_batch:
+                parent = getattr(sp, "parent_code", None)
+                if parent and getattr(sp, "created_turn", -1) == ctx.turn_index:
+                    turn_offspring_counts[parent] += 1
+            try:
+                ctx.turn_offspring_counts = turn_offspring_counts  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        max_hybrids_per_parent = spec_config.max_hybrids_per_parent_per_turn
         
         # 遍历所有物种对
         for i, sp1 in enumerate(candidate_species):
@@ -1930,6 +1944,14 @@ class AutoHybridizationStage(BaseStage):
                 # 计算遗传距离，判断是否可杂交
                 can_hybrid, fertility = hybridization_service.can_hybridize(sp1, sp2)
                 if not can_hybrid:
+                    continue
+                
+                # 亲本杂交子代数量上限检查
+                p1_code = sp1.lineage_code
+                p2_code = sp2.lineage_code
+                if turn_offspring_counts.get(p1_code, 0) >= max_hybrids_per_parent:
+                    continue
+                if turn_offspring_counts.get(p2_code, 0) >= max_hybrids_per_parent:
                     continue
                 
                 # 【步骤1】计算杂交检测概率
@@ -2001,6 +2023,12 @@ class AutoHybridizationStage(BaseStage):
                     ctx.auto_hybrids.append(hybrid)
                     existing_codes.add(hybrid.lineage_code)
                     hybrids_created += 1
+                    turn_offspring_counts[p1_code] = turn_offspring_counts.get(p1_code, 0) + 1
+                    turn_offspring_counts[p2_code] = turn_offspring_counts.get(p2_code, 0) + 1
+                    try:
+                        ctx.turn_offspring_counts = turn_offspring_counts  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
                     
                     logger.info(
                         f"[自动杂交] 成功: {hybrid.common_name} "

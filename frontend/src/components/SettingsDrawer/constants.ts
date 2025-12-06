@@ -164,6 +164,7 @@ export const DEFAULT_SPECIATION_CONFIG: SpeciationConfig = {
   auto_hybridization_chance: 0.08,
   hybridization_success_rate: 0.35,
   max_hybrids_per_turn: 2,
+  max_hybrids_per_parent_per_turn: 1,
   min_population_for_hybridization: 20000,
   // 灭绝阈值
   extinction_population_threshold: 100,

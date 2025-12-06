@@ -398,6 +398,16 @@ export const SpeciationSection = memo(function SpeciationSection({
           onChange={(v) => handleUpdate({ max_hybrids_per_turn: v })}
           suffix="个"
         />
+        <NumberInput
+          label="单亲本每回合上限"
+          desc="限制每个亲本每回合最多产生的杂交子代数量"
+          value={c.max_hybrids_per_parent_per_turn ?? 1}
+          min={0}
+          max={5}
+          step={1}
+          onChange={(v) => handleUpdate({ max_hybrids_per_parent_per_turn: v })}
+          suffix="个"
+        />
       </Card>
     </div>
   );
