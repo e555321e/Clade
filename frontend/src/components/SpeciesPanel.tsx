@@ -4,7 +4,7 @@ import {
   RefreshCw, Edit2, Save, X, Zap, GitBranch, GitMerge,
   ChevronRight, ChevronDown, Eye, Search, BarChart3, Sparkles,
   Activity, Target, Dna, Crown, Shield, Heart, Leaf, Flame,
-  Users, MapPin, Clock, Award, Star, Layers
+  Users, MapPin, Clock, Award, Star, Layers, Info
 } from "lucide-react";
 import { 
   ResponsiveContainer, RadarChart, PolarGrid, 
@@ -16,6 +16,7 @@ import type { SpeciesDetail, SpeciesSnapshot } from "@/services/api.types";
 import { fetchSpeciesDetail, editSpecies, fetchWatchlist, updateWatchlist } from "@/services/api";
 import { OrganismBlueprint } from "./OrganismBlueprint";
 import { SpeciesAITab } from "./SpeciesAITab";
+import { SpeciesDetailModal } from "./SpeciesDetailModal";
 
 interface Props {
   speciesList: SpeciesSnapshot[];
@@ -180,6 +181,7 @@ export function SpeciesPanel({
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(["stats", "morphology"]));
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
+  const [detailModalSpeciesId, setDetailModalSpeciesId] = useState<string | null>(null);
 
   // 加载关注列表
   useEffect(() => {
@@ -495,6 +497,36 @@ export function SpeciesPanel({
                   <span>{trend.label}</span>
                 </div>
               </div>
+
+              {/* 查看详情按钮 */}
+              <button
+                className="sp-detail-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDetailModalSpeciesId(s.lineage_code);
+                }}
+                title="查看详情"
+                style={{
+                  position: 'absolute',
+                  bottom: '8px',
+                  right: '8px',
+                  background: `${role.color}20`,
+                  border: `1px solid ${role.color}40`,
+                  borderRadius: '8px',
+                  padding: '6px 12px',
+                  cursor: 'pointer',
+                  color: role.color,
+                  fontSize: '0.75rem',
+                  fontWeight: 500,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  zIndex: 10,
+                }}
+              >
+                <Info size={12} />
+                <span>详情</span>
+              </button>
 
               {/* 选中箭头 */}
               <div className={`sp-card-arrow ${isSelected ? "visible" : ""}`}>
@@ -1015,7 +1047,17 @@ export function SpeciesPanel({
 
   return (
     <div className="species-panel-v2">
-      {selectedSpeciesId ? renderDetailView() : renderListView()}
+      {/* 始终显示列表视图，详情通过弹窗展示 */}
+      {renderListView()}
+      
+      {/* 物种详情弹窗 */}
+      <SpeciesDetailModal
+        speciesId={detailModalSpeciesId || ""}
+        snapshot={speciesList.find(s => s.lineage_code === detailModalSpeciesId)}
+        isOpen={detailModalSpeciesId !== null}
+        onClose={() => setDetailModalSpeciesId(null)}
+        previousPopulations={previousPopulations}
+      />
       
       <style>{`
         .species-panel-v2 {
@@ -1605,6 +1647,22 @@ export function SpeciesPanel({
         .sp-card-arrow.visible {
           opacity: 1;
           transform: translateX(4px);
+        }
+
+        /* 详情按钮 */
+        .sp-detail-btn {
+          opacity: 0;
+          transition: all 0.2s ease;
+        }
+        
+        .sp-card:hover .sp-detail-btn,
+        .sp-card.hovered .sp-detail-btn {
+          opacity: 1;
+        }
+        
+        .sp-detail-btn:hover {
+          filter: brightness(1.2);
+          transform: scale(1.05);
         }
 
         /* 空状态 */

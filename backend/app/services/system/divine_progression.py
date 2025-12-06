@@ -996,6 +996,68 @@ class DivineProgressionService:
         """获取所有神迹信息"""
         return [self.get_miracle_info(mid) for mid in MIRACLES.keys()]
     
+    def execute_miracle(self, miracle_id: str, current_turn: int) -> tuple[bool, str, dict]:
+        """执行神迹（立即触发，非蓄力式）
+        
+        返回: (成功, 消息, 效果描述)
+        """
+        if miracle_id not in MIRACLES:
+            return False, "未知的神迹", {}
+        
+        miracle = MIRACLES[miracle_id]
+        
+        # 检查一次性神迹
+        if miracle.one_time and miracle_id in self._state.miracle_state.used_one_time:
+            return False, f"「{miracle.name}」只能使用一次", {}
+        
+        # 检查冷却
+        cooldown = self._state.miracle_state.cooldowns.get(miracle_id, 0)
+        if cooldown > 0:
+            return False, f"「{miracle.name}」冷却中（还需{cooldown}回合）", {}
+        
+        # 检查是否正在蓄力其他神迹
+        if self._state.miracle_state.charging:
+            return False, "正在蓄力另一个神迹，无法同时执行", {}
+        
+        # 检查能量（通过外部能量服务）
+        from .divine_energy import divine_energy_service
+        if divine_energy_service.get_state().current < miracle.cost:
+            return False, f"神力不足（需要{miracle.cost}，当前{divine_energy_service.get_state().current}）", {}
+        
+        # 消耗能量
+        divine_energy_service.consume(miracle.cost, f"执行神迹「{miracle.name}」")
+        
+        # 设置冷却
+        self._state.miracle_state.cooldowns[miracle_id] = miracle.cooldown
+        self._state.miracle_state.miracles_cast += 1
+        
+        # 记录一次性神迹
+        if miracle.one_time:
+            self._state.miracle_state.used_one_time.append(miracle_id)
+        
+        # 构建效果描述
+        effect = {
+            "miracle_id": miracle_id,
+            "miracle_name": miracle.name,
+            "miracle_icon": miracle.icon,
+            "description": miracle.description,
+            "cost": miracle.cost,
+            "turn_executed": current_turn,
+        }
+        
+        logger.info(f"[神迹] 执行「{miracle.name}」，消耗 {miracle.cost} 神力")
+        
+        return True, f"神迹「{miracle.name}」已触发！", effect
+    
+    def get_miracle_summary(self) -> dict:
+        """获取神迹系统摘要"""
+        return {
+            "all_miracles": self.get_all_miracles(),
+            "miracles_cast": self._state.miracle_state.miracles_cast,
+            "charging": self._state.miracle_state.charging,
+            "charge_progress": self._state.miracle_state.charge_progress,
+        }
+    
     # ========== 预言赌注系统 ==========
     
     def place_wager(

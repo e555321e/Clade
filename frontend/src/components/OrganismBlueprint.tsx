@@ -47,6 +47,58 @@ const organLabels: Record<string, string> = {
   storage: "储存器官",
 };
 
+// 能力翻译表
+const capabilityLabels: Record<string, string> = {
+  photosynthesis: "光合作用",
+  chemosynthesis: "化学合成",
+  flight: "飞行",
+  swimming: "游泳",
+  burrowing: "穴居",
+  venom: "毒液",
+  echolocation: "回声定位",
+  bioluminescence: "生物发光",
+  camouflage: "伪装",
+  regeneration: "再生",
+  hibernation: "冬眠",
+  migration: "迁徙",
+  pack_hunting: "群体狩猎",
+  tool_use: "工具使用",
+  nitrogen_fixation: "固氮作用",
+  spore_dispersal: "孢子散播",
+};
+
+// 特质翻译表
+const traitLabels: Record<string, string> = {
+  adaptability: "适应性",
+  aggression: "攻击性",
+  intelligence: "智力",
+  speed: "速度",
+  endurance: "耐力",
+  sensory_acuity: "感知敏锐度",
+  nocturnal: "夜行性",
+  耐热性: "耐热性",
+  耐寒性: "耐寒性",
+  耐旱性: "耐旱性",
+  耐盐性: "耐盐性",
+  社会性: "社会性",
+  免疫力: "免疫力",
+  运动能力: "运动能力",
+  繁殖速度: "繁殖速度",
+  光照需求: "光照需求",
+  氧气需求: "氧气需求",
+  光合效率: "光合效率",
+  固碳能力: "固碳能力",
+};
+
+// 翻译函数
+function translateCapability(cap: string): string {
+  return capabilityLabels[cap] || cap;
+}
+
+function translateTrait(trait: string): string {
+  return traitLabels[trait] || trait;
+}
+
 // 动物器官类别
 const animalOrganKeys = ["metabolic", "locomotion", "sensory", "digestive", "defense", "respiratory", "nervous", "circulatory", "reproductive", "excretory"];
 // 植物器官类别
@@ -145,14 +197,14 @@ export function OrganismBlueprint({ species }: Props) {
         <div className="traits-container">
           {capabilities.map((cap) => (
             <span key={cap} className="trait-tag capability">
-              ★ {cap}
+              ★ {translateCapability(cap)}
             </span>
           ))}
           {Object.entries(species.abstract_traits).map(([key, val]) => {
             if (key === "adaptability") return null; // 已在顶部显示
             return (
               <span key={key} className="trait-tag abstract">
-                {key}: {val}
+                {translateTrait(key)}: {val}
               </span>
             );
           })}
