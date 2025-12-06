@@ -9,6 +9,7 @@ from ...ai.model_router import ModelRouter
 from .population_calculator import PopulationCalculator
 from .trait_config import TraitConfig
 from .predation import PredationService
+from .gene_diversity import GeneDiversityService
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class SpeciesGenerator:
         self.router = router
         self.pop_calc = PopulationCalculator()
         self.predation_service = PredationService()
+        self.gene_diversity_service = GeneDiversityService()
 
     def generate_from_prompt(
         self, 
@@ -173,6 +175,12 @@ class SpeciesGenerator:
             prey_species=prey_species if isinstance(prey_species, list) else [],
             prey_preferences=prey_preferences if isinstance(prey_preferences, dict) else {},
         )
+
+        # 初始化基因多样性字段（默认按时代/兼容旧值）
+        try:
+            self.gene_diversity_service.ensure_initialized(species, turn_index=0)
+        except Exception:
+            pass
 
         # 【新增】如果是消费者但没有猎物，自动分配
         if trophic_level >= 2.0 and not species.prey_species and existing_species:

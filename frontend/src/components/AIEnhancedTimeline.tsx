@@ -190,6 +190,23 @@ export function AIEnhancedTimeline({ reports, onClose }: Props) {
                             </div>
                           </div>
                           
+                          {/* 基因多样性变动 */}
+                          {report.gene_diversity_events && report.gene_diversity_events.length > 0 && (
+                            <div className="timeline-section">
+                              <h5>🧬 基因多样性</h5>
+                              <ul className="mini-list">
+                                {report.gene_diversity_events.slice(0, 6).map((evt, idx) => (
+                                  <li key={`${evt.lineage_code}-${idx}`}>
+                                    <strong>{evt.name || evt.lineage_code}</strong>
+                                    <span className="mono"> ({evt.lineage_code})</span>：
+                                    <span className="mono"> {Number(evt.old ?? 0).toFixed(2)} → {Number(evt.new ?? 0).toFixed(2)}</span>
+                                    <span className="muted"> {evt.reason || "自然演化"}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
                           {/* AI 增强叙事 */}
                           <div className="ai-narrative">
                             <div className="ai-header">
@@ -511,6 +528,38 @@ export function AIEnhancedTimeline({ reports, onClose }: Props) {
           display: flex;
           flex-direction: column;
           gap: 16px;
+        }
+
+        .timeline-section {
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          border-radius: 10px;
+          padding: 12px;
+        }
+
+        .mini-list {
+          list-style: none;
+          padding-left: 0;
+          margin: 8px 0 0;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .mini-list li {
+          font-size: 0.9rem;
+          line-height: 1.5;
+          color: rgba(255, 255, 255, 0.82);
+        }
+
+        .mini-list .mono {
+          font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+          margin-left: 4px;
+        }
+
+        .mini-list .muted {
+          color: rgba(148, 163, 184, 0.9);
+          margin-left: 6px;
         }
         
         .original-narrative, .ai-narrative {

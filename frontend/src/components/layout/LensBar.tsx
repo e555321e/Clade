@@ -23,6 +23,7 @@ interface Props {
   onOpenAchievements?: () => void;
   onToggleHints?: () => void;
   onOpenGuide?: () => void;
+  onOpenGeneLibrary?: () => void;
   showHints?: boolean;
   hintsInfo?: HintsInfo;
 }
@@ -69,6 +70,7 @@ const VIEW_GROUPS = {
 const ANALYSIS_TOOLS = [
   { id: "create", label: "创建物种", icon: "✨", description: "设计并投放新物种", color: "#f59e0b" },
   { id: "hybridize", label: "物种杂交", icon: "🧬", description: "诱导两个物种杂交产生后代", color: "#10b981" },
+  { id: "geneLibrary", label: "基因库", icon: "🧬", description: "探索语义星云，查看所有基因分布", color: "#22d3ee" },
   { id: "genealogy", label: "演化族谱", icon: "🌳", description: "查看物种演化关系树", color: "#c084fc" },
   { id: "foodweb", label: "食物网", icon: "🕸️", description: "分析捕食与被捕食关系", color: "#f43f5e" },
   { id: "niche", label: "生态位对比", icon: "📊", description: "对比不同物种的生态位", color: "#38bdf8" },
@@ -102,6 +104,7 @@ export function LensBar({
   onOpenAchievements,
   onToggleHints,
   onOpenGuide,
+  onOpenGeneLibrary,
   showHints = false,
   hintsInfo,
 }: Props) {
@@ -144,6 +147,7 @@ export function LensBar({
     switch (toolId) {
       case "create": onCreateSpecies?.(); break;
       case "hybridize": onOpenHybridization?.(); break;
+      case "geneLibrary": onOpenGeneLibrary?.(); break;
       case "genealogy": onToggleGenealogy(); break;
       case "foodweb": onToggleFoodWeb(); break;
       case "niche": onToggleNiche(); break;
@@ -254,6 +258,7 @@ export function LensBar({
           {ANALYSIS_TOOLS.filter(t => {
             if (t.id === "create") return !!onCreateSpecies;
             if (t.id === "hybridize") return !!onOpenHybridization;
+            if (t.id === "geneLibrary") return !!onOpenGeneLibrary;
             if (t.id === "ai") return !!onOpenAIAssistant;
             if (t.id === "achievements") return !!onOpenAchievements;
             if (t.id === "hints") return !!onToggleHints;

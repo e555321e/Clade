@@ -26,6 +26,7 @@ import {
   PressureSection,
   EcologySection,
   MapSection,
+  GeneDiversitySection,
 } from "./sections";
 
 interface Props {
@@ -50,6 +51,7 @@ const TABS: {
   { id: "autosave", label: "自动存档", icon: "💾", desc: "自动保存", group: "system" },
   // 游戏设置
   { id: "speciation", label: "分化设置", icon: "🧬", desc: "物种演化", group: "gameplay" },
+  { id: "gene_diversity", label: "基因多样性", icon: "🔬", desc: "演化潜力", group: "gameplay" },
   { id: "reproduction", label: "繁殖设置", icon: "🐣", desc: "种群增长", group: "gameplay" },
   { id: "mortality", label: "死亡率", icon: "💀", desc: "压力死亡", group: "gameplay" },
   { id: "pressure", label: "压力强度", icon: "🌊", desc: "环境压力", group: "gameplay" },
@@ -242,6 +244,8 @@ export function SettingsPanel({ config, onClose, onSave }: Props) {
         return <PerformanceSection config={state.form} providers={state.form.providers || {}} dispatch={dispatch} />;
       case "speciation":
         return <SpeciationSection config={state.form.speciation || {}} dispatch={dispatch} />;
+      case "gene_diversity":
+        return <GeneDiversitySection config={state.form.gene_diversity || {}} dispatch={dispatch} />;
       case "reproduction":
         return <ReproductionSection config={state.form.reproduction || {}} dispatch={dispatch} />;
       case "mortality":

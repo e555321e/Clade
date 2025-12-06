@@ -14,6 +14,7 @@ import type {
   GameplayConfig,
   MapEnvironmentConfig,
   PressureIntensityConfig,
+  GeneDiversityConfig,
 } from "@/services/api.types";
 import type { ModelInfo } from "@/services/api";
 
@@ -29,7 +30,8 @@ export type SettingsTab =
   | "mortality"
   | "pressure"
   | "ecology"
-  | "map";
+  | "map"
+  | "gene_diversity";
 
 // ============ 确认对话框状态 ============
 export interface ConfirmState {
@@ -111,7 +113,9 @@ export type SettingsAction =
   | { type: "UPDATE_MAP_ENV"; updates: Partial<MapEnvironmentConfig> }
   | { type: "RESET_MAP_ENV" }
   | { type: "UPDATE_PRESSURE"; updates: Partial<PressureIntensityConfig> }
-  | { type: "RESET_PRESSURE" };
+  | { type: "RESET_PRESSURE" }
+  | { type: "UPDATE_GENE_DIVERSITY"; updates: Partial<GeneDiversityConfig> }
+  | { type: "RESET_GENE_DIVERSITY" };
 
 // ============ 能力定义 ============
 export type ParallelMode = "batch" | "concurrent" | "single";

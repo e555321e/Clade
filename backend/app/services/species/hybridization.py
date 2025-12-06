@@ -24,6 +24,7 @@ from typing import Sequence, TYPE_CHECKING
 from ...core.config import get_settings
 from ...models.species import Species
 from .genetic_distance import GeneticDistanceCalculator
+from .gene_diversity import GeneDiversityService
 
 if TYPE_CHECKING:
     from ...ai.model_router import ModelRouter
@@ -37,10 +38,12 @@ class HybridizationService:
     def __init__(
         self, 
         genetic_calculator: GeneticDistanceCalculator,
-        router: "ModelRouter | None" = None
+        router: "ModelRouter | None" = None,
+        gene_diversity_service: GeneDiversityService | None = None,
     ):
         self.genetic_calculator = genetic_calculator
         self.router = router
+        self.gene_diversity = gene_diversity_service or GeneDiversityService()
     
     def _select_primary_parent(self, parent1: Species, parent2: Species) -> tuple[Species, Species]:
         """选择主亲本和次要亲本
@@ -176,8 +179,29 @@ class HybridizationService:
         
         # 【v2】hybrid_parent_codes：主亲本在前，次要亲本在后
         hybrid_parent_codes = [primary_parent.lineage_code, secondary_parent.lineage_code]
+        # 基因多样性：杂交显著增加演化潜力
+        try:
+            self.gene_diversity.ensure_initialized(parent1, turn_index)
+            self.gene_diversity.ensure_initialized(parent2, turn_index)
+            hybrid_radius = self.gene_diversity.apply_hybrid_bonus(
+                [
+                    getattr(parent1, "gene_diversity_radius", 0.35) or 0.35,
+                    getattr(parent2, "gene_diversity_radius", 0.35) or 0.35,
+                ]
+            )
+        except Exception:
+            hybrid_radius = max(
+                0.35,
+                getattr(parent1, "gene_diversity_radius", 0.35) or 0.35,
+                getattr(parent2, "gene_diversity_radius", 0.35) or 0.35,
+            )
+        hybrid_stability = (
+            (getattr(parent1, "gene_stability", 0.5) or 0.5)
+            + (getattr(parent2, "gene_stability", 0.5) or 0.5)
+        ) / 2
+        hybrid_explored = list(set((getattr(parent1, "explored_directions", []) or []) + (getattr(parent2, "explored_directions", []) or [])))
         
-        return Species(
+        hybrid = Species(
             lineage_code=hybrid_code,
             latin_name=latin_name,
             common_name=common_name,
@@ -196,11 +220,25 @@ class HybridizationService:
             taxonomic_rank="hybrid",
             hybrid_parent_codes=hybrid_parent_codes,
             hybrid_fertility=fertility,
+            gene_diversity_radius=hybrid_radius,
+            gene_stability=hybrid_stability,
+            explored_directions=hybrid_explored,
             diet_type=diet_type,
             prey_species=prey_species,
             prey_preferences=prey_preferences,
             habitat_type=habitat_type,
         )
+
+        try:
+            self.gene_diversity.ensure_initialized(hybrid, turn_index)
+            hybrid.gene_diversity_radius = hybrid_radius
+            hybrid.gene_stability = hybrid_stability
+            hybrid.explored_directions = hybrid_explored
+            hybrid.hidden_traits["gene_diversity"] = hybrid_radius
+        except Exception:
+            pass
+
+        return hybrid
     
     async def create_hybrid_async(
         self, 

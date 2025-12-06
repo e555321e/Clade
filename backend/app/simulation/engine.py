@@ -63,6 +63,7 @@ from .species import MortalityEngine
 from .tile_based_mortality import TileBasedMortalityEngine
 from ..services.analytics.embedding_integration import EmbeddingIntegrationService
 from ..services.tectonic import TectonicIntegration, create_tectonic_integration
+from ..services.species.gene_diversity import GeneDiversityService
 from ..tensor.config import TensorConfig
 from pathlib import Path
 
@@ -144,7 +145,10 @@ class SimulationEngine:
         )
         
         # === 内部创建的服务 ===
-        self.gene_activation_service = GeneActivationService()
+        self.gene_diversity_service = GeneDiversityService(embedding_service=embeddings)
+        self.gene_activation_service = GeneActivationService(
+            embedding_service=embeddings, gene_diversity_service=self.gene_diversity_service
+        )
         
         # 从 configs 获取配置对象（由 simulation_services.py 注入）
         ecology_config = self.configs.get("ecology")

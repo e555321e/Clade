@@ -106,13 +106,22 @@ class SpeciesServiceProvider:
         )
     
     @cached_property
+    def gene_diversity_service(self) -> 'GeneDiversityService':
+        from ...services.species.gene_diversity import GeneDiversityService
+        return self._get_or_override(
+            'gene_diversity_service',
+            lambda: GeneDiversityService(self.embedding_service)
+        )
+    
+    @cached_property
     def hybridization_service(self) -> 'HybridizationService':
         from ...services.species.hybridization import HybridizationService
         return self._get_or_override(
             'hybridization_service',
             lambda: HybridizationService(
                 self.genetic_distance_calculator, 
-                router=self.model_router
+                router=self.model_router,
+                gene_diversity_service=self.gene_diversity_service
             )
         )
     

@@ -153,6 +153,11 @@ export interface SpeciesSnapshot {
   
   // 生态拟真状态
   ecological_realism?: EcologicalRealismSnapshot | null;
+  
+  // 基因数据（用于基因库）
+  abstract_traits?: Record<string, number>;
+  organs?: Record<string, Record<string, unknown>>;
+  capabilities?: string[];
 }
 
 export interface BackgroundSummary {
@@ -299,6 +304,13 @@ export interface TurnReport {
   tectonic_stage?: string; // 新增：地质阶段
   extinction_count?: number; // 本回合灭绝物种数量
   ecological_realism?: EcologicalRealismSummary | null; // 生态拟真统计
+  gene_diversity_events?: {
+    lineage_code: string;
+    name?: string;
+    old?: number;
+    new?: number;
+    reason?: string;
+  }[];
 }
 
 export interface LineageNode {
@@ -550,6 +562,56 @@ export interface MortalityConfig {
 }
 
 /**
+ * 基因多样性配置 - 控制基于 Embedding 的基因多样性半径机制
+ * 
+ * 核心理念：
+ * - 基因库 = 物种在 Embedding 空间中的"可演化范围"
+ * - 已激活基因 = 当前 ecological_vector 的位置
+ * - 休眠基因 = 向量周围的"可达区域"
+ * - 基因多样性 = 可达区域的半径大小
+ */
+export interface GeneDiversityConfig {
+  // ========== 基础参数 ==========
+  min_radius?: number;                   // 最小基因多样性半径（保底演化能力）
+  max_decay_per_turn?: number;           // 每回合最大衰减率
+  activation_cost?: number;              // 激活休眠基因的半径消耗
+  bottleneck_coefficient?: number;       // 瓶颈效应系数 k（衰减 = k / sqrt(pop) × 压力系数）
+  recovery_threshold?: number;           // 瓶颈恢复种群阈值
+  
+  // ========== 杂交/发现加成 ==========
+  hybrid_bonus_min?: number;             // 杂交半径提升最小值
+  hybrid_bonus_max?: number;             // 杂交半径提升最大值
+  discovery_bonus_min?: number;          // 新基因发现半径提升最小值
+  discovery_bonus_max?: number;          // 新基因发现半径提升最大值
+  
+  // ========== 太古宙参数（<50回合）==========
+  archean_initial_radius?: number;       // 太古宙初始半径
+  archean_growth_rate?: number;          // 太古宙增长率/回合
+  archean_inherit_min?: number;          // 太古宙分化继承系数最小值
+  archean_inherit_max?: number;          // 太古宙分化继承系数最大值
+  archean_mutation_chance?: number;      // 太古宙突变发现概率
+  
+  // ========== 元古宙参数（50-150回合）==========
+  proterozoic_initial_radius?: number;   // 元古宙初始半径
+  proterozoic_growth_rate?: number;      // 元古宙增长率/回合
+  proterozoic_inherit_min?: number;      // 元古宙分化继承系数最小值
+  proterozoic_inherit_max?: number;      // 元古宙分化继承系数最大值
+  proterozoic_mutation_chance?: number;  // 元古宙突变发现概率
+  
+  // ========== 古生代及以后参数（>150回合）==========
+  phanerozoic_initial_radius?: number;   // 古生代初始半径
+  phanerozoic_growth_rate?: number;      // 古生代增长率/回合
+  phanerozoic_inherit_min?: number;      // 古生代分化继承系数最小值
+  phanerozoic_inherit_max?: number;      // 古生代分化继承系数最大值
+  phanerozoic_mutation_chance?: number;  // 古生代突变发现概率
+  
+  // ========== 激活机制参数 ==========
+  activation_chance_per_turn?: number;   // 每回合激活休眠基因的概率
+  pressure_match_bonus?: number;         // 压力匹配时的激活加成倍数
+  organ_discovery_chance?: number;       // 分化时发现新器官的概率
+}
+
+/**
  * 生态平衡配置 - 控制种群动态平衡的参数
  */
 export interface EcologyBalanceConfig {
@@ -762,6 +824,9 @@ export interface UIConfig {
   
   // 15. 地图环境配置
   map_environment?: MapEnvironmentConfig;
+  
+  // 16. 基因多样性配置
+  gene_diversity?: GeneDiversityConfig;
 
   // --- Legacy Fields (For backward compatibility types) ---
   ai_provider?: string | null;
@@ -810,6 +875,9 @@ export interface SpeciesDetail {
   hybrid_fertility?: number;
   parent_code?: string | null;
   created_turn?: number;
+  gene_diversity_radius?: number;
+  gene_stability?: number;
+  explored_directions?: number[];
 }
 
 export interface SpeciesListItem {

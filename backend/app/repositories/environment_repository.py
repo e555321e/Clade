@@ -128,8 +128,13 @@ class EnvironmentRepository:
                     habitat.population = 0
                 
                 ti = getattr(habitat, "turn_index", 0)
+                needs_fix = False
+                original_type = type(ti).__name__
+                original_value = ti
+                
                 if not isinstance(ti, int):
                     # 如果传入了 set/list 等异常类型，回退为最大值或 0
+                    needs_fix = True
                     try:
                         if isinstance(ti, (set, list, tuple)):
                             ti = max(ti) if ti else 0
@@ -137,8 +142,25 @@ class EnvironmentRepository:
                             ti = int(ti)
                     except Exception:
                         ti = 0
+                
+                # 【新增】检测异常大的 turn_index（可能是字段赋值错误）
+                # 正常游戏不太可能超过 10000 回合
+                if ti > 10000:
+                    needs_fix = True
+                    logger.error(
+                        f"[环境仓储] 检测到异常大的 turn_index={ti}，"
+                        f"可能是 species_id={habitat.species_id} 或 tile_id={habitat.tile_id} 被错误赋值！"
+                        f"请检查存档数据或上游代码。"
+                    )
+                    # 不自动修正，但记录警告以便追踪
+                
+                if needs_fix and ti <= 10000:
                     habitat.turn_index = ti
-                    logger.warning(f"[环境仓储] 修正非法 turn_index 类型为 {ti}")
+                    logger.warning(
+                        f"[环境仓储] 修正非法 turn_index: "
+                        f"species_id={habitat.species_id}, tile_id={habitat.tile_id}, "
+                        f"原类型={original_type}, 原值={repr(original_value)[:100]}, 修正为={ti}"
+                    )
                 
                 try:
                     session.add(habitat)

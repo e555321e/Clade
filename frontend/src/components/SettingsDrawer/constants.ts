@@ -2,7 +2,7 @@
  * SettingsDrawer 常量定义
  */
 
-import type { ProviderType, SpeciationConfig, ReproductionConfig, MortalityConfig, EcologyBalanceConfig, MapEnvironmentConfig, PressureIntensityConfig } from "@/services/api.types";
+import type { ProviderType, SpeciationConfig, ReproductionConfig, MortalityConfig, EcologyBalanceConfig, MapEnvironmentConfig, PressureIntensityConfig, GeneDiversityConfig } from "@/services/api.types";
 import type { CapabilityDef, ProviderPreset } from "./types";
 
 // ============ API 类型 ============
@@ -350,5 +350,46 @@ export const DEFAULT_MAP_ENVIRONMENT_CONFIG: MapEnvironmentConfig = {
   show_competition_overlay: false,
   show_temperature_overlay: false,
   show_humidity_overlay: false,
+};
+
+export const DEFAULT_GENE_DIVERSITY_CONFIG: GeneDiversityConfig = {
+  // 基础参数
+  min_radius: 0.05,
+  max_decay_per_turn: 0.05,
+  activation_cost: 0.02,
+  bottleneck_coefficient: 50.0,
+  recovery_threshold: 50000,
+  
+  // 杂交/发现加成
+  hybrid_bonus_min: 0.20,
+  hybrid_bonus_max: 0.40,
+  discovery_bonus_min: 0.05,
+  discovery_bonus_max: 0.12,
+  
+  // 太古宙参数（<50回合）
+  archean_initial_radius: 0.50,
+  archean_growth_rate: 0.03,
+  archean_inherit_min: 0.95,
+  archean_inherit_max: 1.00,
+  archean_mutation_chance: 0.15,
+  
+  // 元古宙参数（50-150回合）
+  proterozoic_initial_radius: 0.40,
+  proterozoic_growth_rate: 0.02,
+  proterozoic_inherit_min: 0.90,
+  proterozoic_inherit_max: 0.98,
+  proterozoic_mutation_chance: 0.10,
+  
+  // 古生代及以后参数（>150回合）
+  phanerozoic_initial_radius: 0.35,
+  phanerozoic_growth_rate: 0.015,
+  phanerozoic_inherit_min: 0.85,
+  phanerozoic_inherit_max: 0.95,
+  phanerozoic_mutation_chance: 0.08,
+  
+  // 激活机制参数
+  activation_chance_per_turn: 0.08,
+  pressure_match_bonus: 2.0,
+  organ_discovery_chance: 0.04,
 };
 

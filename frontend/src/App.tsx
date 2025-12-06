@@ -487,6 +487,7 @@ function GameScene() {
             onOpenAchievements={() => openModal("achievements")}
             onToggleHints={() => (modals.hints ? closeModal("hints") : openModal("hints"))}
             onOpenGuide={() => openModal("gameGuide")}
+            onOpenGeneLibrary={() => openModal("geneLibrary")}
             showHints={modals.hints}
             hintsInfo={hintsInfo}
           />

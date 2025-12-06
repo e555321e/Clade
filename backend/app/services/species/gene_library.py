@@ -1,8 +1,23 @@
-"""属基因库管理服务"""
+"""
+属基因库管理服务
+
+[DEPRECATED] 该模块在基因多样性重构后逐步废弃
+============================================
+新的基因多样性系统使用 Embedding 向量距离判断可达性，
+不再需要属级基因库来管理休眠基因池。
+
+推荐迁移路径:
+- 休眠基因判断: 使用 GeneDiversityService.is_reachable()
+- 基因激活:     使用 GeneActivationService（已重构为 Embedding-based）
+- 继承逻辑:     使用 GeneDiversityService.inherit_radius()
+
+本模块保留用于兼容现有存档和渐进迁移，未来版本将移除。
+"""
 from __future__ import annotations
 
 import logging
 import random
+import warnings
 
 from ...models.genus import Genus
 from ...models.species import Species
@@ -10,9 +25,24 @@ from ...repositories.genus_repository import genus_repository
 
 logger = logging.getLogger(__name__)
 
+# 废弃警告常量
+_DEPRECATION_MSG = (
+    "GeneLibraryService 已废弃，将在未来版本移除。"
+    "请迁移到 GeneDiversityService 的 Embedding-based 基因多样性系统。"
+)
+
 
 class GeneLibraryService:
-    """管理属级基因库，记录属的演化潜力"""
+    """管理属级基因库，记录属的演化潜力
+    
+    .. deprecated::
+        此类已废弃。请使用 GeneDiversityService 替代。
+        新系统使用 Embedding 向量距离判断基因可达性，
+        无需维护独立的属级基因库。
+    """
+    
+    def __init__(self):
+        warnings.warn(_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
     
     def record_discovery(
         self, 

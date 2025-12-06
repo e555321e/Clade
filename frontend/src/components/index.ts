@@ -34,4 +34,7 @@ export { GameHintsPanel, AchievementNotification } from "./GameHintsPanel";
 // 神力进阶系统
 export { DivinePowersPanel } from "./DivinePowersPanel";
 
+// 基因库
+export { GeneLibraryModal } from "./GeneLibrary";
+
 export type { FilterOptions } from "./GenealogyFilters";

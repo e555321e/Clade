@@ -183,7 +183,7 @@ class SaveManager:
         save_data = {
             "turn_index": turn_index,
             "saved_at": datetime.now().isoformat(),
-            "species": [sp.model_dump(mode="json") for sp in species_list],
+            "species": [self._sanitize_species(sp) for sp in species_list],
             "map_tiles": [tile.model_dump(mode="json") for tile in map_tiles],
             "habitats": [h.model_dump(mode="json") for h in habitats],
             "map_state": map_state.model_dump(mode="json") if map_state else None,
@@ -292,6 +292,18 @@ class SaveManager:
         
         logger.info(f"[存档管理器] 游戏保存成功: {save_dir.name}")
         return save_dir
+
+    @staticmethod
+    def _sanitize_species(sp: Species) -> dict:
+        """清理物种数据，移除 morphology_stats 中的非数值，避免序列化告警。"""
+        data = sp.model_dump(mode="json")
+        morph = data.get("morphology_stats")
+        if isinstance(morph, dict):
+            data["morphology_stats"] = {
+                k: v for k, v in morph.items()
+                if isinstance(v, (int, float))
+            }
+        return data
     
     def _verify_save_integrity(
         self, 

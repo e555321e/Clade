@@ -11,17 +11,31 @@ interface Props {
 }
 
 // 稳定化 nodes 数组的 key，避免不必要的重渲染
+// 同时对节点进行去重，确保每个 lineage_code 只出现一次
 function useStableNodes(nodes: LineageNode[]): LineageNode[] {
   const prevNodesRef = useRef<LineageNode[]>([]);
   const prevKeyRef = useRef<string>("");
   
-  // 生成简单的key来检测实际变化
-  const currentKey = useMemo(() => {
-    return nodes.map(n => `${n.lineage_code}:${n.state}:${n.common_name}`).join('|');
+  // 先对节点去重（以 lineage_code 为唯一标识）
+  const deduplicatedNodes = useMemo(() => {
+    const seen = new Map<string, LineageNode>();
+    for (const node of nodes) {
+      // 如果已存在，保留更新的那个（优先保留 alive 状态的）
+      const existing = seen.get(node.lineage_code);
+      if (!existing || (node.state === 'alive' && existing.state !== 'alive')) {
+        seen.set(node.lineage_code, node);
+      }
+    }
+    return Array.from(seen.values());
   }, [nodes]);
   
+  // 生成简单的key来检测实际变化
+  const currentKey = useMemo(() => {
+    return deduplicatedNodes.map(n => `${n.lineage_code}:${n.state}:${n.common_name}`).join('|');
+  }, [deduplicatedNodes]);
+  
   if (currentKey !== prevKeyRef.current) {
-    prevNodesRef.current = nodes;
+    prevNodesRef.current = deduplicatedNodes;
     prevKeyRef.current = currentKey;
   }
   
@@ -1227,12 +1241,21 @@ export function GenealogyGraphView({ nodes: rawNodes, spacingX = 160, spacingY =
   );
 }
 
-// 获取可见节点
+// 获取可见节点（去重 + 过滤被折叠的节点）
 function getVisibleNodes(nodes: LineageNode[], collapsed: Set<string>): LineageNode[] {
+  // 先去重
+  const nodeMap = new Map<string, LineageNode>();
+  for (const node of nodes) {
+    if (!nodeMap.has(node.lineage_code)) {
+      nodeMap.set(node.lineage_code, node);
+    }
+  }
+  const uniqueNodes = Array.from(nodeMap.values());
+  
   const hidden = new Set<string>();
   
   const markHidden = (parentCode: string) => {
-    nodes.forEach(n => {
+    uniqueNodes.forEach(n => {
       if (n.parent_code === parentCode && !hidden.has(n.lineage_code)) {
         hidden.add(n.lineage_code);
         markHidden(n.lineage_code);
@@ -1242,36 +1265,45 @@ function getVisibleNodes(nodes: LineageNode[], collapsed: Set<string>): LineageN
   
   collapsed.forEach(code => markHidden(code));
   
-  return nodes.filter(n => !hidden.has(n.lineage_code));
+  return uniqueNodes.filter(n => !hidden.has(n.lineage_code));
 }
 
-// 获取聚焦谱系的节点（祖先 + 自己 + 所有后代）
+// 获取聚焦谱系的节点（祖先 + 自己 + 所有后代），并去重
 function getFocusedLineageNodes(nodes: LineageNode[], focusCode: string): LineageNode[] {
-  const result = new Set<string>();
-  const nodeMap = new Map(nodes.map(n => [n.lineage_code, n]));
+  // 先构建去重的节点映射
+  const nodeMap = new Map<string, LineageNode>();
+  for (const node of nodes) {
+    if (!nodeMap.has(node.lineage_code)) {
+      nodeMap.set(node.lineage_code, node);
+    }
+  }
+  
+  const resultCodes = new Set<string>();
   
   // 添加焦点物种
-  result.add(focusCode);
+  resultCodes.add(focusCode);
   
   // 向上追溯所有祖先
   let current = nodeMap.get(focusCode);
   while (current && current.parent_code) {
-    result.add(current.parent_code);
+    resultCodes.add(current.parent_code);
     current = nodeMap.get(current.parent_code);
   }
   
-  // 向下收集所有后代
+  // 向下收集所有后代（使用去重后的节点）
+  const uniqueNodes = Array.from(nodeMap.values());
   const collectDescendants = (code: string) => {
-    nodes.forEach(n => {
-      if (n.parent_code === code && !result.has(n.lineage_code)) {
-        result.add(n.lineage_code);
+    uniqueNodes.forEach(n => {
+      if (n.parent_code === code && !resultCodes.has(n.lineage_code)) {
+        resultCodes.add(n.lineage_code);
         collectDescendants(n.lineage_code);
       }
     });
   };
   collectDescendants(focusCode);
   
-  return nodes.filter(n => result.has(n.lineage_code));
+  // 返回去重后的节点
+  return uniqueNodes.filter(n => resultCodes.has(n.lineage_code));
 }
 
 function getHiddenDescendantCount(parentCode: string, allNodes: LineageNode[], collapsed: Set<string>): number {
@@ -1293,14 +1325,48 @@ function getHiddenDescendantCount(parentCode: string, allNodes: LineageNode[], c
 function buildHierarchy(visibleNodes: LineageNode[], allNodes: LineageNode[]): d3.HierarchyNode<LineageNode> {
   if (visibleNodes.length === 0) return d3.hierarchy({} as LineageNode);
   
-  const roots = visibleNodes.filter(n => !n.parent_code || n.parent_code === ROOT_CODE);
-  const visibleSet = new Set(visibleNodes.map(n => n.lineage_code));
-  const orphanRoots = visibleNodes.filter(n => n.parent_code && !visibleSet.has(n.parent_code));
-  const allRoots = [...roots, ...orphanRoots];
-  const uniqueRoots = Array.from(new Map(allRoots.map(r => [r.lineage_code, r])).values());
+  // 先对 visibleNodes 去重（以 lineage_code 为唯一标识）
+  const nodeMap = new Map<string, LineageNode>();
+  for (const node of visibleNodes) {
+    if (!nodeMap.has(node.lineage_code)) {
+      nodeMap.set(node.lineage_code, node);
+    }
+  }
+  const uniqueVisibleNodes = Array.from(nodeMap.values());
+  const visibleSet = new Set(uniqueVisibleNodes.map(n => n.lineage_code));
   
-  if (uniqueRoots.length === 0 && visibleNodes.length > 0) {
-    return d3.hierarchy(visibleNodes[0], n => visibleNodes.filter(c => c.parent_code === n.lineage_code));
+  // 构建子节点映射（预计算，避免重复过滤）
+  const childrenMap = new Map<string, LineageNode[]>();
+  for (const node of uniqueVisibleNodes) {
+    const parentCode = node.parent_code || ROOT_CODE;
+    if (!childrenMap.has(parentCode)) {
+      childrenMap.set(parentCode, []);
+    }
+    childrenMap.get(parentCode)!.push(node);
+  }
+  
+  // 找出真正的根节点（没有 parent_code 或 parent_code 是 ROOT_CODE）
+  const roots = uniqueVisibleNodes.filter(n => !n.parent_code || n.parent_code === ROOT_CODE);
+  
+  // 找出孤儿节点（parent_code 存在但父节点不在可见列表中）
+  const orphanRoots = uniqueVisibleNodes.filter(n => 
+    n.parent_code && 
+    n.parent_code !== ROOT_CODE && 
+    !visibleSet.has(n.parent_code)
+  );
+  
+  // 合并并去重根节点
+  const allRootsMap = new Map<string, LineageNode>();
+  for (const r of [...roots, ...orphanRoots]) {
+    if (!allRootsMap.has(r.lineage_code)) {
+      allRootsMap.set(r.lineage_code, r);
+    }
+  }
+  const uniqueRoots = Array.from(allRootsMap.values());
+  
+  if (uniqueRoots.length === 0 && uniqueVisibleNodes.length > 0) {
+    // 回退：使用第一个节点作为根
+    return d3.hierarchy(uniqueVisibleNodes[0], n => childrenMap.get(n.lineage_code) || []);
   }
   
   const virtualRoot: LineageNode = { 
@@ -1313,9 +1379,10 @@ function buildHierarchy(visibleNodes: LineageNode[], allNodes: LineageNode[]): d
     descendant_count: uniqueRoots.length
   } as LineageNode;
   
+  // 使用预计算的 childrenMap 来获取子节点，避免重复
   return d3.hierarchy(virtualRoot, (d) => {
     if (d.lineage_code === ROOT_CODE) return uniqueRoots;
-    return visibleNodes.filter(n => n.parent_code === d.lineage_code);
+    return childrenMap.get(d.lineage_code) || [];
   });
 }
 

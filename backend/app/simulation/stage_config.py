@@ -241,6 +241,9 @@ class PipelineStageConfig:
     population_update: StageConfig = field(default_factory=lambda: StageConfig(
         name="population_update", enabled=True, order=90
     ))
+    gene_diversity: StageConfig = field(default_factory=lambda: StageConfig(
+        name="gene_diversity", enabled=True, order=93
+    ))
     
     # 可选阶段（可通过配置禁用）
     tectonic_movement: StageConfig = field(default_factory=lambda: StageConfig(
@@ -303,6 +306,7 @@ class PipelineStageConfig:
             self.migration,
             self.final_mortality,
             self.population_update,
+            self.gene_diversity,
             self.gene_activation,
             self.gene_flow,
             self.genetic_drift,
@@ -785,6 +789,7 @@ def _register_default_stages() -> None:
         PostMigrationNicheStage,
         FinalMortalityStage,
         PopulationUpdateStage,
+        GeneDiversityStage,
         # 遗传与演化阶段
         SpeciationDataTransferStage,
         GeneActivationStage,
@@ -828,6 +833,7 @@ def _register_default_stages() -> None:
     stage_registry.register("final_mortality", FinalMortalityStage)
     # ecological_intelligence 已被张量系统替代，不再注册
     stage_registry.register("population_update", PopulationUpdateStage)
+    stage_registry.register("gene_diversity", GeneDiversityStage)
     
     # 遗传与演化阶段
     stage_registry.register("speciation_data_transfer", SpeciationDataTransferStage)

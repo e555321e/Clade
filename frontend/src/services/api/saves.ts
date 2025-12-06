@@ -45,21 +45,22 @@ export async function createSave(params: {
   species_prompts?: string[];
   map_seed?: number;
 }): Promise<{ success: boolean; message: string }> {
-  return http.post("/api/saves/create", params);
+  // 新建存档可能触发向量缓存清理，延长超时至 120s
+  return http.post("/api/saves/create", params, { timeout: 120_000 });
 }
 
 /**
  * 保存游戏
  */
 export async function saveGame(saveName: string): Promise<{ success: boolean; message: string }> {
-  return http.post("/api/saves/save", { save_name: saveName });
+  return http.post("/api/saves/save", { save_name: saveName }, { timeout: 120_000 });
 }
 
 /**
  * 加载游戏
  */
 export async function loadGame(saveName: string): Promise<{ success: boolean; message: string }> {
-  return http.post("/api/saves/load", { save_name: saveName });
+  return http.post("/api/saves/load", { save_name: saveName }, { timeout: 120_000 });
 }
 
 /**

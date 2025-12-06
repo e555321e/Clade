@@ -240,6 +240,7 @@ class TurnReport(BaseModel):
     tectonic_stage: str = "稳定期"
     ecosystem_metrics: EcosystemMetrics | None = None
     ecological_realism: EcologicalRealismSummary | None = None  # 【新增v4】生态拟真统计
+    gene_diversity_events: list[dict] = []
 
 
 class LineageNode(BaseModel):
@@ -313,6 +314,9 @@ class SpeciesDetail(BaseModel):
     # 修复：添加缺失的字段
     dormant_genes: dict = {}
     stress_exposure: dict = {}
+    gene_diversity_radius: float = 0.0
+    explored_directions: list[int] = []
+    gene_stability: float = 0.0
 
 
 class NicheCompareResult(BaseModel):

@@ -243,6 +243,7 @@ class StageOrder(Enum):
     FINAL_MORTALITY = 80
     SPECIATION_DATA_TRANSFER = 86
     POPULATION_UPDATE = 90
+    GENE_DIVERSITY = 93
     GENE_ACTIVATION = 95
     GENE_FLOW = 100
     GENETIC_DRIFT = 105
@@ -1722,6 +1723,57 @@ class GeneActivationStage(BaseStage):
             ctx.activation_events = []
 
 
+class GeneDiversityStage(BaseStage):
+    """基因多样性半径更新阶段"""
+
+    def __init__(self):
+        super().__init__(StageOrder.GENE_DIVERSITY.value, "基因多样性")
+
+    def get_dependency(self) -> StageDependency:
+        return StageDependency(
+            requires_stages={"种群更新"},
+            requires_fields={"species_batch", "combined_results"},
+            writes_fields={"gene_diversity_events"},
+        )
+
+    async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
+        from ..repositories.species_repository import species_repository
+
+        logger.info("更新基因多样性半径...")
+        ctx.emit_event("stage", "🧬 基因多样性", "进化")
+
+        # 构建死亡率映射
+        death_map = {}
+        for result in ctx.combined_results:
+            code = result.species.lineage_code if hasattr(result, "species") else result.get("lineage_code")
+            if code:
+                death_map[code] = getattr(result, "death_rate", 0.0) if not isinstance(result, dict) else result.get("death_rate", 0.0)
+
+        events = []
+        for sp in ctx.species_batch:
+            pop = sp.morphology_stats.get("population", 0) or 0
+            death_rate = death_map.get(sp.lineage_code, 0.0)
+            try:
+                change = engine.gene_diversity_service.update_per_turn(
+                    sp, population=pop, death_rate=death_rate, turn_index=ctx.turn_index
+                )
+                if abs(change.get("delta", 0.0)) > 1e-4:
+                    events.append(
+                        {
+                            "lineage_code": sp.lineage_code,
+                            "name": sp.common_name,
+                            "old": round(change["old"], 4),
+                            "new": round(change["new"], 4),
+                            "reason": change["reason"],
+                        }
+                    )
+                species_repository.upsert(sp)
+            except Exception as e:
+                logger.warning(f"[基因多样性] 更新 {sp.lineage_code} 失败: {e}")
+
+        ctx.plugin_data.setdefault("gene_diversity", {})["events"] = events
+
+
 class GeneFlowStage(BaseStage):
     """基因流动阶段"""
     
@@ -1880,7 +1932,9 @@ class AutoHybridizationStage(BaseStage):
         
         # 初始化杂交服务
         genetic_calculator = GeneticDistanceCalculator()
-        hybridization_service = HybridizationService(genetic_calculator, engine.router)
+        hybridization_service = HybridizationService(
+            genetic_calculator, engine.router, gene_diversity_service=engine.gene_diversity_service
+        )
         
         # 构建 species_id -> lineage_code 映射
         id_to_code: dict[int, str] = {}
@@ -2436,6 +2490,7 @@ class BuildReportStage(BaseStage):
                 species=species_data,
                 branching_events=ctx.branching_events or [],
                 major_events=ctx.major_events or [],
+                gene_diversity_events=ctx.plugin_data.get("gene_diversity", {}).get("events", []),
             )
             return
         
@@ -2477,6 +2532,7 @@ class BuildReportStage(BaseStage):
                     stream_callback=on_narrative_chunk,
                     all_species=all_species_for_report,
                     ecological_realism_data=ctx.plugin_data.get("ecological_realism"),  # 【新增】
+                    gene_diversity_events=ctx.plugin_data.get("gene_diversity", {}).get("events", []),
                 ),
                 timeout=90
             )
@@ -3022,6 +3078,7 @@ def get_default_stages(include_tensor: bool = True) -> list[BaseStage]:
         MigrationStage(),
         FinalMortalityStage(),
         PopulationUpdateStage(),
+        GeneDiversityStage(),
         SpeciationDataTransferStage(),  # 【关键修复】分化数据传递阶段
         SpeciationStage(),
         BackgroundManagementStage(),

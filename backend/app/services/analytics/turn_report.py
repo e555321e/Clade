@@ -156,6 +156,7 @@ class TurnReportService:
         major_events: List[Any] | None = None,
         migration_events: List[Any] | None = None,
         reemergence_events: List[Any] | None = None,
+        gene_diversity_events: List[Dict] | None = None,
     ) -> str:
         """构建简单模式下的丰富叙事（不使用 LLM）"""
         lines: List[str] = []
@@ -289,6 +290,22 @@ class TurnReportService:
             lines.append("")
             lines.append(f"**🔄 物种重现**: {len(reemergence_events)} 个物种重新活跃")
             lines.append("")
+
+        # 基因多样性变动
+        if gene_diversity_events:
+            if not has_events:
+                lines.append("### ⚡ 本回合事件")
+                has_events = True
+            lines.append("")
+            lines.append("**🧬 基因多样性变动**")
+            for evt in gene_diversity_events[:6]:
+                code = evt.get("lineage_code", "?")
+                name = evt.get("name", code)
+                old = evt.get("old", 0.0)
+                new = evt.get("new", 0.0)
+                reason = evt.get("reason", "自然演化")
+                lines.append(f"- {name} ({code}): {old:.2f} → {new:.2f}（{reason}）")
+            lines.append("")
         
         if not has_events:
             lines.append("### ⚡ 本回合事件")
@@ -372,6 +389,7 @@ class TurnReportService:
         stream_callback: Callable[[str], Coroutine[Any, Any, None]] | None = None,
         all_species: List[Any] | None = None,
         ecological_realism_data: Dict[str, Any] | None = None,  # 【新增】生态拟真数据
+        gene_diversity_events: List[Dict] | None = None,
     ) -> "TurnReport":
         """构建回合报告
         
@@ -461,6 +479,15 @@ class TurnReportService:
                     "initial_population": initial_pop,
                     "births": births,
                     "survivors": getattr(mortality_result, 'survivors', 0),
+                    # 【修复】地块分布统计
+                    "total_tiles": getattr(mortality_result, 'total_tiles', 0),
+                    "healthy_tiles": getattr(mortality_result, 'healthy_tiles', 0),
+                    "warning_tiles": getattr(mortality_result, 'warning_tiles', 0),
+                    "critical_tiles": getattr(mortality_result, 'critical_tiles', 0),
+                    "best_tile_rate": getattr(mortality_result, 'best_tile_rate', 0.0),
+                    "worst_tile_rate": getattr(mortality_result, 'worst_tile_rate', 1.0),
+                    "has_refuge": getattr(mortality_result, 'has_refuge', True),
+                    "distribution_status": getattr(mortality_result, 'distribution_status', ''),
                     # 【新增】生态拟真数据
                     "ecological_realism": self._build_ecological_realism_snapshot(
                         species.lineage_code, ecological_realism_data
@@ -491,6 +518,15 @@ class TurnReportService:
                     "initial_population": pop,
                     "births": 0,
                     "survivors": pop,
+                    # 【修复】地块分布统计（新物种无数据时给默认值）
+                    "total_tiles": 0,
+                    "healthy_tiles": 0,
+                    "warning_tiles": 0,
+                    "critical_tiles": 0,
+                    "best_tile_rate": 0.0,
+                    "worst_tile_rate": 1.0,
+                    "has_refuge": True,
+                    "distribution_status": "初始",
                     # 【新增】生态拟真数据
                     "ecological_realism": self._build_ecological_realism_snapshot(
                         species.lineage_code, ecological_realism_data
@@ -525,6 +561,7 @@ class TurnReportService:
                 major_events=major_events,
                 migration_events=migration_events,
                 reemergence_events=reemergence_events,
+                gene_diversity_events=gene_diversity_events,
             )
             
             # 简单模式下流式输出
@@ -541,6 +578,7 @@ class TurnReportService:
                 branching_events=branching_events or [],
                 major_events=major_events or [],
                 ecological_realism=self._build_ecological_realism_summary(species_data, ecological_realism_data),
+                gene_diversity_events=gene_diversity_events or [],
             )
         
         # ========== 【修复】调用 LLM 叙事引擎 ==========
@@ -577,10 +615,15 @@ class TurnReportService:
                     initial_population=initial_pop,
                     births=births,
                     survivors=getattr(result, 'survivors', 0),
+                    # 【修复】地块分布统计完整字段
                     total_tiles=getattr(result, 'total_tiles', 0),
                     healthy_tiles=getattr(result, 'healthy_tiles', 0),
                     warning_tiles=getattr(result, 'warning_tiles', 0),
                     critical_tiles=getattr(result, 'critical_tiles', 0),
+                    best_tile_rate=getattr(result, 'best_tile_rate', 0.0),
+                    worst_tile_rate=getattr(result, 'worst_tile_rate', 1.0),
+                    has_refuge=getattr(result, 'has_refuge', True),
+                    distribution_status=getattr(result, 'get_distribution_status', lambda: '')() if hasattr(result, 'get_distribution_status') else '',
                 ))
         
         # 调用 LLM 叙事引擎生成叙事
@@ -627,6 +670,7 @@ class TurnReportService:
                 major_events=major_events,
                 migration_events=migration_events,
                 reemergence_events=reemergence_events,
+                gene_diversity_events=gene_diversity_events,
             )
             
             # 回退模式下流式输出
@@ -634,6 +678,18 @@ class TurnReportService:
                 for char in narrative:
                     await stream_callback(char)
                     await asyncio.sleep(0.01)
+
+        # 附加基因多样性摘要，确保即便LLM生成也能看到关键数据
+        if gene_diversity_events:
+            summary_lines = ["", "### 🧬 基因多样性变动"]
+            for evt in gene_diversity_events[:8]:
+                code = evt.get("lineage_code", "?")
+                name = evt.get("name", code)
+                old = evt.get("old", 0.0)
+                new = evt.get("new", 0.0)
+                reason = evt.get("reason", "自然演化")
+                summary_lines.append(f"- {name} ({code}): {old:.2f} → {new:.2f}（{reason}）")
+            narrative = narrative + "\n" + "\n".join(summary_lines)
         
         return TurnReport(
             turn_index=turn_index,
@@ -643,6 +699,7 @@ class TurnReportService:
             branching_events=branching_events or [],
             major_events=major_events or [],
             ecological_realism=self._build_ecological_realism_summary(species_data, ecological_realism_data),
+            gene_diversity_events=gene_diversity_events or [],
         )
 
 

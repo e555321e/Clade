@@ -100,6 +100,9 @@ def _serialize_species_detail(species) -> SpeciesDetail:
         created_turn=species.created_turn,
         dormant_genes=species.dormant_genes,
         stress_exposure=species.stress_exposure,
+        gene_diversity_radius=getattr(species, "gene_diversity_radius", 0.0),
+        explored_directions=getattr(species, "explored_directions", []) or [],
+        gene_stability=getattr(species, "gene_stability", 0.0),
     )
 
 

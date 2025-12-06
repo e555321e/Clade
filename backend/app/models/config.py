@@ -1000,6 +1000,74 @@ class GameplayConfig(BaseModel):
     show_advanced_metrics: bool = False
 
 
+class GeneDiversityConfig(BaseModel):
+    """基因多样性配置 - 控制基于 Embedding 的基因多样性半径机制
+    
+    核心理念：
+    - 基因库 = 物种在 Embedding 空间中的"可演化范围"
+    - 已激活基因 = 当前 ecological_vector 的位置
+    - 休眠基因 = 向量周围的"可达区域"
+    - 基因多样性 = 可达区域的半径大小
+    """
+    model_config = ConfigDict(extra="ignore")
+    
+    # ========== 基础参数 ==========
+    # 最小半径（保底演化能力）
+    min_radius: float = Field(default=0.05, description="最小基因多样性半径")
+    # 每回合最大衰减率
+    max_decay_per_turn: float = Field(default=0.05, description="每回合最大衰减 (5%)")
+    # 激活休眠基因的半径消耗
+    activation_cost: float = Field(default=0.02, description="激活休眠基因消耗 (2%)")
+    # 瓶颈效应系数 k（衰减 = k / sqrt(pop) × 压力系数）
+    bottleneck_coefficient: float = Field(default=50.0, description="瓶颈衰减系数")
+    # 恢复阈值（种群超过此值时开始正向增长）
+    recovery_threshold: int = Field(default=50000, description="瓶颈恢复种群阈值")
+    
+    # ========== 杂交/发现加成 ==========
+    # 杂交半径提升范围（最小值）
+    hybrid_bonus_min: float = Field(default=0.20, description="杂交半径提升最小值 (20%)")
+    # 杂交半径提升范围（最大值）
+    hybrid_bonus_max: float = Field(default=0.40, description="杂交半径提升最大值 (40%)")
+    # 新基因发现半径提升（最小值）
+    discovery_bonus_min: float = Field(default=0.05, description="新基因发现提升最小值 (5%)")
+    # 新基因发现半径提升（最大值）
+    discovery_bonus_max: float = Field(default=0.12, description="新基因发现提升最大值 (12%)")
+    
+    # ========== 太古宙参数（<50回合）==========
+    # 初始半径
+    archean_initial_radius: float = Field(default=0.50, description="太古宙初始半径")
+    # 每回合增长率
+    archean_growth_rate: float = Field(default=0.03, description="太古宙增长率/回合 (3%)")
+    # 分化时半径继承范围（最小值）
+    archean_inherit_min: float = Field(default=0.95, description="太古宙继承系数最小值")
+    # 分化时半径继承范围（最大值）
+    archean_inherit_max: float = Field(default=1.00, description="太古宙继承系数最大值")
+    # 突变发现概率
+    archean_mutation_chance: float = Field(default=0.15, description="太古宙突变发现概率 (15%)")
+    
+    # ========== 元古宙参数（50-150回合）==========
+    proterozoic_initial_radius: float = Field(default=0.40, description="元古宙初始半径")
+    proterozoic_growth_rate: float = Field(default=0.02, description="元古宙增长率/回合 (2%)")
+    proterozoic_inherit_min: float = Field(default=0.90, description="元古宙继承系数最小值")
+    proterozoic_inherit_max: float = Field(default=0.98, description="元古宙继承系数最大值")
+    proterozoic_mutation_chance: float = Field(default=0.10, description="元古宙突变发现概率 (10%)")
+    
+    # ========== 古生代及以后参数（>150回合）==========
+    phanerozoic_initial_radius: float = Field(default=0.35, description="古生代初始半径")
+    phanerozoic_growth_rate: float = Field(default=0.015, description="古生代增长率/回合 (1.5%)")
+    phanerozoic_inherit_min: float = Field(default=0.85, description="古生代继承系数最小值")
+    phanerozoic_inherit_max: float = Field(default=0.95, description="古生代继承系数最大值")
+    phanerozoic_mutation_chance: float = Field(default=0.08, description="古生代突变发现概率 (8%)")
+    
+    # ========== 激活机制参数 ==========
+    # 每回合激活休眠基因的概率
+    activation_chance_per_turn: float = Field(default=0.08, description="每回合激活概率 (5-10%)")
+    # 压力匹配时的激活加成倍数
+    pressure_match_bonus: float = Field(default=2.0, description="压力匹配激活加成 (×2)")
+    # 分化时发现新器官的概率
+    organ_discovery_chance: float = Field(default=0.04, description="分化时新器官发现概率 (3-5%)")
+
+
 class TensorUIConfig(BaseModel):
     """张量系统可调参数（前端可配置）
     
@@ -1157,6 +1225,9 @@ class UIConfig(BaseModel):
     
     # 19. 张量系统配置（供前端调整并写回 tensor_balance.yaml）
     tensor: TensorUIConfig = Field(default_factory=TensorUIConfig)
+    
+    # 20. 基因多样性配置
+    gene_diversity: GeneDiversityConfig = Field(default_factory=GeneDiversityConfig)
     
     # --- Legacy Fields (Keep for migration) ---
     ai_provider: str | None = None

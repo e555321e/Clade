@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Sequence, Callable, Awaitable, Any
+from typing import Iterable, Sequence, Callable, Awaitable, Any, TYPE_CHECKING
 
 from ...models.species import LineageEvent, Species
 from ...models.config import SpeciationConfig
@@ -16,7 +17,6 @@ from ...repositories.genus_repository import genus_repository
 from ...repositories.species_repository import species_repository
 from ...repositories.environment_repository import environment_repository
 from ...schemas.responses import BranchingEvent
-from .gene_library import GeneLibraryService
 from .genetic_distance import GeneticDistanceCalculator
 from .trait_config import TraitConfig, PlantTraitConfig
 from .trophic import TrophicLevelCalculator
@@ -24,9 +24,13 @@ from .speciation_rules import SpeciationRules, speciation_rules  # 【新增】�
 from .plant_evolution import plant_evolution_service, PLANT_MILESTONES  # 【植物演化】
 from .plant_competition import plant_competition_calculator  # 【植物竞争】
 from .description_enhancer import DescriptionEnhancerService  # 【描述增强】
+from .gene_diversity import GeneDiversityService
 from ...tensor.tradeoff import TradeoffCalculator
 from ...core.config import get_settings
 from ...simulation.constants import get_time_config
+
+if TYPE_CHECKING:
+    from .gene_library import GeneLibraryService
 
 # 获取配置
 _settings = get_settings()
@@ -51,7 +55,9 @@ class SpeciationService:
         self.router = router
         self.trophic_calculator = TrophicLevelCalculator()
         self.genetic_calculator = GeneticDistanceCalculator()
-        self.gene_library_service = GeneLibraryService()
+        # [DEPRECATED] GeneLibraryService 惰性初始化，仅用于旧存档兼容
+        self._gene_library_service: "GeneLibraryService | None" = None
+        self.gene_diversity_service = GeneDiversityService()
         self.rules = speciation_rules  # 【新增】规则引擎实例
         self.description_enhancer = DescriptionEnhancerService(router)  # 【描述增强】LLM增强规则生成的描述
         self.max_speciation_per_turn = 20
@@ -59,6 +65,19 @@ class SpeciationService:
         self._deferred_requests: list[dict[str, Any]] = []
         self._rule_fallback_species: list[tuple[Species, Species, str]] = []  # [(species, parent, speciation_type)]
         self._tensor_state = None
+        # 器官枚举（闭集 organ_key）
+        self._organ_catalog = [
+            {"organ_key": "vision_simple_eye", "category": "sensory", "default_name": "眼点"},
+            {"organ_key": "vision_complex_eye", "category": "sensory", "default_name": "成像眼"},
+            {"organ_key": "locomotion_fins", "category": "locomotion", "default_name": "鳍状运动"},
+            {"organ_key": "locomotion_limbs", "category": "locomotion", "default_name": "肢体运动"},
+            {"organ_key": "respiration_gills", "category": "respiratory", "default_name": "鳃呼吸"},
+            {"organ_key": "respiration_lung", "category": "respiratory", "default_name": "肺/气囊呼吸"},
+            {"organ_key": "defense_scales", "category": "defense", "default_name": "鳞片防御"},
+            {"organ_key": "defense_spikes", "category": "defense", "default_name": "棘刺防御"},
+            {"organ_key": "sense_lateral_line", "category": "sensory", "default_name": "侧线感知"},
+            {"organ_key": "sense_auditory", "category": "sensory", "default_name": "听觉感知"},
+        ]
         
         # 配置注入 - 如未提供则使用默认值并警告
         if config is None:
@@ -77,6 +96,19 @@ class SpeciationService:
         
         # 【Embedding集成】演化提示缓存
         self._evolution_hints: dict[str, dict] = {}  # {lineage_code: {reference_species, predicted_traits, ...}}
+    
+    @property
+    def gene_library_service(self) -> "GeneLibraryService":
+        """[DEPRECATED] 惰性加载 GeneLibraryService，仅用于旧存档兼容"""
+        if self._gene_library_service is None:
+            warnings.warn(
+                "GeneLibraryService 已废弃，请迁移到 GeneDiversityService",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            from .gene_library import GeneLibraryService
+            self._gene_library_service = GeneLibraryService()
+        return self._gene_library_service
     
     def reload_config(self, config: SpeciationConfig | None = None) -> None:
         """热更新配置
@@ -301,6 +333,18 @@ class SpeciationService:
                 
                 # 计算候选地块上的总种群
                 candidate_population = int(candidate_data["total_candidate_population"])
+                tile_total_population = int(sum(tile_populations.values()))
+                # 与全局种群同步：以地块总和为准，修正全局人口
+                if tile_total_population > 0 and abs(tile_total_population - global_population) > 0:
+                    logger.warning(
+                        f"[种群同步] {species.common_name}: 地块总人口({tile_total_population:,}) "
+                        f"≠ 全局人口({global_population:,})，以地块总和为准"
+                    )
+                    global_population = tile_total_population
+                    species.morphology_stats["population"] = tile_total_population
+                # 候选人口不得超过全局人口
+                if candidate_population > global_population:
+                    candidate_population = global_population
                 
                 # 计算候选地块的加权平均死亡率
                 total_pop = sum(tile_populations.get(t, 0) for t in candidate_tiles)
@@ -347,6 +391,15 @@ class SpeciationService:
                 tile_populations = self._tile_population_cache.get(lineage_code, {})
                 tile_mortality = self._tile_mortality_cache.get(lineage_code, {})
                 candidate_population = int(species.morphology_stats.get("population", 0) or 0)
+                tile_total_population = int(sum(tile_populations.values())) if tile_populations else candidate_population
+                if tile_total_population > 0 and abs(tile_total_population - candidate_population) > 0:
+                    logger.warning(
+                        f"[种群同步] {species.common_name}: 地块总人口({tile_total_population:,}) "
+                        f"≠ 全局人口({candidate_population:,})，以地块总和为准"
+                    )
+                    candidate_population = tile_total_population
+                    species.morphology_stats["population"] = tile_total_population
+                    global_population = tile_total_population
                 death_rate = result.death_rate
                 is_isolated = False
                 mortality_gradient = 0.0
@@ -1134,6 +1187,14 @@ class SpeciationService:
                     # 【新增】捕食关系信息
                     "diet_type": species.diet_type or "omnivore",
                     "prey_species_summary": self._summarize_prey_species(species),
+                    # 【新增】基因多样性状态
+                    "gene_diversity_radius": getattr(species, "gene_diversity_radius", 0.35) or 0.35,
+                    "gene_stability": getattr(species, "gene_stability", 0.5) or 0.5,
+                    "explored_directions": len(getattr(species, "explored_directions", []) or []),
+                    # 【新增】器官枚举提示（闭集 organ_key）
+                    "organ_key_catalog": "\n".join(
+                        [f"- {c['organ_key']} ({c['category']})：{c['default_name']}" for c in self._organ_catalog]
+                    ),
                 }
                 
                 entries.append({
@@ -1471,7 +1532,10 @@ class SpeciationService:
             # 处理分配地块
             assigned_tiles = ctx.get("assigned_tiles", set())
             self._inherit_habitat_distribution(
-                new_species, ctx["parent"], assigned_tiles
+                parent=ctx["parent"],
+                child=new_species,
+                turn_index=turn_index,
+                assigned_tiles=assigned_tiles
             )
             
             # 【植物基因库】继承休眠基因
@@ -2632,6 +2696,17 @@ class SpeciationService:
             # 继承父代偏好
             new_prey_preferences = dict(parent.prey_preferences) if parent.prey_preferences else {}
         
+        # 基因多样性继承
+        try:
+            self.gene_diversity_service.ensure_initialized(parent, turn_index)
+            base_radius = getattr(parent, "gene_diversity_radius", 0.35) or 0.35
+            child_radius = self.gene_diversity_service.inherit_radius(base_radius, turn_index)
+        except Exception:
+            child_radius = max(0.35, getattr(parent, "gene_diversity_radius", 0.35) or 0.35)
+        child_gene_stability = getattr(parent, "gene_stability", 0.5) or 0.5
+        child_explored = list(getattr(parent, "explored_directions", []) or [])
+        hidden["gene_diversity"] = child_radius
+
         # 验证捕食关系与营养级的一致性
         if new_trophic < 2.0 and new_prey_species:
             # 生产者不应该有猎物
@@ -2728,6 +2803,10 @@ class SpeciationService:
             diet_type=new_diet_type,
             prey_species=new_prey_species,
             prey_preferences=new_prey_preferences,
+            # 基因多样性字段
+            gene_diversity_radius=child_radius,
+            gene_stability=child_gene_stability,
+            explored_directions=child_explored,
             # 植物演化系统字段
             life_form_stage=new_life_form_stage,
             growth_form=new_growth_form,
@@ -4044,12 +4123,19 @@ class SpeciationService:
         if organ_evolution and isinstance(organ_evolution, list):
             # 推断生物类群进行验证
             biological_domain = self._infer_biological_domain(parent)
-            
+
             # 验证渐进式进化规则
             _, valid_evolutions = self._validate_gradual_evolution(
                 organ_evolution, parent.organs, biological_domain
             )
-            
+            # 归一化/去重/半径限制
+            valid_evolutions = self._normalize_organ_evolution(
+                valid_evolutions,
+                parent,
+                turn_index,
+                getattr(parent, "gene_diversity_radius", 0.35) or 0.35,
+            )
+        
             for evo in valid_evolutions:
                 category = evo.get("category", "unknown")
                 action = evo.get("action", "enhance")
@@ -5119,6 +5205,114 @@ class SpeciationService:
             valid_evolutions = valid_evolutions[:3]
         
         return True, valid_evolutions
+
+    # ------------------------------------------------------------------ #
+    # 器官归一化与去重（闭集 organ_key + 语义相似度漏斗）
+    # ------------------------------------------------------------------ #
+    def _normalize_organ_evolution(
+        self,
+        organ_evolution: list,
+        parent: Species,
+        turn_index: int,
+        gene_diversity_radius: float,
+    ) -> list:
+        """
+        - 强制 organ_key 闭集：未知 key 会尝试根据名称猜测，失败则丢弃。
+        - 语义漏斗：与父系/同批次名称相似度高（>0.85）则转为升级，不新增。
+        - 半径限制：radius<0.2 禁止新增；radius>=0.4 仅允许新增1个新 organ_key。
+        """
+        if not organ_evolution:
+            return []
+
+        import re
+        from difflib import SequenceMatcher
+
+        catalog = {c["organ_key"]: c for c in self._organ_catalog}
+
+        def _normalize_name(name: str) -> str:
+            n = (name or "").lower()
+            n = re.sub(r"[^\w\u4e00-\u9fff]+", "", n)
+            return n
+
+        def _guess_key_by_name(name: str) -> str | None:
+            n = _normalize_name(name)
+            for key, meta in catalog.items():
+                base = _normalize_name(meta["default_name"])
+                if base and base in n:
+                    return key
+            return None
+
+        def _similar(a: str, b: str) -> float:
+            return SequenceMatcher(None, a, b).ratio()
+
+        # 父系器官名称索引
+        parent_index = []
+        for cat, data in (parent.organs or {}).items():
+            if isinstance(data, dict):
+                parent_index.append(
+                    {
+                        "category": cat,
+                        "name_norm": _normalize_name(data.get("type", "")),
+                        "raw": data.get("type", ""),
+                    }
+                )
+
+        new_allowed = gene_diversity_radius >= 0.4
+        new_count = 0
+        normalized: list = []
+
+        for evo in organ_evolution:
+            if not isinstance(evo, dict):
+                continue
+
+            raw_name = evo.get("structure_name", "") or evo.get("description", "") or evo.get("organ_key", "")
+            organ_key = evo.get("organ_key") or _guess_key_by_name(raw_name)
+            if organ_key not in catalog:
+                organ_key = _guess_key_by_name(raw_name)
+            if organ_key not in catalog:
+                # 无法识别的 organ_key 丢弃，避免污染
+                continue
+
+            category = catalog[organ_key]["category"]
+            evo["organ_key"] = organ_key
+            evo["category"] = category
+            name_norm = _normalize_name(raw_name)
+            action = evo.get("action", "enhance")
+
+            # 与父系同类比对，语义相似则转为升级
+            similar_parent = False
+            for meta in parent_index:
+                if meta["category"] != category:
+                    continue
+                if _similar(name_norm, meta["name_norm"]) > 0.85:
+                    similar_parent = True
+                    break
+
+            if similar_parent and action == "initiate":
+                evo["action"] = "enhance"
+
+            # 半径限制新增
+            is_new = evo.get("action", "enhance") == "initiate"
+            if is_new:
+                if not new_allowed:
+                    if category in (parent.organs or {}):
+                        evo["action"] = "enhance"
+                    else:
+                        continue
+                else:
+                    if new_count >= 1:
+                        continue
+                    new_count += 1
+
+            # 同批次 organ_key 去重：取更高 target_stage
+            existing = next((x for x in normalized if x.get("organ_key") == organ_key), None)
+            if existing:
+                existing["target_stage"] = max(existing.get("target_stage", 1), evo.get("target_stage", 1))
+                continue
+
+            normalized.append(evo)
+
+        return normalized
 
 
     async def _attempt_endosymbiosis_async(

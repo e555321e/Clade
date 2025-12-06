@@ -1,21 +1,83 @@
-"""休眠基因激活服务"""
+"""休眠基因激活服务
+
+基于 Embedding 的基因激活机制：
+- 使用 GeneDiversityService 判断压力方向是否在可达半径内
+- 压力匹配时激活概率加成
+- 所有参数从 GeneDiversityConfig 读取
+
+【重构说明】
+- GeneLibraryService 已废弃，保留仅用于旧数据兼容
+- 新激活逻辑完全基于 GeneDiversityService.is_reachable()
+- dormant_genes 字段逐步废弃，激活判断改用 Embedding 距离
+"""
 from __future__ import annotations
 
 import logging
 import random
+import warnings
+from typing import TYPE_CHECKING
 
 from ...models.species import Species
-from .gene_library import GeneLibraryService
+from .gene_diversity import GeneDiversityService
 from .trait_config import TraitConfig
+
+if TYPE_CHECKING:
+    from ...models.config import GeneDiversityConfig
+    from .gene_library import GeneLibraryService
 
 logger = logging.getLogger(__name__)
 
 
+def _load_gene_diversity_config() -> "GeneDiversityConfig | None":
+    """从 settings.json 加载基因多样性配置"""
+    try:
+        from ...core.config import PROJECT_ROOT
+        from ...repositories.environment_repository import environment_repository
+        ui_cfg = environment_repository.load_ui_config(PROJECT_ROOT / "data/settings.json")
+        return ui_cfg.gene_diversity
+    except Exception:
+        return None
+
+
 class GeneActivationService:
-    """处理物种休眠基因的激活"""
+    """处理物种休眠基因的激活
     
-    def __init__(self):
-        self.gene_library_service = GeneLibraryService()
+    【Embedding 集成】
+    - 使用 GeneDiversityService 的 is_reachable() 判断压力方向是否在可达范围内
+    - 压力匹配时应用 pressure_match_bonus 加成（默认 ×2）
+    - 激活后消耗半径（通过 consume_on_activation）
+    """
+    
+    def __init__(self, embedding_service=None, gene_diversity_service: GeneDiversityService | None = None):
+        # [DEPRECATED] GeneLibraryService 惰性初始化，仅用于旧存档兼容
+        self._gene_library_service: "GeneLibraryService | None" = None
+        # 可选的 Embedding 服务用于距离判断
+        self.embedding = embedding_service
+        self.gene_diversity = gene_diversity_service or GeneDiversityService(embedding_service)
+        self._config: "GeneDiversityConfig | None" = None
+    
+    @property
+    def gene_library_service(self) -> "GeneLibraryService":
+        """[DEPRECATED] 惰性加载 GeneLibraryService，仅用于旧存档兼容"""
+        if self._gene_library_service is None:
+            warnings.warn(
+                "GeneLibraryService 已废弃，请迁移到 GeneDiversityService",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            from .gene_library import GeneLibraryService
+            self._gene_library_service = GeneLibraryService()
+        return self._gene_library_service
+    
+    @property
+    def config(self) -> "GeneDiversityConfig":
+        """懒加载配置"""
+        if self._config is None:
+            self._config = _load_gene_diversity_config()
+        if self._config is None:
+            from ...models.config import GeneDiversityConfig
+            self._config = GeneDiversityConfig()
+        return self._config
     
     def check_and_activate(
         self,
@@ -29,6 +91,12 @@ class GeneActivationService:
         Returns:
             激活结果字典 {"traits": [...], "organs": [...]}
         """
+        # 确保新字段初始化
+        try:
+            self.gene_diversity.ensure_initialized(species)
+        except Exception:
+            pass
+
         if not species.dormant_genes:
             return {"traits": [], "organs": []}
         
@@ -59,26 +127,47 @@ class GeneActivationService:
         pressure_type: str,
         turn: int
     ) -> list[str]:
-        """检查特质激活"""
+        """检查特质激活
+        
+        【Embedding 集成】
+        - 使用 is_reachable 判断压力方向是否在基因多样性半径内
+        - 压力匹配时应用 pressure_match_bonus 加成
+        - 基础激活概率从 activation_chance_per_turn 配置读取
+        """
         activated = []
         
         if "traits" not in species.dormant_genes:
             return activated
         
+        # 获取配置参数
+        cfg = self.config
+        base_activation_chance = cfg.activation_chance_per_turn
+        pressure_match_bonus = cfg.pressure_match_bonus
+        
+        reachable = self._is_reachable(species, pressure_type)
+
         for trait_name, gene_data in species.dormant_genes["traits"].items():
             if gene_data.get("activated", False):
                 continue
             
-            if pressure_type in gene_data.get("pressure_types", []):
+            # 压力匹配检查
+            pressure_matched = pressure_type in gene_data.get("pressure_types", [])
+            if pressure_matched:
                 gene_data["exposure_count"] = gene_data.get("exposure_count", 0) + 1
             
             activation_threshold = gene_data.get("activation_threshold", 0.65)
             exposure_count = gene_data.get("exposure_count", 0)
             evolution_potential = species.hidden_traits.get("evolution_potential", 0.5)
             
+            # 计算激活概率：基础概率 × 演化潜力 × 压力匹配加成
+            activation_prob = base_activation_chance * evolution_potential
+            if pressure_matched:
+                activation_prob *= pressure_match_bonus
+            
             if (death_rate > activation_threshold and
                 exposure_count >= 3 and
-                random.random() < evolution_potential * 0.35):
+                reachable and
+                random.random() < activation_prob):
                 
                 potential_value = gene_data.get("potential_value", 8.0)
                 test_traits = dict(species.abstract_traits)
@@ -93,6 +182,11 @@ class GeneActivationService:
                     gene_data["activated"] = True
                     gene_data["activation_turn"] = turn
                     activated.append(trait_name)
+                    try:
+                        self.gene_diversity.consume_on_activation(species)
+                        self.gene_diversity.record_direction(species, self._direction_id(pressure_type))
+                    except Exception:
+                        pass
                     
                     logger.info(f"[基因激活] {species.common_name} 激活特质: {trait_name} = {potential_value:.1f}")
                     
@@ -112,26 +206,47 @@ class GeneActivationService:
         pressure_type: str,
         turn: int
     ) -> list[str]:
-        """检查器官激活"""
+        """检查器官激活
+        
+        【Embedding 集成】
+        - 器官激活门槛略高于特质（需要更强的压力和暴露）
+        - 同样应用压力匹配加成
+        - 新器官发现概率从 organ_discovery_chance 配置读取
+        """
         activated = []
         
         if "organs" not in species.dormant_genes:
             return activated
         
+        # 获取配置参数
+        cfg = self.config
+        organ_discovery_chance = cfg.organ_discovery_chance
+        pressure_match_bonus = cfg.pressure_match_bonus
+        
+        reachable = self._is_reachable(species, pressure_type)
+
         for organ_name, gene_data in species.dormant_genes["organs"].items():
             if gene_data.get("activated", False):
                 continue
             
-            if pressure_type in gene_data.get("pressure_types", []):
+            # 压力匹配检查
+            pressure_matched = pressure_type in gene_data.get("pressure_types", [])
+            if pressure_matched:
                 gene_data["exposure_count"] = gene_data.get("exposure_count", 0) + 1
             
             activation_threshold = gene_data.get("activation_threshold", 0.70)
             exposure_count = gene_data.get("exposure_count", 0)
             evolution_potential = species.hidden_traits.get("evolution_potential", 0.5)
             
+            # 计算激活概率：器官发现概率 × 演化潜力 × 压力匹配加成
+            activation_prob = organ_discovery_chance * evolution_potential * 5  # 器官需要更多暴露
+            if pressure_matched:
+                activation_prob *= pressure_match_bonus
+            
             if (death_rate > activation_threshold and
                 exposure_count >= 3 and
-                random.random() < evolution_potential * 0.30):
+                reachable and
+                random.random() < activation_prob):
                 
                 organ_data = gene_data.get("organ_data", {})
                 organ_category = organ_data.get("category", "sensory")
@@ -145,6 +260,11 @@ class GeneActivationService:
                 gene_data["activated"] = True
                 gene_data["activation_turn"] = turn
                 activated.append(organ_name)
+                try:
+                    self.gene_diversity.consume_on_activation(species)
+                    self.gene_diversity.record_direction(species, self._direction_id(pressure_type))
+                except Exception:
+                    pass
                 
                 logger.info(f"[基因激活] {species.common_name} 激活器官: {organ_name} ({organ_category})")
                 
@@ -215,4 +335,26 @@ class GeneActivationService:
                 return "competition"
         
         return "adaptive"
+
+    # ------------------------------------------------------------------ #
+    # Embedding/可达性辅助
+    # ------------------------------------------------------------------ #
+    def _is_reachable(self, species: Species, pressure_type: str) -> bool:
+        """基于 Embedding 判断该压力方向是否在可达半径内。"""
+        try:
+            radius = getattr(species, "gene_diversity_radius", None)
+            if radius is None:
+                self.gene_diversity.ensure_initialized(species)
+                radius = species.gene_diversity_radius
+
+            target_vec = self.gene_diversity.get_pressure_vector(pressure_type)
+            return self.gene_diversity.is_reachable(
+                species.ecological_vector, target_vec, radius
+            )
+        except Exception:
+            return True
+
+    def _direction_id(self, pressure_type: str) -> int:
+        """使用稳定哈希把压力类型映射为方向索引。"""
+        return abs(hash(pressure_type)) % 10_000
 

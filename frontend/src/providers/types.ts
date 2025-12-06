@@ -120,6 +120,7 @@ export interface UIState {
     hybridization: boolean;
     divinePowers: boolean;
     gameGuide: boolean;
+    geneLibrary: boolean;
   };
   // 设置初始视图
   settingsInitialView: "menu" | "load";

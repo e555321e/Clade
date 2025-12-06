@@ -379,12 +379,22 @@ export function SpeciesDetailModal({
   const healthColor = getHealthColor(healthScore);
 
   // 计算地块分布角度
-  const totalTiles = snapshot?.total_tiles || 1;
-  const healthyTiles = snapshot?.healthy_tiles || 0;
-  const warningTiles = snapshot?.warning_tiles || 0;
-  const criticalTiles = snapshot?.critical_tiles || 0;
-  const healthyDeg = (healthyTiles / totalTiles) * 360;
-  const warningDeg = (warningTiles / totalTiles) * 360;
+  // 【修复】更合理的默认值处理
+  const totalTiles = snapshot?.total_tiles ?? 0;
+  const healthyTiles = snapshot?.healthy_tiles ?? 0;
+  const warningTiles = snapshot?.warning_tiles ?? 0;
+  const criticalTiles = snapshot?.critical_tiles ?? 0;
+  
+  // 【修复】处理无数据或数据不一致的情况
+  // 如果 total_tiles > 0 但所有分类都是 0，说明数据可能缺失，假设全部为健康地块
+  const tileSum = healthyTiles + warningTiles + criticalTiles;
+  const effectiveHealthy = totalTiles > 0 && tileSum === 0 ? totalTiles : healthyTiles;
+  const effectiveWarning = tileSum === 0 ? 0 : warningTiles;
+  const effectiveCritical = tileSum === 0 ? 0 : criticalTiles;
+  const effectiveTotal = totalTiles > 0 ? totalTiles : 1;
+  
+  const healthyDeg = (effectiveHealthy / effectiveTotal) * 360;
+  const warningDeg = (effectiveWarning / effectiveTotal) * 360;
 
   const dynamicStyles: CustomCSS = {
     '--role-color': role.color,
@@ -579,6 +589,36 @@ export function SpeciesDetailModal({
                             {getHealthLabel(healthScore)}
                           </div>
                         </div>
+
+                        {/* 基因多样性 */}
+                        <div className="sdm-stat-card sdm-gene-diversity-card">
+                          <div className="sdm-stat-header">
+                            <div className="sdm-stat-icon">
+                              <Dna size={16} />
+                            </div>
+                            <span className="sdm-stat-label">基因多样性</span>
+                          </div>
+                          <div className="sdm-stat-value">
+                            {(species.gene_diversity_radius ?? 0).toFixed(2)}
+                          </div>
+                          {/* 基因多样性可视化进度条 */}
+                          <div className="sdm-gene-diversity-bar">
+                            <div 
+                              className={`sdm-gene-diversity-fill ${
+                                (species.gene_diversity_radius ?? 0) >= 0.4 ? 'high' : 
+                                (species.gene_diversity_radius ?? 0) >= 0.2 ? 'medium' : 'low'
+                              }`}
+                              style={{ width: `${Math.min((species.gene_diversity_radius ?? 0) * 100, 100)}%` }}
+                            />
+                          </div>
+                          <div className="sdm-stat-change">
+                            {(species.gene_diversity_radius ?? 0) >= 0.4 ? '🧬 潜力丰富' : 
+                             (species.gene_diversity_radius ?? 0) >= 0.2 ? '🔬 中等范围' : '⚠️ 演化受限'}
+                            <span className="sdm-gene-stats">
+                              · 稳定性 {(species.gene_stability ?? 0.5).toFixed(2)} · 探索 {species.explored_directions?.length ?? 0}
+                            </span>
+                          </div>
+                        </div>
                       </div>
 
                       {/* 种群流水 */}
@@ -644,11 +684,13 @@ export function SpeciesDetailModal({
                               <div 
                                 className="sdm-tile-pie-bg"
                                 style={{
-                                  background: `conic-gradient(
-                                    #22c55e 0deg ${healthyDeg}deg,
-                                    #f59e0b ${healthyDeg}deg ${healthyDeg + warningDeg}deg,
-                                    #ef4444 ${healthyDeg + warningDeg}deg 360deg
-                                  )`
+                                  background: totalTiles > 0 
+                                    ? `conic-gradient(
+                                        #22c55e 0deg ${healthyDeg}deg,
+                                        #f59e0b ${healthyDeg}deg ${healthyDeg + warningDeg}deg,
+                                        #ef4444 ${healthyDeg + warningDeg}deg 360deg
+                                      )`
+                                    : 'conic-gradient(#64748b 0deg 360deg)' // 无数据时灰色
                                 }}
                               />
                               <div className="sdm-tile-pie-center">
@@ -660,17 +702,17 @@ export function SpeciesDetailModal({
                               <div className="sdm-tile-legend-item">
                                 <span className="sdm-tile-legend-dot healthy" />
                                 <span className="sdm-tile-legend-label">健康</span>
-                                <span className="sdm-tile-legend-value">{healthyTiles}</span>
+                                <span className="sdm-tile-legend-value">{effectiveHealthy}</span>
                               </div>
                               <div className="sdm-tile-legend-item">
                                 <span className="sdm-tile-legend-dot warning" />
                                 <span className="sdm-tile-legend-label">警告</span>
-                                <span className="sdm-tile-legend-value">{warningTiles}</span>
+                                <span className="sdm-tile-legend-value">{effectiveWarning}</span>
                               </div>
                               <div className="sdm-tile-legend-item">
                                 <span className="sdm-tile-legend-dot critical" />
                                 <span className="sdm-tile-legend-label">危机</span>
-                                <span className="sdm-tile-legend-value">{criticalTiles}</span>
+                                <span className="sdm-tile-legend-value">{effectiveCritical}</span>
                               </div>
                             </div>
                           </div>

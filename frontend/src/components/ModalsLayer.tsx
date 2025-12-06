@@ -42,6 +42,7 @@ const TurnProgressOverlay = lazy(() => import("./TurnProgressOverlay").then(m =>
 const GameHintsPanel = lazy(() => import("./GameHintsPanel").then(m => ({ default: m.GameHintsPanel })));
 const AchievementNotification = lazy(() => import("./GameHintsPanel").then(m => ({ default: m.AchievementNotification })));
 const GameGuideModal = lazy(() => import("./GameGuideModal").then(m => ({ default: m.GameGuideModal })));
+const GeneLibraryModal = lazy(() => import("./GeneLibrary").then(m => ({ default: m.GeneLibraryModal })));
 
 // 加载占位符
 function ModalFallback() {
@@ -78,6 +79,7 @@ interface ModalState {
   hybridization: boolean;
   divinePowers: boolean;
   gameGuide: boolean;
+  geneLibrary: boolean;
 }
 
 interface ModalsLayerProps {
@@ -367,6 +369,16 @@ export function ModalsLayer({
         <GameGuideModal
           isOpen={modals.gameGuide}
           onClose={() => onCloseModal("gameGuide")}
+        />
+      )}
+
+      {/* 基因库 */}
+      {modals.geneLibrary && (
+        <GeneLibraryModal
+          isOpen={modals.geneLibrary}
+          onClose={() => onCloseModal("geneLibrary")}
+          speciesList={speciesList}
+          onSelectSpecies={onSelectSpecies}
         />
       )}
     </Suspense>

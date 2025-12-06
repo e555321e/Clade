@@ -269,6 +269,16 @@ SPECIES_PROMPTS = {
 分化类型：{speciation_type}
 {tile_context}
 
+=== 基因多样性状态 ===
+- 当前演化范围：{gene_diversity_radius:.2f}（0-1，越大方向越多）
+- 演化稳定性：{gene_stability:.2f}（越高越不易丢失）
+- 已探索方向：{explored_directions} 个
+- 指南：半径>0.4 可大胆适应/允许1个新器官；半径<0.2 仅小幅微调，禁止新增器官
+
+=== 可用器官枚举（organ_key，用于 organ_evolution）===
+{organ_key_catalog}
+输出 organ_evolution 时必须包含 organ_key（从上表选择），并提供 structure_name 作为中文展示名。
+
 === ⚠️ 极端环境警告 ===
 【压力等级判定】
 - 压力≤3: 🟢 温和环境 - 常规适应

@@ -12,3 +12,4 @@ export { MortalitySection } from "./MortalitySection";
 export { PressureSection } from "./PressureSection";
 export { EcologySection } from "./EcologySection";
 export { MapSection } from "./MapSection";
+export { GeneDiversitySection } from "./GeneDiversitySection";

@@ -24,6 +24,12 @@ class Species(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     is_background: bool = Field(default=False, index=True)
     trophic_level: float = Field(default=1.0, index=True)
+    # 基因多样性：Embedding 空间中的可达范围半径
+    gene_diversity_radius: float = Field(default=0.35)
+    # 已探索/激活的方向索引（稀疏记录）
+    explored_directions: list[int] = Field(default_factory=list, sa_column=Column(JSON))
+    # 基因稳定性（影响丢失概率/衰减率）
+    gene_stability: float = Field(default=0.5)
     
     # 结构化器官系统
     organs: dict[str, dict] = Field(default={}, sa_column=Column(JSON))
@@ -49,7 +55,11 @@ class Species(SQLModel, table=True):
     # - deep_sea (深海): 深海环境，耐高压低温
     # - coastal (海岸): 海岸带、潮间带环境
     
+    # [DEPRECATED] 旧版休眠基因系统 - 已被 gene_diversity_radius + Embedding 可达性判断替代
+    # 该字段将在未来版本移除，新激活逻辑应使用 GeneDiversityService.is_reachable()
+    # 迁移说明: gene_diversity_radius 已替代 hidden_traits["gene_diversity"]
     dormant_genes: dict = Field(default={}, sa_column=Column(JSON))
+    # [DEPRECATED] 旧版压力暴露计数 - 新系统使用 Embedding 距离计算压力匹配度
     stress_exposure: dict = Field(default={}, sa_column=Column(JSON))
 
     # 历史高光时刻（用于LLM Context）

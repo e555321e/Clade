@@ -12,6 +12,7 @@ import {
   DEFAULT_ECOLOGY_BALANCE_CONFIG,
   DEFAULT_MAP_ENVIRONMENT_CONFIG,
   DEFAULT_PRESSURE_INTENSITY_CONFIG,
+  DEFAULT_GENE_DIVERSITY_CONFIG,
 } from "./constants";
 
 // ============ 工具函数 ============
@@ -45,10 +46,11 @@ export function createDefaultConfig(): UIConfig {
     ecology_balance: { ...DEFAULT_ECOLOGY_BALANCE_CONFIG },
     map_environment: { ...DEFAULT_MAP_ENVIRONMENT_CONFIG },
     pressure_intensity: { ...DEFAULT_PRESSURE_INTENSITY_CONFIG },
+    gene_diversity: { ...DEFAULT_GENE_DIVERSITY_CONFIG },
     // AI 功能开关
     turn_report_llm_enabled: true,      // 默认开启 LLM 回合报告
     ai_narrative_enabled: true,         // 默认开启物种叙事
-    load_balance_enabled: false,        // 默认关闭负载均衡
+    load_balance_enabled: true,        // 默认开启负载均衡
   };
 }
 
@@ -404,6 +406,21 @@ export function settingsReducer(state: SettingsState, action: SettingsAction): S
         form: { ...state.form, pressure_intensity: { ...DEFAULT_PRESSURE_INTENSITY_CONFIG } },
       };
 
+    case "UPDATE_GENE_DIVERSITY":
+      return {
+        ...state,
+        form: {
+          ...state.form,
+          gene_diversity: { ...(state.form.gene_diversity || {}), ...action.updates },
+        },
+      };
+
+    case "RESET_GENE_DIVERSITY":
+      return {
+        ...state,
+        form: { ...state.form, gene_diversity: { ...DEFAULT_GENE_DIVERSITY_CONFIG } },
+      };
+
     default:
       return state;
   }
@@ -422,6 +439,7 @@ export function createInitialState(config: UIConfig): SettingsState {
     ecology_balance: { ...DEFAULT_ECOLOGY_BALANCE_CONFIG, ...(config.ecology_balance || {}) },
     map_environment: { ...DEFAULT_MAP_ENVIRONMENT_CONFIG, ...(config.map_environment || {}) },
     pressure_intensity: { ...DEFAULT_PRESSURE_INTENSITY_CONFIG, ...(config.pressure_intensity || {}) },
+    gene_diversity: { ...DEFAULT_GENE_DIVERSITY_CONFIG, ...(config.gene_diversity || {}) },
   };
 
   return {

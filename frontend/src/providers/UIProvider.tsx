@@ -39,6 +39,7 @@ const initialModals: UIState["modals"] = {
   hybridization: false,
   divinePowers: false,
   gameGuide: false,
+  geneLibrary: false,
 };
 
 // ============ Context ============
