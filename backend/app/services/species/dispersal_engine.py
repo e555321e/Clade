@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 from ...models.environment import HabitatPopulation, MapTile
 from ...repositories.environment_repository import environment_repository
-from ...simulation.constants import LOGIC_RES_X, LOGIC_RES_Y
+from ...simulation.constants import LOGIC_RES_X, LOGIC_RES_Y, get_time_config
 from scipy.ndimage import label as scipy_label
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,42 @@ class DispersalEngine:
     # 迁徙冷却（回合数）
     MIGRATION_COOLDOWN = 0              # 【大浪淘沙v3】从1回合降到0回合
     DISPERSAL_COOLDOWN = 0              # 被动扩散无冷却
+    
+    # 【时代缩放】当前时代的缩放因子（由 set_era_scaling 设置）
+    _era_scaling: float = 1.0
+    _effective_passive_prob: float = 0.40
+    _effective_long_jump_prob: float = 0.10
+    
+    @classmethod
+    def set_era_scaling(cls, turn_index: int) -> None:
+        """根据当前回合设置时代缩放因子
+        
+        太古宙/元古宙：每回合代表几千万年，扩散应该非常快
+        - 太古宙: scaling_factor = 40 → 扩散概率约 95%
+        - 元古宙: scaling_factor = 100 → 扩散概率约 99%
+        
+        Args:
+            turn_index: 当前回合数
+        """
+        time_config = get_time_config(turn_index)
+        cls._era_scaling = time_config["scaling_factor"]
+        
+        # 使用平方根缓和极端值，但保持显著差异
+        # 太古宙: sqrt(40) ≈ 6.3x, 元古宙: sqrt(100) = 10x
+        effective_mult = max(1.0, cls._era_scaling ** 0.5)
+        
+        # 计算有效概率（使用1 - (1-p)^n 公式模拟多次机会）
+        # 相当于在一回合内有 effective_mult 次扩散机会
+        base_p = cls.PASSIVE_DISPERSAL_PROB
+        base_j = cls.LONG_JUMP_PROB
+        
+        # 早期时代：大幅提高扩散概率
+        cls._effective_passive_prob = min(0.95, 1.0 - (1.0 - base_p) ** effective_mult)
+        cls._effective_long_jump_prob = min(0.50, 1.0 - (1.0 - base_j) ** effective_mult)
+        
+        if cls._era_scaling > 1.5:
+            logger.info(f"[扩散引擎] {time_config['era_name']}，时代缩放={cls._era_scaling:.1f}x，"
+                       f"有效扩散概率={cls._effective_passive_prob:.1%}，远跳概率={cls._effective_long_jump_prob:.1%}")
     
     def __init__(self, embedding_service: 'EmbeddingIntegrationService | None' = None):
         self.repo = environment_repository
@@ -388,7 +424,8 @@ class DispersalEngine:
         # 但为了严谨，陆生生物不能轻易跨海。
         # 让我们设定：连通性检查是硬约束，但 long_jump 是特例。
         
-        long_jump = self.LONG_JUMP_PROB
+        # 使用时代调整后的有效远跳概率
+        long_jump = self._effective_long_jump_prob
         if connectivity_mode == 'water':
             long_jump += self.AQUATIC_JUMP_BONUS
         
@@ -604,18 +641,18 @@ class DispersalEngine:
         if current_turn - last_turn < self.DISPERSAL_COOLDOWN:
             return False
         
-        # 【平衡v2】提高基础概率
-        base_prob = self.PASSIVE_DISPERSAL_PROB
+        # 【平衡v2】提高基础概率 + 【时代缩放】使用有效概率
+        base_prob = self._effective_passive_prob
         
         # 微生物有更高的扩散概率
         body_size = species.morphology_stats.get("body_length_cm", 10.0)
         if body_size < 0.1:  # 微生物
-            base_prob *= 1.5
+            base_prob = min(0.98, base_prob * 1.5)  # 早期时代微生物扩散极快
         
         # 快速繁殖物种有更高扩散概率
         gen_time = species.morphology_stats.get("generation_time_days", 30)
         if gen_time < 10:  # 快速繁殖
-            base_prob *= 1.3
+            base_prob = min(0.98, base_prob * 1.3)
         
         return random.random() < min(0.5, base_prob)
     
@@ -830,6 +867,10 @@ def process_batch_dispersal(
         {lineage_code: [(new_tile_id, score)]} 扩散结果
     """
     engine = dispersal_engine
+    
+    # 【时代缩放】根据当前回合设置扩散参数
+    # 太古宙/元古宙每回合几千万年，扩散应非常快
+    DispersalEngine.set_era_scaling(turn_index)
     
     # 更新地块缓存
     engine.update_tile_cache(all_tiles)

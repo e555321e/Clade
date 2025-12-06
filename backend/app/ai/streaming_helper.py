@@ -406,3 +406,62 @@ async def acall_with_heartbeat(
             except asyncio.CancelledError:
                 pass
 
+
+async def invoke_with_heartbeat(
+    router: Any,
+    capability: str,
+    payload: dict,
+    task_name: str = "AI处理",
+    timeout: float = 90.0,
+    heartbeat_interval: float = 2.0,
+    event_callback: Callable[[str, str, str], None] | None = None,
+) -> dict:
+    """同步 invoke 的异步封装，带心跳与超时保护（用于 payload 风格接口）"""
+    import asyncio
+
+    def emit_event(event_type: str, message: str):
+        if event_callback:
+            try:
+                event_callback(event_type, message, "AI")
+            except Exception:
+                pass
+
+    emit_event("ai_request_start", f"🚀 {task_name} 开始请求")
+
+    heartbeat_task = None
+    heartbeat_count = 0
+
+    async def send_heartbeats():
+        nonlocal heartbeat_count
+        while True:
+            await asyncio.sleep(heartbeat_interval)
+            heartbeat_count += 1
+            emit_event("ai_heartbeat", f"💓 {task_name} 等待中 ({heartbeat_count * heartbeat_interval:.0f}s)")
+
+    try:
+        heartbeat_task = asyncio.create_task(send_heartbeats())
+
+        # router.invoke 是同步方法，使用线程池避免阻塞事件循环
+        response = await asyncio.wait_for(
+            asyncio.to_thread(router.invoke, capability, payload),
+            timeout=timeout
+        )
+
+        emit_event("ai_request_complete", f"✅ {task_name} 完成")
+        return response
+
+    except asyncio.TimeoutError:
+        emit_event("ai_request_timeout", f"⏰ {task_name} 超时 ({timeout}s)")
+        logger.error(f"[AI请求] {task_name} 超时 ({timeout}s)")
+        raise
+    except Exception as e:
+        emit_event("ai_request_error", f"❌ {task_name} 失败: {e}")
+        logger.error(f"[AI请求] {task_name} 失败: {e}")
+        raise
+    finally:
+        if heartbeat_task:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass

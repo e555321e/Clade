@@ -63,6 +63,12 @@ const QUICK_TEMPLATES = [
   { id: "decomposer", name: "分解者", icon: <Shrub size={16} />, color: "#78716c", habitat: "terrestrial", diet: "detritivore", prompt: "一种以有机碎屑为食的分解者，帮助物质循环" },
 ];
 
+const GENERATION_HINTS = [
+  "请确认已正确连接 LLM 服务，否则物种生成将无法进行。",
+  "尽量提供更清晰的设定：如栖息地、食性、体型、特殊能力、主要猎物等。",
+  "若为植物请注明演化阶段（苔藓／蕨类／被子植物），若为消费者可直接指定典型猎物。",
+];
+
 type CreateMode = "quick" | "custom" | "evolve";
 
 export function EnhancedCreateSpeciesModal({ onClose, onSuccess }: Props) {
@@ -257,6 +263,14 @@ export function EnhancedCreateSpeciesModal({ onClose, onSuccess }: Props) {
                 <HelpCircle size={12} />
                 <span>AI 会根据描述生成物种的详细属性</span>
               </div>
+              <div className="csm-hints" style={{ marginTop: 8, display: "grid", gap: 4 }}>
+                {GENERATION_HINTS.map((h, idx) => (
+                  <div key={idx} className="csm-hint-item" style={{ display: "flex", gap: 6, alignItems: "center", color: "#9ca3af", fontSize: 12 }}>
+                    <ArrowRight size={12} />
+                    <span>{h}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -277,6 +291,14 @@ export function EnhancedCreateSpeciesModal({ onClose, onSuccess }: Props) {
                 placeholder="详细描述你想创造的物种..."
                 rows={4}
               />
+              <div className="csm-hints" style={{ marginTop: 8, display: "grid", gap: 4 }}>
+                {GENERATION_HINTS.map((h, idx) => (
+                  <div key={idx} className="csm-hint-item" style={{ display: "flex", gap: 6, alignItems: "center", color: "#9ca3af", fontSize: 12 }}>
+                    <ArrowRight size={12} />
+                    <span>{h}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* 可选参数 */}

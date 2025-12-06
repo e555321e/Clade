@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 from typing import Sequence
 
 from ...models.species import Species
@@ -101,92 +102,90 @@ class SpeciesGenerator:
             }
         }
         
-        try:
-            # 调用AI生成
-            response = self.router.invoke("species_generation", payload)
-            
-            # 解析响应：ModelRouter 返回 {"content": {...}, ...}
-            content = response.get("content") if isinstance(response, dict) else None
-            if isinstance(content, dict):
-                # content 可能直接就是物种数据，或者包含 "species" 字段
-                if "species" in content:
-                    species_data = content["species"]
-                else:
-                    species_data = content
-            else:
-                # AI返回格式不正确，使用默认值
-                logger.warning(f"[物种生成器] AI响应格式不正确，使用模板生成")
-                logger.debug(f"[物种生成器] 响应内容: {response}")
-                species_data = self._generate_fallback(prompt, lineage_code)
-            
-            # 确保必需字段存在
-            species_data = self._ensure_required_fields(species_data, lineage_code, prompt)
-            
-            # 直接从species_data中获取名称和栖息地类型
-            description = species_data.get("description", prompt)
-            latin_name = species_data.get("latin_name", f"Species {lineage_code.lower()}")
-            common_name = species_data.get("common_name", f"物种{lineage_code}")
-            habitat_type = species_data.get("habitat_type", "terrestrial")
-            
-            # 提取捕食关系字段
-            diet_type = species_data.get("diet_type", "omnivore")
-            prey_species = species_data.get("prey_species", [])
-            prey_preferences = species_data.get("prey_preferences", {})
-            
-            # 验证食性类型
-            valid_diet_types = ["autotroph", "herbivore", "carnivore", "omnivore", "detritivore"]
-            if diet_type not in valid_diet_types:
-                diet_type = "omnivore"
-            
-            # 【修复】根据食性设置合理的营养级
-            trophic_mapping = {
-                "autotroph": 1.0,
-                "herbivore": 2.0,
-                "carnivore": 3.5,
-                "omnivore": 2.5,
-                "detritivore": 1.5
-            }
-            trophic_level = trophic_mapping.get(diet_type, 2.0)
-            
-            # 创建物种对象
-            # 注意：不再使用 ecological_vector，系统会基于 description 自动计算 embedding
-            species = Species(
-                lineage_code=lineage_code,
-                parent_code=None,
-                latin_name=latin_name,
-                common_name=common_name,
-                description=description,
-                habitat_type=habitat_type,
-                morphology_stats=species_data.get("morphology_stats", {}),
-                abstract_traits=species_data.get("abstract_traits", {}),
-                hidden_traits=species_data.get("hidden_traits", {}),
-                ecological_vector=None,  # 不再手动设置，让系统自动计算
-                status="alive",
-                is_background=False,
-                created_turn=0,
-                trophic_level=trophic_level,  # 【修复】设置营养级
-                # 捕食关系
-                diet_type=diet_type,
-                prey_species=prey_species if isinstance(prey_species, list) else [],
-                prey_preferences=prey_preferences if isinstance(prey_preferences, dict) else {},
+        # 调用AI生成（强制要求 LLM，不再使用本地规则）
+        response = self.router.invoke("species_generation", payload)
+
+        # 处理错误和本地模式
+        if isinstance(response, dict) and response.get("provider") == "local":
+            raise RuntimeError("LLM 未配置：species_generation 使用了 local provider")
+        if isinstance(response, dict) and response.get("error"):
+            raise RuntimeError(f"LLM 调用失败: {response.get('error')}")
+
+        # 解析响应：ModelRouter 返回 {"content": {...}, ...}
+        content = response.get("content") if isinstance(response, dict) else None
+        if not isinstance(content, dict):
+            raise RuntimeError(f"LLM 响应为空或格式错误: {response}")
+
+        # content 可能直接是物种数据，或包含 "species"
+        if "species" in content and isinstance(content["species"], dict):
+            species_data = content["species"]
+        else:
+            species_data = content
+
+        # 确保必需字段存在
+        species_data = self._ensure_required_fields(species_data, lineage_code, prompt)
+
+        # 直接从species_data中获取名称和栖息地类型
+        description = species_data.get("description", prompt)
+        latin_name = species_data.get("latin_name", f"Species {lineage_code.lower()}")
+        common_name = species_data.get("common_name", f"物种{lineage_code}")
+        habitat_type = species_data.get("habitat_type", "terrestrial")
+
+        # 提取捕食关系字段
+        diet_type = species_data.get("diet_type", "omnivore")
+        prey_species = species_data.get("prey_species", [])
+        prey_preferences = species_data.get("prey_preferences", {})
+
+        # 验证食性类型
+        valid_diet_types = ["autotroph", "herbivore", "carnivore", "omnivore", "detritivore"]
+        if diet_type not in valid_diet_types:
+            diet_type = "omnivore"
+
+        # 【修复】根据食性设置合理的营养级
+        trophic_mapping = {
+            "autotroph": 1.0,
+            "herbivore": 2.0,
+            "carnivore": 3.5,
+            "omnivore": 2.5,
+            "detritivore": 1.5
+        }
+        trophic_level = trophic_mapping.get(diet_type, 2.0)
+
+        # 创建物种对象
+        # 注意：不再使用 ecological_vector，系统会基于 description 自动计算 embedding
+        species = Species(
+            lineage_code=lineage_code,
+            parent_code=None,
+            latin_name=latin_name,
+            common_name=common_name,
+            description=description,
+            habitat_type=habitat_type,
+            morphology_stats=species_data.get("morphology_stats", {}),
+            abstract_traits=species_data.get("abstract_traits", {}),
+            hidden_traits=species_data.get("hidden_traits", {}),
+            ecological_vector=None,  # 不再手动设置，让系统自动计算
+            status="alive",
+            is_background=False,
+            created_turn=0,
+            trophic_level=trophic_level,  # 【修复】设置营养级
+            # 捕食关系
+            diet_type=diet_type,
+            prey_species=prey_species if isinstance(prey_species, list) else [],
+            prey_preferences=prey_preferences if isinstance(prey_preferences, dict) else {},
+        )
+
+        # 【新增】如果是消费者但没有猎物，自动分配
+        if trophic_level >= 2.0 and not species.prey_species and existing_species:
+            auto_prey, auto_prefs = self.predation_service.auto_assign_prey(
+                species, existing_species
             )
-            
-            # 【新增】如果是消费者但没有猎物，自动分配
-            if trophic_level >= 2.0 and not species.prey_species and existing_species:
-                auto_prey, auto_prefs = self.predation_service.auto_assign_prey(
-                    species, existing_species
-                )
-                if auto_prey:
-                    species.prey_species = auto_prey
-                    species.prey_preferences = auto_prefs
-                    logger.debug(f"[物种生成器] 自动分配猎物: {auto_prey}")
-            
-            logger.info(f"[物种生成器] 物种生成成功: {species.latin_name} / {species.common_name}")
-            return species
-            
-        except Exception as e:
-            logger.warning(f"[物种生成器] AI生成失败，使用模板: {e}")
-            return self._create_fallback_species(prompt, lineage_code)
+            if auto_prey:
+                species.prey_species = auto_prey
+                species.prey_preferences = auto_prefs
+                logger.debug(f"[物种生成器] 自动分配猎物: {auto_prey}")
+
+        logger.info(f"[物种生成器] 物种生成成功: {species.latin_name} / {species.common_name}")
+        return species
 
     def _ensure_required_fields(self, data: dict, lineage_code: str, prompt: str) -> dict:
         """确保必需字段存在"""
@@ -230,106 +229,115 @@ class SpeciesGenerator:
         return data
 
     def _generate_fallback(self, prompt: str, lineage_code: str) -> dict:
-        """生成备用数据（当AI失败时）"""
-        # 根据提示词推测物种类型
+        """生成备用数据（当AI失败时），尽量利用用户描述做差异化"""
+        prompt = (prompt or "").strip()
         prompt_lower = prompt.lower()
-        
-        if any(kw in prompt_lower for kw in ["植物", "藻类", "光合", "plant", "algae"]):
-            return {
-                "latin_name": f"Plantae {lineage_code.lower()}",
-                "common_name": "原始植物",
-                "description": (
-                    f"基于用户描述生成的植物物种：{prompt}。"
-                    "具有光合能力，通过叶绿体进行光合作用，从阳光中获取能量，固定二氧化碳生产有机物。"
-                    "细胞壁由纤维素构成，提供结构支撑。繁殖方式包括无性繁殖和有性生殖。"
-                    "作为初级生产者，在生态系统中处于食物链基础位置。"
-                    "对光照有较高需求，耐旱性中等，适应温带至热带环境。"
-                ),
-                "morphology_stats": {
-                    "body_length_cm": 5,
-                    "body_weight_g": 0.5,
-                    "metabolic_rate": 2.0,
-                    "lifespan_days": 180,
-                },
-                "abstract_traits": {
-                    "耐寒性": 6,
-                    "耐热性": 6,
-                    "耐旱性": 4,
-                    "耐盐性": 5,
-                    "耐酸碱性": 5,
-                    "光照需求": 9,
-                    "氧气需求": 8,
-                    "繁殖速度": 6,
-                    "运动能力": 3,
-                    "社会性": 2,
-                },
-                "hidden_traits": {"gene_diversity": 0.8, "environment_sensitivity": 0.3, "evolution_potential": 0.85},
-            }
-        elif any(kw in prompt_lower for kw in ["肉食", "捕食", "carnivore", "predator"]):
-            return {
-                "latin_name": f"Predator {lineage_code.lower()}",
-                "common_name": "原始捕食者",
-                "description": (
-                    f"基于用户描述生成的捕食性物种：{prompt}。"
-                    "异养生物，通过主动捕食其他生物获取能量和营养。"
-                    "具有发达的感觉器官用于探测猎物，强健的肌肉系统用于追逐，"
-                    "锐利的牙齿或其他捕食结构用于捕获和撕咬猎物。"
-                    "繁殖速度较慢，但个体生存能力强。"
-                    "在生态系统中处于较高营养级，对种群数量有调控作用。"
-                    "对环境变化较为敏感，需要稳定的猎物来源。"
-                ),
-                "morphology_stats": {
-                    "body_length_cm": 20,
-                    "body_weight_g": 150,
-                    "metabolic_rate": 1.5,
-                    "lifespan_days": 365,
-                },
-                "abstract_traits": {
-                    "耐寒性": 5,
-                    "耐热性": 5,
-                    "耐旱性": 6,
-                    "耐盐性": 4,
-                    "耐酸碱性": 5,
-                    "光照需求": 3,
-                    "氧气需求": 8,
-                    "繁殖速度": 4,
-                    "运动能力": 8,
-                    "社会性": 5,
-                },
-                "hidden_traits": {"gene_diversity": 0.7, "environment_sensitivity": 0.6, "evolution_potential": 0.8},
-            }
+        seed = abs(hash(prompt + lineage_code)) % 1_000_000_007
+        rng = random.Random(seed)
+
+        # 基于关键词推测类别与习性
+        is_plant = any(kw in prompt_lower for kw in ["植物", "藻类", "光合", "plant", "algae"])
+        is_carnivore = any(kw in prompt_lower for kw in ["肉食", "捕食", "carnivore", "predator"])
+        is_herbivore = any(kw in prompt_lower for kw in ["草食", "herbivore", "滤食"])
+
+        # 生成少量可见差异的名称
+        base_adjectives = ["早期", "原生", "适应性强", "特化", "耐寒", "耐热", "灵活", "稳健"]
+        nouns = ["生物", "物种", "演化支系", "栖居者", "形态型"]
+        adj = rng.choice(base_adjectives)
+        noun = rng.choice(nouns)
+
+        # 栖息地描述
+        if any(kw in prompt_lower for kw in ["海", "marine", "ocean"]):
+            habitat_desc = "海洋/沿海环境"
+            habitat_type = "marine"
+        elif any(kw in prompt_lower for kw in ["河", "湖", "freshwater"]):
+            habitat_desc = "淡水环境"
+            habitat_type = "freshwater"
+        elif any(kw in prompt_lower for kw in ["空中", "飞行", "aerial"]):
+            habitat_desc = "空中/树冠层"
+            habitat_type = "aerial"
         else:
-            return {
-                "latin_name": f"Organism {lineage_code.lower()}",
-                "common_name": "原始生物",
-                "description": (
-                    f"基于用户描述生成的生物物种：{prompt}。"
-                    "具有基本的生命活动能力，包括新陈代谢、生长、繁殖等。"
-                    "形态结构相对简单，但能够适应特定环境。"
-                    "食性可能为杂食性，能够利用多种食物来源。"
-                    "繁殖方式灵活，适应能力较强。"
-                    "在生态系统中扮演中间角色，连接不同营养级。"
-                ),
-                "morphology_stats": {
-                    "body_length_cm": 10,
-                    "body_weight_g": 10,
-                    "metabolic_rate": 2.0,
-                    "lifespan_days": 270,
-                },
-                "abstract_traits": {
-                    "耐寒性": 5,
-                    "耐热性": 5,
-                    "耐旱性": 5,
-                    "耐盐性": 5,
-                    "耐酸碱性": 5,
-                    "光照需求": 5,
-                    "氧气需求": 7,
-                    "繁殖速度": 6,
-                    "运动能力": 5,
-                    "社会性": 3,
-                },
-                "hidden_traits": {"gene_diversity": 0.75, "environment_sensitivity": 0.5, "evolution_potential": 0.8},
-            }
+            habitat_desc = "陆地或混合栖息地"
+            habitat_type = "terrestrial"
+
+        # 食性与营养级
+        if is_plant:
+            diet_desc = "自养型，以光合作用获取能量"
+            diet_type = "autotroph"
+            trophic_level = 1.0
+        elif is_carnivore:
+            diet_desc = "肉食性，主动捕猎其他生物"
+            diet_type = "carnivore"
+            trophic_level = 3.5
+        elif is_herbivore:
+            diet_desc = "草食/滤食型，依赖植物或微生物群"
+            diet_type = "herbivore"
+            trophic_level = 2.0
+        else:
+            diet_desc = "杂食性，可灵活利用多种食物来源"
+            diet_type = "omnivore"
+            trophic_level = 2.5
+
+        # 体型与代谢：从提示长度做轻量扰动
+        length_cm = 5 + (len(prompt) % 20) + rng.uniform(-2, 2)
+        weight_g = max(0.5, (length_cm ** 2) * rng.uniform(0.3, 0.8))
+        lifespan_days = max(90, int(150 + rng.uniform(-40, 80)))
+
+        # 抽象特征做轻微差异化
+        def jitter(base: float, spread: float = 1.2) -> int:
+            return int(max(1, min(10, round(base + rng.uniform(-spread, spread)))))
+
+        cold = jitter(5 + (len(prompt) % 3))
+        heat = jitter(5 + rng.uniform(-1, 1))
+        drought = jitter(5 + rng.uniform(-1, 1))
+        salt = jitter(5 + rng.uniform(-1, 1))
+        light_need = jitter(8 if is_plant else 5, spread=1.5)
+        reproduction = jitter(6 + rng.uniform(-2, 2))
+        locomotion = jitter(3 if is_plant else 6, spread=2.0)
+        social = jitter(2 if is_plant else 4, spread=2.5)
+
+        # 简要描述：保留用户描述片段
+        prompt_snippet = prompt[:120] if prompt else "（用户未提供额外描述）"
+        description = (
+            f"{adj}的{noun}（推断栖息地：{habitat_desc}，食性：{diet_desc}）。"
+            f"输入描述片段：{prompt_snippet}。"
+            "具备基础形态与代谢系统，可在当前环境中维持稳定种群。"
+        )
+
+        latin_prefix = "Plantae" if is_plant else ("Predator" if is_carnivore else "Organism")
+        common_prefix = "先锋植物" if is_plant else ("原始捕食者" if is_carnivore else "原始生物")
+
+        return {
+            "latin_name": f"{latin_prefix} {lineage_code.lower()}",
+            "common_name": f"{common_prefix}-{lineage_code}",
+            "description": description,
+            "habitat_type": habitat_type,
+            "diet_type": diet_type,
+            "trophic_level": trophic_level,
+            "morphology_stats": {
+                "body_length_cm": round(length_cm, 2),
+                "body_weight_g": round(weight_g, 2),
+                "metabolic_rate": round(rng.uniform(1.2, 2.5), 2),
+                "lifespan_days": lifespan_days,
+            },
+            "abstract_traits": {
+                "耐寒性": cold,
+                "耐热性": heat,
+                "耐旱性": drought,
+                "耐盐性": salt,
+                "耐酸碱性": jitter(5),
+                "光照需求": light_need,
+                "氧气需求": jitter(7),
+                "繁殖速度": reproduction,
+                "运动能力": locomotion,
+                "社会性": social,
+            },
+            "hidden_traits": {
+                "gene_diversity": round(0.6 + rng.random() * 0.3, 3),
+                "environment_sensitivity": round(0.3 + rng.random() * 0.4, 3),
+                "evolution_potential": round(0.6 + rng.random() * 0.25, 3),
+            },
+        }
 
     def _create_fallback_species(self, prompt: str, lineage_code: str) -> Species:
         """创建备用物种对象"""

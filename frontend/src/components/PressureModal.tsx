@@ -1,12 +1,13 @@
 import { useMemo, useState, useEffect } from "react";
-import type { PressureDraft, PressureTemplate } from "@/services/api.types";
+import type { PressureDraft, PressureTemplate, PressureIntensityConfig } from "@/services/api.types";
 
 interface Props {
   pressures: PressureDraft[];
   templates: PressureTemplate[];
+  intensityConfig?: PressureIntensityConfig;
   onChange: (next: PressureDraft[]) => void;
   onQueue: (next: PressureDraft[], rounds: number) => void;
-  onExecute: (next: PressureDraft[]) => void;
+  onExecute: (next: PressureDraft[], rounds: number) => void;
   onBatchExecute: (rounds: number, pressures: PressureDraft[], randomEnergy: number) => void;
   onClose: () => void;
 }
@@ -98,6 +99,7 @@ const TIER_THEMES = {
 export function PressureModal({
   pressures,
   templates,
+  intensityConfig,
   onChange,
   onQueue,
   onExecute,
@@ -126,9 +128,9 @@ export function PressureModal({
   // 常量
   const PRESSURE_TIER_1_LIMIT = 3;
   const PRESSURE_TIER_2_LIMIT = 7;
-  const PRESSURE_TIER_1_MULT = 1.0;
-  const PRESSURE_TIER_2_MULT = 2.0;
-  const PRESSURE_TIER_3_MULT = 5.0;
+  const PRESSURE_TIER_1_MULT = intensityConfig?.intensity_low_multiplier ?? 1.0;
+  const PRESSURE_TIER_2_MULT = intensityConfig?.intensity_mid_multiplier ?? 2.0;
+  const PRESSURE_TIER_3_MULT = intensityConfig?.intensity_high_multiplier ?? 5.0;
 
   // 过滤当前 Tier 的模板
   const currentTierTemplates = useMemo(() => {
@@ -188,11 +190,12 @@ export function PressureModal({
      return pressures.some(p => conflicts.includes(p.kind));
   }
 
+  const formatMult = (m: number) => (Number.isInteger(m) ? `${m}` : `${m.toFixed(2).replace(/\.?0+$/, "")}`);
+
   function getIntensityLabel(val: number) {
-    // 【v3】更新倍率显示，与后端一致
-    if (val <= PRESSURE_TIER_1_LIMIT) return "轻微 (×0.3)";
-    if (val <= PRESSURE_TIER_2_LIMIT) return "显著 (×0.6)";
-    return "毁灭性 (×1.5)";  // 大浪淘沙！
+    if (val <= PRESSURE_TIER_1_LIMIT) return `轻微 (×${formatMult(PRESSURE_TIER_1_MULT)})`;
+    if (val <= PRESSURE_TIER_2_LIMIT) return `显著 (×${formatMult(PRESSURE_TIER_2_MULT)})`;
+    return `毁灭性 (×${formatMult(PRESSURE_TIER_3_MULT)})`;  // 大浪淘沙！
   }
 
   function getIntensityColor(val: number) {
@@ -462,9 +465,9 @@ export function PressureModal({
                     />
                     
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'rgba(255, 255, 255, 0.3)' }}>
-                      <span>1 级 (×1.0)</span>
-                      <span>5 级 (×2.0)</span>
-                      <span>10 级 (×5.0)</span>
+                      <span>1 级 (×{formatMult(PRESSURE_TIER_1_MULT)})</span>
+                      <span>5 级 (×{formatMult(PRESSURE_TIER_2_MULT)})</span>
+                      <span>10 级 (×{formatMult(PRESSURE_TIER_3_MULT)})</span>
                     </div>
                   </div>
 
@@ -657,7 +660,7 @@ export function PressureModal({
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                     <button
-                      onClick={() => onExecute(pressures)}
+                      onClick={() => onExecute(pressures, rounds)}
                       disabled={pressures.length === 0}
                       style={{
                         gridColumn: '1 / -1',

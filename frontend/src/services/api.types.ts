@@ -1,4 +1,4 @@
-﻿export interface ActionQueueStatus {
+export interface ActionQueueStatus {
   queued_rounds: number;
   running: boolean;
   queue_preview?: string[];
@@ -122,6 +122,7 @@ export interface SpeciesSnapshot {
   population_share: number;
   deaths: number;  // 本回合死亡数量
   death_rate: number;  // 死亡率（deaths / initial_population）
+  net_change_rate?: number; // 净变化率 ((期末-期初)/期初)
   ecological_role: string;
   status: string;
   notes: string[];

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .stages import BaseStage, StageOrder, StageDependency
+from .constants import get_time_config
 
 if TYPE_CHECKING:
     from .context import SimulationContext
@@ -294,14 +295,32 @@ class TensorDiffusionStage(BaseStage):
         balance = engine.tensor_config.balance
         turn_index = getattr(ctx, "turn_index", 0)
         era_factor = max(0.0, turn_index / 100.0)
-        diffusion_rate = balance.diffusion_rate + balance.diffusion_rate_growth_per_100_turns * era_factor
-        diffusion_rate = max(0.0, diffusion_rate)
+        
+        # 获取时代缩放因子（太古宙=40x, 元古宙=100x, 古生代=2x, 中生代=1x, 新生代=0.5x）
+        time_config = get_time_config(turn_index)
+        time_scaling = time_config["scaling_factor"]
+        
+        # 基础扩散率 + 回合增长
+        base_diffusion = balance.diffusion_rate + balance.diffusion_rate_growth_per_100_turns * era_factor
+        
+        # 应用时代缩放：早期时代（太古宙/元古宙）扩散极快
+        # 使用平方根缓和极端值，但保持显著差异
+        # 太古宙: sqrt(40) ≈ 6.3x, 元古宙: sqrt(100) = 10x
+        effective_scaling = max(1.0, time_scaling ** 0.5)
+        diffusion_rate = base_diffusion * effective_scaling
+        
+        # 设置合理上限，避免数值不稳定（最大扩散率 0.8）
+        diffusion_rate = min(0.8, max(0.0, diffusion_rate))
+        
         new_pop = compute.diffusion(pop, rate=diffusion_rate)
         
         tensor_state.pop = new_pop
         ctx.tensor_state = tensor_state
         
-        logger.debug(f"[张量扩散] 完成，扩散率={diffusion_rate}")
+        if time_scaling > 1.5:
+            logger.info(f"[张量扩散] {time_config['era_name']}，时代缩放={time_scaling:.1f}x，有效扩散率={diffusion_rate:.3f}")
+        else:
+            logger.debug(f"[张量扩散] 完成，扩散率={diffusion_rate:.3f}")
 
 
 # ============================================================================
@@ -355,6 +374,10 @@ class TensorReproductionStage(BaseStage):
         turn_index = getattr(ctx, "turn_index", 0)
         era_factor = max(0.0, turn_index / 100.0)
         
+        # 获取时代缩放因子（太古宙=40x, 元古宙=100x, 古生代=2x, 中生代=1x, 新生代=0.5x）
+        time_config = get_time_config(turn_index)
+        time_scaling = time_config["scaling_factor"]
+        
         temp = env[balance.temp_channel_idx] if env.shape[0] > balance.temp_channel_idx else np.full((H, W), 20.0, dtype=np.float32)
         temp_opt = balance.temp_optimal + balance.temp_optimal_shift_per_100_turns * era_factor
         temp_tol = balance.temp_tolerance + balance.temp_tolerance_shift_per_100_turns * era_factor
@@ -364,17 +387,33 @@ class TensorReproductionStage(BaseStage):
         
         vegetation = env[4] if env.shape[0] > 4 else np.ones((H, W), dtype=np.float32) * 0.5
         veg_mean = float(vegetation.mean())
-        cap_multiplier = balance.capacity_multiplier * (1 + balance.veg_capacity_sensitivity * (veg_mean - 0.5))
+        
+        # 承载力也随时代缩放：早期时代环境更"空旷"，承载力相对更大
+        cap_scaling = max(1.0, time_scaling ** 0.3)  # 缓和缩放，太古宙约3.2x
+        cap_multiplier = balance.capacity_multiplier * (1 + balance.veg_capacity_sensitivity * (veg_mean - 0.5)) * cap_scaling
         capacity = (vegetation * cap_multiplier).astype(np.float32)
         
-        birth_rate = balance.birth_rate + balance.birth_rate_growth_per_100_turns * era_factor
-        birth_rate = max(0.0, birth_rate)
+        # 基础出生率 + 回合增长
+        base_birth = balance.birth_rate + balance.birth_rate_growth_per_100_turns * era_factor
+        
+        # 应用时代缩放：早期时代（太古宙/元古宙）繁殖极快
+        # 单细胞生物繁殖周期极短，几千万年内可以繁衍天文数字的代数
+        # 使用平方根缓和极端值：太古宙 sqrt(40)≈6.3x, 元古宙 sqrt(100)=10x
+        effective_scaling = max(1.0, time_scaling ** 0.5)
+        birth_rate = base_birth * effective_scaling
+        
+        # 设置合理上限，避免数值爆炸（最大出生率 2.0）
+        birth_rate = min(2.0, max(0.0, birth_rate))
+        
         new_pop = compute.reproduction(pop, fitness, capacity, birth_rate)
         
         tensor_state.pop = new_pop
         ctx.tensor_state = tensor_state
         
-        logger.debug(f"[张量繁殖] 完成，出生率={birth_rate}")
+        if time_scaling > 1.5:
+            logger.info(f"[张量繁殖] {time_config['era_name']}，时代缩放={time_scaling:.1f}x，有效出生率={birth_rate:.3f}，承载力缩放={cap_scaling:.2f}x")
+        else:
+            logger.debug(f"[张量繁殖] 完成，出生率={birth_rate:.3f}")
 
 
 # ============================================================================

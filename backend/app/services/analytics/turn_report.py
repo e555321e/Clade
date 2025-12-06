@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from ...schemas.responses import SpeciesSnapshot, EcologicalRealismSnapshot, EcologicalRealismSummary
 from ...core.config import get_settings
+from ...simulation.constants import get_time_config
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,217 @@ class TurnReportService:
             avg_env_modifier=avg_env,
         )
     
+    def _build_simple_narrative(
+        self,
+        turn_index: int,
+        species_data: List[Dict],
+        pressures: List[Any],
+        branching_events: List[Any] | None = None,
+        major_events: List[Any] | None = None,
+        migration_events: List[Any] | None = None,
+        reemergence_events: List[Any] | None = None,
+    ) -> str:
+        """构建简单模式下的丰富叙事（不使用 LLM）"""
+        lines: List[str] = []
+        
+        # 获取当前时代信息
+        time_config = get_time_config(turn_index)
+        years_per_turn = time_config["years_per_turn"]
+        era_name = time_config["era_name"]
+        current_year = time_config["current_year"]
+        
+        # 格式化时间跨度显示
+        if years_per_turn >= 1_000_000:
+            time_span_str = f"{years_per_turn // 1_000_000} 百万年"
+        else:
+            time_span_str = f"{years_per_turn // 10_000} 万年"
+        
+        # 格式化当前年份显示
+        if current_year < 0:
+            if abs(current_year) >= 100_000_000:
+                year_str = f"{abs(current_year) / 100_000_000:.1f} 亿年前"
+            else:
+                year_str = f"{abs(current_year) / 1_000_000:.1f} 百万年前"
+        else:
+            year_str = "现代"
+        
+        # ═══ 标题 ═══
+        lines.append(f"## 🕐 第 {turn_index} 回合")
+        lines.append(f"**{era_name}** · {year_str} · {time_span_str}/回合")
+        lines.append("")
+        
+        # ═══ 环境状况 ═══
+        lines.append("### 🌍 环境状况")
+        if pressures:
+            for p in pressures:
+                if hasattr(p, 'narrative') and p.narrative:
+                    lines.append(f"- {p.narrative}")
+                elif hasattr(p, 'kind') and hasattr(p, 'intensity'):
+                    intensity_desc = "轻微" if p.intensity < 0.3 else "中等" if p.intensity < 0.6 else "强烈"
+                    lines.append(f"- **{p.kind}** ({intensity_desc}，强度 {p.intensity:.1f})")
+        else:
+            lines.append("- 环境相对稳定，无显著压力变化")
+        lines.append("")
+        
+        # ═══ 生态概况 ═══
+        alive_species = [s for s in species_data if s.get("status") == "alive"]
+        extinct_species = [s for s in species_data if s.get("status") == "extinct"]
+        
+        total_population = sum(s.get("population", 0) for s in alive_species)
+        total_deaths = sum(s.get("deaths", 0) for s in species_data)
+        total_births = sum(s.get("births", 0) for s in species_data)
+        
+        lines.append("### 📊 生态概况")
+        lines.append(f"- **存活物种**: {len(alive_species)} 种")
+        lines.append(f"- **总生物量**: {total_population:,} 个体")
+        
+        if total_births > 0 or total_deaths > 0:
+            net_change = total_births - total_deaths
+            change_icon = "📈" if net_change > 0 else "📉" if net_change < 0 else "➡️"
+            lines.append(f"- **本回合变动**: 出生 +{total_births:,} / 死亡 -{total_deaths:,} ({change_icon} 净变化 {net_change:+,})")
+        
+        # 计算平均死亡率
+        death_rates = [s.get("death_rate", 0) for s in alive_species if s.get("deaths", 0) > 0]
+        if death_rates:
+            avg_death_rate = sum(death_rates) / len(death_rates)
+            rate_desc = "稳定" if avg_death_rate < 0.15 else "略高" if avg_death_rate < 0.3 else "较高" if avg_death_rate < 0.5 else "危机"
+            lines.append(f"- **平均死亡率**: {avg_death_rate:.1%} ({rate_desc})")
+        lines.append("")
+        
+        # ═══ 重大事件 ═══
+        has_events = False
+        
+        # 物种分化
+        if branching_events:
+            if not has_events:
+                lines.append("### ⚡ 本回合事件")
+                has_events = True
+            lines.append("")
+            lines.append("**🧬 物种分化**")
+            for b in branching_events[:5]:
+                parent = getattr(b, 'parent_lineage', '?')
+                child = getattr(b, 'new_lineage', '?') or getattr(b, 'child_code', '?')
+                desc = getattr(b, 'description', '')
+                child_name = getattr(b, 'child_name', '')
+                
+                if child_name:
+                    lines.append(f"> `{parent}` → `{child}` **{child_name}**")
+                else:
+                    lines.append(f"> `{parent}` → `{child}`")
+                if desc:
+                    lines.append(f"> _{desc[:80]}{'...' if len(desc) > 80 else ''}_")
+                lines.append("")
+        
+        # 灭绝事件
+        new_extinct = [s for s in extinct_species if s.get("deaths", 0) > 0]
+        if new_extinct:
+            if not has_events:
+                lines.append("### ⚡ 本回合事件")
+                has_events = True
+            lines.append("")
+            lines.append("**💀 物种灭绝**")
+            for s in new_extinct[:3]:
+                lines.append(f"> **{s.get('common_name', '未知')}** (*{s.get('latin_name', '')}*) 走向灭绝")
+            lines.append("")
+        
+        # 重大事件
+        if major_events:
+            if not has_events:
+                lines.append("### ⚡ 本回合事件")
+                has_events = True
+            lines.append("")
+            lines.append("**🌋 环境事件**")
+            for e in major_events[:3]:
+                desc = getattr(e, 'description', str(e))
+                lines.append(f"> {desc}")
+            lines.append("")
+        
+        # 迁徙事件
+        if migration_events:
+            if not has_events:
+                lines.append("### ⚡ 本回合事件")
+                has_events = True
+            lines.append("")
+            lines.append(f"**🦅 物种迁徙**: 发生了 {len(migration_events)} 次迁徙活动")
+            lines.append("")
+        
+        # 物种重现
+        if reemergence_events:
+            if not has_events:
+                lines.append("### ⚡ 本回合事件")
+                has_events = True
+            lines.append("")
+            lines.append(f"**🔄 物种重现**: {len(reemergence_events)} 个物种重新活跃")
+            lines.append("")
+        
+        if not has_events:
+            lines.append("### ⚡ 本回合事件")
+            lines.append("- 未发生重大事件，生态系统平稳运转")
+            lines.append("")
+        
+        # ═══ 物种动态 ═══
+        lines.append("### 🐾 物种动态")
+        
+        # 按状态和变化率排序，展示关键物种
+        # 1. 表现最好的（死亡率最低）
+        thriving = sorted(
+            [s for s in alive_species if s.get("deaths", 0) > 0],
+            key=lambda x: x.get("death_rate", 1)
+        )[:2]
+        
+        # 2. 面临压力的（死亡率最高）
+        struggling = sorted(
+            [s for s in alive_species if s.get("death_rate", 0) > 0.3],
+            key=lambda x: -x.get("death_rate", 0)
+        )[:2]
+        
+        # 3. 主导物种（占比最高）
+        dominant = sorted(
+            alive_species,
+            key=lambda x: -x.get("population_share", 0)
+        )[:2]
+        
+        if thriving:
+            lines.append("")
+            lines.append("**🌟 适应良好**")
+            for s in thriving:
+                dr = s.get("death_rate", 0)
+                lines.append(f"- **{s.get('common_name')}** (`{s.get('lineage_code')}`) — 死亡率 {dr:.1%}，种群稳健")
+        
+        if struggling:
+            lines.append("")
+            lines.append("**⚠️ 面临压力**")
+            for s in struggling:
+                dr = s.get("death_rate", 0)
+                pop = s.get("population", 0)
+                lines.append(f"- **{s.get('common_name')}** (`{s.get('lineage_code')}`) — 死亡率 {dr:.1%}，剩余 {pop:,} 个体")
+        
+        if dominant and not thriving and not struggling:
+            lines.append("")
+            lines.append("**👑 主导物种**")
+            for s in dominant:
+                share = s.get("population_share", 0)
+                pop = s.get("population", 0)
+                lines.append(f"- **{s.get('common_name')}** — 占生物量 {share:.1%}，共 {pop:,} 个体")
+        
+        lines.append("")
+        
+        # ═══ 小结 ═══
+        lines.append("---")
+        # 根据情况生成小结
+        if branching_events:
+            lines.append(f"*本回合见证了 {len(branching_events)} 次物种分化，生命多样性持续扩展。*")
+        elif new_extinct:
+            lines.append(f"*{len(new_extinct)} 个物种在本回合中消逝，自然选择无情地筛选着适应者。*")
+        elif total_deaths > total_births:
+            lines.append("*本回合生态系统承受了一定压力，整体种群数量有所下降。*")
+        elif total_births > total_deaths * 1.5:
+            lines.append("*本回合生态繁荣，物种繁衍旺盛。*")
+        else:
+            lines.append("*生态系统保持动态平衡，物种在竞争与共存中延续。*")
+        
+        return "\n".join(lines)
+    
     async def build_report(
         self,
         turn_index: int,
@@ -223,6 +435,9 @@ class TurnReportService:
             if mortality_result:
                 # 有死亡率计算结果，使用更详细的数据
                 pop = getattr(mortality_result, 'final_population', 0) or pop
+                initial_pop = getattr(mortality_result, 'initial_population', 0) or pop
+                births = getattr(mortality_result, 'births', 0)
+                net_change_rate = (pop - initial_pop) / max(1, initial_pop)
                 species_data.append({
                     "lineage_code": species.lineage_code,
                     "latin_name": species.latin_name,
@@ -231,6 +446,7 @@ class TurnReportService:
                     "population_share": pop / total_population if species.status == "alive" else 0,
                     "deaths": getattr(mortality_result, 'deaths', 0),
                     "death_rate": mortality_result.death_rate,
+                    "net_change_rate": net_change_rate,
                     "ecological_role": self._get_ecological_role(species.trophic_level),
                     "status": species.status,
                     "notes": getattr(mortality_result, 'notes', []) or [],
@@ -242,8 +458,8 @@ class TurnReportService:
                     "grazing_pressure": getattr(mortality_result, 'grazing_pressure', None),
                     "predation_pressure": getattr(mortality_result, 'predation_pressure', None),
                     "ai_narrative": getattr(mortality_result, 'ai_narrative', None),
-                    "initial_population": getattr(mortality_result, 'initial_population', 0),
-                    "births": getattr(mortality_result, 'births', 0),
+                    "initial_population": initial_pop,
+                    "births": births,
                     "survivors": getattr(mortality_result, 'survivors', 0),
                     # 【新增】生态拟真数据
                     "ecological_realism": self._build_ecological_realism_snapshot(
@@ -260,6 +476,7 @@ class TurnReportService:
                     "population_share": pop / total_population if species.status == "alive" else 0,
                     "deaths": 0,
                     "death_rate": 0.0,
+                    "net_change_rate": 0.0,
                     "ecological_role": self._get_ecological_role(species.trophic_level),
                     "status": species.status,
                     "notes": [],
@@ -300,20 +517,15 @@ class TurnReportService:
             logger.info("[TurnReportService] LLM 回合报告已关闭，使用简单模式")
             self._emit_event("info", "📝 LLM 回合报告已关闭", "报告")
             
-            narrative = f"回合 {turn_index} 完成。"
-            
-            # 统计存活物种数量 - 使用 species_data 中的存活物种计数
-            alive_count = sum(1 for s in species_data if s.get("status") == "alive")
-            new_species_count = len(branching_events) if branching_events else 0
-            
-            if species_data:
-                narrative += f" 存活物种: {alive_count} 个。"
-            
-            if new_species_count > 0:
-                narrative += f" 发生了 {new_species_count} 次物种分化。"
-            
-            if migration_events:
-                narrative += f" 发生了 {len(migration_events)} 次迁徙。"
+            narrative = self._build_simple_narrative(
+                turn_index=turn_index,
+                species_data=species_data,
+                pressures=pressures,
+                branching_events=branching_events,
+                major_events=major_events,
+                migration_events=migration_events,
+                reemergence_events=reemergence_events,
+            )
             
             # 简单模式下流式输出
             if stream_callback:
@@ -339,6 +551,8 @@ class TurnReportService:
                 pop = getattr(result, 'final_population', 0) or result.species.morphology_stats.get("population", 0)
                 initial_pop = getattr(result, 'initial_population', 0) or pop
                 deaths = getattr(result, 'deaths', 0)
+                births = getattr(result, 'births', 0)
+                net_change_rate = (pop - initial_pop) / max(1, initial_pop)
                 
                 species_snapshots.append(SpeciesSnapshot(
                     lineage_code=result.species.lineage_code,
@@ -348,6 +562,7 @@ class TurnReportService:
                     population_share=pop / total_population,
                     deaths=deaths,
                     death_rate=result.death_rate,
+                    net_change_rate=net_change_rate,
                     ecological_role=self._get_ecological_role(result.species.trophic_level),
                     status=result.species.status,
                     notes=getattr(result, 'notes', []) or [],
@@ -360,7 +575,7 @@ class TurnReportService:
                     predation_pressure=getattr(result, 'predation_pressure', None),
                     ai_narrative=getattr(result, 'ai_narrative', None),
                     initial_population=initial_pop,
-                    births=getattr(result, 'births', 0),
+                    births=births,
                     survivors=getattr(result, 'survivors', 0),
                     total_tiles=getattr(result, 'total_tiles', 0),
                     healthy_tiles=getattr(result, 'healthy_tiles', 0),
@@ -402,24 +617,19 @@ class TurnReportService:
             self._emit_event("warning", f"⚠️ AI 叙事失败: {e}", "报告")
             narrative = ""
         
-        # 如果 LLM 失败，使用简单回退叙事
+        # 如果 LLM 失败，使用丰富的回退叙事
         if not narrative:
-            narrative = f"回合 {turn_index} 完成。"
+            narrative = self._build_simple_narrative(
+                turn_index=turn_index,
+                species_data=species_data,
+                pressures=pressures,
+                branching_events=branching_events,
+                major_events=major_events,
+                migration_events=migration_events,
+                reemergence_events=reemergence_events,
+            )
             
-            # 统计存活物种数量 - 使用 species_data 中的存活物种计数
-            alive_count = sum(1 for s in species_data if s.get("status") == "alive")
-            new_species_count = len(branching_events) if branching_events else 0
-            
-            if species_data:
-                narrative += f" 存活物种: {alive_count} 个。"
-            
-            if new_species_count > 0:
-                narrative += f" 发生了 {new_species_count} 次物种分化。"
-            
-            if migration_events:
-                narrative += f" 发生了 {len(migration_events)} 次迁徙。"
-            
-            # 简单模式下流式输出
+            # 回退模式下流式输出
             if stream_callback:
                 for char in narrative:
                     await stream_callback(char)

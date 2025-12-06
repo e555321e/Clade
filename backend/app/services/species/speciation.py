@@ -1195,9 +1195,9 @@ class SpeciationService:
         results = []
         if active_batch:
             # 【优化】小批次 + 高并发策略
-            # 每批 3 个物种，降低单次延迟
-            # 同时 10 个批次并行，提高整体吞吐量
-            batch_size = 3
+            # 每批 2 个物种，降低单次延迟
+            # 同时 20 个批次并行，提高整体吞吐量
+            batch_size = 2
             
             # 分割成多个批次
             batches = []
@@ -1225,8 +1225,8 @@ class SpeciationService:
             coroutines = [process_batch(batch) for batch in batches]
             batch_results_list = await staggered_gather(
                 coroutines,
-                interval=2.0,  # 【提升】间隔从 1.5 缩短到 1.0
-                max_concurrent=10,  # 【提升】并发从 4 提升到 10
+                interval=1.5,  # 调整批次启动间隔
+                max_concurrent=20,  # 提升并发批次数
                 task_name="分化批次",
                 event_callback=stream_callback,  # 【新增】传递心跳回调
             )

@@ -78,18 +78,18 @@ PRESSURE_TYPE_TIERS = {
 # ===========================
 # 压力强度倍率 (Intensity Multipliers) - 针对 1-10 强度的倍率
 # ===========================
-# 【平衡调整v3】低强度温和，高强度致命
+# 【能量倍率同步】与前端 PressureModal 计算保持一致，避免展示消耗与扣减不一致
 # 【可配置】这些默认值可通过设置面板的"压力强度"配置覆盖
 # 对应 UIConfig.pressure_intensity.intensity_low/mid/high_multiplier
-# 强度 1-3: x0.3 (轻微，几乎可忽略)
-# 强度 4-7: x0.6 (中等，有感知但不致命)
-# 强度 8-10: x1.2 (极端，毁灭性效果！)
+# 强度 1-3: x1.0（轻微）
+# 强度 4-7: x2.0（显著）
+# 强度 8-10: x5.0（毁灭性）
 INTENSITY_TIER_1_LIMIT = 3
 INTENSITY_TIER_2_LIMIT = 7
 
-INTENSITY_MULT_1 = 0.3  # 轻微强度，几乎无影响
-INTENSITY_MULT_2 = 0.6  # 中等强度，可控
-INTENSITY_MULT_3 = 1.2  # 极端强度，大浪淘沙！
+INTENSITY_MULT_1 = 1.0
+INTENSITY_MULT_2 = 2.0
+INTENSITY_MULT_3 = 5.0
 
 def get_intensity_multiplier(intensity: int) -> float:
     """获取压力强度对应的倍率"""

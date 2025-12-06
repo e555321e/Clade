@@ -109,7 +109,7 @@ interface ModalsLayerProps {
   onClearError: () => void;
   onRetryLineage: () => void;
   onSelectSpecies: (id: string) => void;
-  onExecuteTurn: (drafts: PressureDraft[]) => void;
+  onExecuteTurn: (drafts: PressureDraft[], rounds: number) => void;
   onBatchExecute: (rounds: number, pressures: PressureDraft[], randomEnergy: number) => void;
   onQueueAdd: (drafts: PressureDraft[], rounds: number) => void;
   onSaveConfig: (config: UIConfig) => Promise<void>;
@@ -304,6 +304,7 @@ export function ModalsLayer({
         <PressureModal
           pressures={pendingPressures}
           templates={pressureTemplates}
+            intensityConfig={uiConfig?.pressure_intensity}
           onChange={handlePressureChange}
           onQueue={onQueueAdd}
           onExecute={onExecuteTurn}

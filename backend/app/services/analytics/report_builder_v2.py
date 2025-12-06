@@ -19,6 +19,7 @@ from typing import Sequence, Callable, Awaitable, Any
 
 from ...schemas.responses import SpeciesSnapshot
 from ...simulation.environment import ParsedPressure
+from ...simulation.constants import get_time_config
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,75 @@ class ReportBuilderV2:
     # ──────────────────────────────────────────────────────────
     # 2. 构建 LLM Prompt
     # ──────────────────────────────────────────────────────────
+    
+    def _get_narrative_style(self, stats: dict, branching_events: Sequence | None, extinct_count: int) -> dict:
+        """根据回合特征选择叙事风格"""
+        avg_death_rate = stats.get('avg_death_rate', 0)
+        avg_net_change = stats.get('avg_net_change', 0)
+        
+        # 根据事件类型和数据特征选择风格
+        if extinct_count > 0:
+            return {
+                "tone": "哀婉反思",
+                "focus": "生命的脆弱与消逝",
+                "opening_style": "以灭绝物种的最后时刻开场，或用宏观视角俯瞰生命的起落",
+                "narrative_arc": "繁盛 → 危机 → 消亡 → 延续的希望",
+                "suggested_techniques": ["倒叙（从结局开始）", "对比（曾经vs现在）", "象征（个体代表整个物种）"],
+            }
+        elif branching_events:
+            return {
+                "tone": "惊喜期待",
+                "focus": "新生命的诞生与可能性",
+                "opening_style": "从一个微小的变异开始，或描绘环境压力如何催生新物种",
+                "narrative_arc": "压力 → 适应 → 突变 → 新物种诞生",
+                "suggested_techniques": ["特写镜头（聚焦个体）", "时间跨度（从基因到种群）", "因果链（环境→适应→分化）"],
+            }
+        elif avg_death_rate > 0.4:
+            return {
+                "tone": "紧张悬疑",
+                "focus": "生存竞争与适者生存",
+                "opening_style": "以一场生死攸关的场景开场，展现自然选择的残酷",
+                "narrative_arc": "危机降临 → 挣扎求存 → 优胜劣汰 → 格局重塑",
+                "suggested_techniques": ["紧迫感（倒计时）", "多线叙事（不同物种的命运）", "戏剧冲突"],
+            }
+        elif avg_net_change > 0.1:
+            return {
+                "tone": "乐观蓬勃",
+                "focus": "生态繁荣与生命力",
+                "opening_style": "描绘一幅生机盎然的画面，展现生态系统的活力",
+                "narrative_arc": "稳定 → 繁衍 → 扩张 → 多样化",
+                "suggested_techniques": ["全景式描写", "生动细节", "节奏明快"],
+            }
+        elif avg_net_change < -0.1:
+            return {
+                "tone": "忧虑警示",
+                "focus": "衰退的迹象与潜在危机",
+                "opening_style": "从细微的变化开始，暗示更大的危机",
+                "narrative_arc": "表面平静 → 暗流涌动 → 危机显现 → 未来悬念",
+                "suggested_techniques": ["伏笔", "隐喻", "留白"],
+            }
+        else:
+            return {
+                "tone": "平和从容",
+                "focus": "生态平衡与日常运转",
+                "opening_style": "像打开一扇窗户，展现生态系统的日常",
+                "narrative_arc": "日升 → 觅食 → 竞争 → 日落",
+                "suggested_techniques": ["白描", "平行叙事", "细节刻画"],
+            }
+    
+    def _get_trophic_description(self, trophic_level: float) -> str:
+        """获取营养级的生动描述"""
+        if trophic_level < 1.5:
+            return "🌱 生产者（光合作用的基石）"
+        elif trophic_level < 2.5:
+            return "🐛 初级消费者（食草动物）"
+        elif trophic_level < 3.5:
+            return "🦎 次级消费者（小型捕食者）"
+        elif trophic_level < 4.5:
+            return "🦁 高级消费者（顶级掠食者）"
+        else:
+            return "🦅 超级掠食者（生态系统的王者）"
+    
     def _build_narrative_prompt(
         self,
         turn_index: int,
@@ -196,124 +266,337 @@ class ReportBuilderV2:
         map_changes: Sequence | None = None,
         stats: dict | None = None,
     ) -> str:
-        """构建让 LLM 生成叙事的 prompt"""
+        """构建让 LLM 生成叙事的 prompt - 清晰结构化版本"""
         
-        # === 基本信息 ===
-        prompt_parts = [
-            "你是一位自然纪录片的旁白撰稿人，请基于下列张量计算结果，写一段中文演化叙事。",
-            "",
-            "【写作要求】",
-            "- 只做叙事加工，所有数值已由系统计算，勿再推导或虚构新数据。",
-            "- 重点讲述：环境变化 → 物种命运 → 分化/重大事件的因果链。",
-            "- 保持精简有画面感，长度控制在 250-400 字。",
-            "- 重点物种自然穿插，避免流水账；突出1-3个高光事件。",
-            "",
-            "【Markdown 格式（必须遵守）】",
-            "- 用 ## 标题分段（如：## 🌍 环境变迁、## 🧬 物种动态、## ⚡ 关键事件）",
-            "- 用 **粗体** 标注关键数据和物种名，用 *斜体* 标注拉丁学名，用 `代码格式` 标注物种代码",
-            "- 重大事件可用 > 引用块突出",
-            "- 避免多级嵌套列表，保持清晰易读",
-            "",
-            f"═══════════════════════════════════════",
-            f"【第 {turn_index} 回合】（每回合代表约50万年）",
-            f"═══════════════════════════════════════",
-            "",
-        ]
+        stats = stats or {}
+        extinct_species = [s for s in species if s.status == "extinct"]
+        alive_species = [s for s in species if s.status != "extinct"]
         
-        # === 环境压力 ===
-        prompt_parts.append("【环境状况】")
+        # 获取叙事风格建议
+        style = self._get_narrative_style(stats, branching_events, len(extinct_species))
+        
+        prompt_parts: list[str] = []
+        
+        # ╔══════════════════════════════════════════════════════════════╗
+        # ║                        系统角色设定                           ║
+        # ╚══════════════════════════════════════════════════════════════╝
+        prompt_parts.append("""<role>
+你是一位资深自然纪录片旁白撰稿人，擅长将枯燥的科学数据转化为扣人心弦的演化故事。
+你的作品风格融合了大卫·爱登堡的温情、《地球脉动》的壮阔、以及《演化》的深邃。
+</role>""")
+        
+        # ╔══════════════════════════════════════════════════════════════╗
+        # ║                        任务说明                              ║
+        # ╚══════════════════════════════════════════════════════════════╝
+        # 获取当前时代信息
+        time_config = get_time_config(turn_index)
+        years_per_turn = time_config["years_per_turn"]
+        era_name = time_config["era_name"]
+        current_year = time_config["current_year"]
+        
+        # 格式化时间跨度显示
+        if years_per_turn >= 1_000_000:
+            time_span_str = f"{years_per_turn // 1_000_000} 百万年"
+        else:
+            time_span_str = f"{years_per_turn // 10_000} 万年"
+        
+        # 格式化当前年份显示
+        if current_year < 0:
+            year_str = f"{abs(current_year) / 1_000_000:.1f} 亿年前" if abs(current_year) >= 100_000_000 else f"{abs(current_year) / 1_000_000:.1f} 百万年前"
+        else:
+            year_str = "现代"
+        
+        prompt_parts.append(f"""
+<task>
+请基于下方的【模拟数据】，撰写第 {turn_index} 回合的演化叙事报告。
+
+⏱️ 时间背景：
+- 当前时代：**{era_name}**
+- 当前时间：约 {year_str}
+- 本回合时间跨度：**{time_span_str}**
+
+核心原则：
+1. 数据忠实：所有数值已由张量计算引擎得出，请直接引用，不要推导或虚构新数据
+2. 因果叙事：重点讲述「环境变化 → 物种适应 → 命运转折」的因果链
+3. 画面感强：将抽象数据转化为可视化的场景描写
+4. 重点突出：聚焦 1-3 个高光事件/物种，避免流水账
+5. 时代感：叙事风格应符合当前地质时代的特点
+</task>""")
+        
+        # ╔══════════════════════════════════════════════════════════════╗
+        # ║                        叙事风格指导                           ║
+        # ╚══════════════════════════════════════════════════════════════╝
+        prompt_parts.append(f"""
+<narrative_style>
+本回合建议风格：「{style['tone']}」
+
+叙事焦点：{style['focus']}
+开场建议：{style['opening_style']}
+叙事弧线：{style['narrative_arc']}
+推荐技法：{', '.join(style['suggested_techniques'])}
+
+注意：以上仅为建议，你可以根据数据特点自由发挥，但请保持风格的一致性。
+</narrative_style>""")
+        
+        # ╔══════════════════════════════════════════════════════════════╗
+        # ║                        输出格式要求                           ║
+        # ╚══════════════════════════════════════════════════════════════╝
+        prompt_parts.append("""
+<format>
+## 格式要求（必须遵守）
+
+1. 使用 Markdown 格式
+2. 用 `## 🌍 ` 等标题分段（建议 2-4 个段落）
+3. 用 **粗体** 标注关键数据和物种名
+4. 用 *斜体* 标注拉丁学名
+5. 用 `代码格式` 标注物种谱系代码（如 `A1b`）
+6. 重大事件可用 `>` 引用块突出
+7. 长度控制在 **300-500 字**
+8. 避免使用多级嵌套列表
+
+## 标题风格参考（可自由组合）
+- `## 🌍 环境变迁` / `## 🌋 大地的震颤` / `## ❄️ 寒流来袭`
+- `## 🧬 新生命诞生` / `## 🌱 分化的契机` / `## 🔀 演化的岔路口`  
+- `## 🐾 物种动态` / `## 🦎 适者生存` / `## ⚔️ 生存竞争`
+- `## 💀 消逝与传承` / `## 🕯️ 最后的挽歌` / `## 📜 写入化石`
+- `## ⚡ 关键时刻` / `## 🎯 命运的转折` / `## 🌟 高光瞬间`
+</format>""")
+        
+        # ╔══════════════════════════════════════════════════════════════╗
+        # ║                        模拟数据区                            ║
+        # ╚══════════════════════════════════════════════════════════════╝
+        prompt_parts.append(f"""
+═══════════════════════════════════════════════════════════════════════
+       【第 {turn_index} 回合 · {era_name} · {time_span_str}/回合】
+═══════════════════════════════════════════════════════════════════════""")
+        
+        # --- 1. 环境状况 ---
+        prompt_parts.append("""
+<environment>
+## 🌍 环境状况""")
+        
         if pressures:
             for p in pressures:
-                prompt_parts.append(f"- {p.narrative}")
+                intensity_level = "🟢轻微" if p.intensity < 0.3 else "🟡中等" if p.intensity < 0.6 else "🔴强烈"
+                prompt_parts.append(f"""
+- **{p.kind}** [{intensity_level} | 强度 {p.intensity:.2f}]
+  描述：{p.narrative}""")
         else:
-            prompt_parts.append("- 环境相对稳定")
-        prompt_parts.append("")
+            prompt_parts.append("""
+- 环境相对稳定，无显著压力变化
+  （这是一个难得的平静期，物种可以专注于繁衍和扩张）""")
+        prompt_parts.append("</environment>")
         
-        # === 地质变化 ===
+        # --- 2. 地质变化 ---
         if map_changes:
-            prompt_parts.append("【地质变化】")
+            prompt_parts.append("""
+<geological_changes>
+## 🗺️ 地质变化""")
             for c in map_changes[:3]:
                 desc = getattr(c, 'description', str(c))
                 prompt_parts.append(f"- {desc}")
-            prompt_parts.append("")
+            prompt_parts.append("</geological_changes>")
         
-        # === 重大事件 ===
-        events_added = False
+        # --- 3. 生态概况 ---
+        prompt_parts.append(f"""
+<ecosystem_stats>
+## 📊 生态系统概况
+
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| 物种总数 | {stats.get('total', 0)} 种 | 包含存活和灭绝 |
+| 存活物种 | {stats.get('alive', 0)} 种 | 本回合末存活 |
+| 本回合灭绝 | {stats.get('extinct', 0)} 种 | 本回合消亡 |
+| 总生物量 | {stats.get('total_population', 0):,} 个体 | 所有存活物种总和 |
+| 本回合出生 | +{stats.get('total_births', 0):,} | 新生个体数 |
+| 本回合死亡 | -{stats.get('total_deaths', 0):,} | 死亡个体数 |
+| 平均死亡率 | {stats.get('avg_death_rate', 0):.1%} | 死亡数/回合初种群 |
+| 平均净变化率 | {stats.get('avg_net_change', 0):+.1%} | (期末-期初)/期初 |
+</ecosystem_stats>""")
+        
+        # --- 4. 重大事件 ---
+        events_section: list[str] = []
+        
         if branching_events:
-            prompt_parts.append("【物种分化事件】")
+            events_section.append("""
+### 🧬 物种分化事件（新物种诞生）""")
             for b in branching_events[:3]:
                 parent = getattr(b, 'parent_lineage', '?')
-                child = getattr(b, 'new_lineage', '?')
-                desc = getattr(b, 'description', '新物种诞生')
-                prompt_parts.append(f"- {parent} → {child}: {desc}")
-            prompt_parts.append("")
-            events_added = True
+                child = getattr(b, 'new_lineage', '?') or getattr(b, 'child_code', '?')
+                child_name = getattr(b, 'child_name', '') or getattr(b, 'new_name', '')
+                desc = getattr(b, 'description', '适应新的生态位')
+                events_section.append(f"""
+- `{parent}` **→** `{child}` {f'**{child_name}**' if child_name else ''}
+  分化原因：{desc}""")
         
-        # 灭绝事件
-        extinct_species = [s for s in species if s.status == "extinct"]
         if extinct_species:
-            prompt_parts.append("【灭绝事件】")
+            events_section.append("""
+### 💀 灭绝事件""")
             for s in extinct_species[:3]:
-                prompt_parts.append(f"- {s.common_name}（{s.latin_name}）走向灭绝")
-            prompt_parts.append("")
-            events_added = True
+                events_section.append(f"""
+- **{s.common_name}** (*{s.latin_name}*) `{s.lineage_code}`
+  曾拥有种群：{s.population + s.deaths:,} → 0
+  灭绝原因：死亡率达到 {s.death_rate:.1%}，种群崩溃""")
         
         if major_events:
-            prompt_parts.append("【环境重大事件】")
-            for e in major_events[:2]:
-                prompt_parts.append(f"- {getattr(e, 'description', str(e))}")
-            prompt_parts.append("")
-            events_added = True
+            events_section.append("""
+### 🌋 环境重大事件""")
+            for e in major_events[:3]:
+                desc = getattr(e, 'description', str(e))
+                events_section.append(f"- {desc}")
         
-        # === 生态概况 ===
-        if stats:
-            prompt_parts.append("【生态概况】")
-            prompt_parts.append(f"- 物种总数: {stats.get('total', 0)}")
-            prompt_parts.append(f"- 存活物种: {stats.get('alive', 0)}")
-            if stats.get('extinct', 0) > 0:
-                prompt_parts.append(f"- 本回合灭绝: {stats.get('extinct', 0)}")
-            prompt_parts.append(f"- 总死亡个体: {stats.get('total_deaths', 0):,}")
-            prompt_parts.append(f"- 平均死亡率: {stats.get('avg_death_rate', 0):.1%}")
-            prompt_parts.append("")
+        if events_section:
+            prompt_parts.append("""
+<major_events>
+## ⚡ 本回合重大事件
+（这些是叙事的核心素材，请重点描写）""")
+            prompt_parts.extend(events_section)
+            prompt_parts.append("</major_events>")
         
-        # === 值得关注的物种 ===
+        # --- 5. 重点物种档案 ---
         if highlight_species:
-            prompt_parts.append("【值得特别叙述的物种】")
-            prompt_parts.append("（请在叙事中自然地提及这些物种的故事，不要简单罗列）")
-            prompt_parts.append("")
+            prompt_parts.append("""
+<highlight_species>
+## 🌟 重点物种档案
+（请在叙事中自然融入这些物种的故事，不要简单罗列）""")
+            
             for h in highlight_species:
-                prompt_parts.append(f"◆ {h.common_name}（{h.latin_name}）— {h.reason}")
+                # 查找对应的 species snapshot 获取更多数据
+                snap = next((s for s in species if s.lineage_code == h.lineage_code), None)
+                trophic_desc = self._get_trophic_description(snap.trophic_level) if snap and snap.trophic_level else "未知"
+                
+                prompt_parts.append(f"""
+### ◆ {h.common_name} (*{h.latin_name}*) `{h.lineage_code}`
+- **叙事价值**：{h.reason}
+- **生态位**：{trophic_desc}""")
+                if snap:
+                    prompt_parts.append(f"- **种群规模**：{snap.population:,} 个体（占比 {snap.population_share:.1%}）")
+                    prompt_parts.append(f"- **本回合表现**：死亡率 {snap.death_rate:.1%}，净变化 {getattr(snap, 'net_change_rate', 0):+.1%}")
+                prompt_parts.append("- **关键数据点**：")
                 for fact in h.key_facts:
-                    prompt_parts.append(f"  · {fact}")
-                prompt_parts.append("")
+                    prompt_parts.append(f"  - {fact}")
+            
+            prompt_parts.append("</highlight_species>")
         
-        # === 其他存活物种简况 ===
-        other_species = [s for s in species 
-                        if s.status != "extinct" 
-                        and s.lineage_code not in {h.lineage_code for h in highlight_species}]
+        # --- 6. 其他物种简报 ---
+        other_species = [s for s in alive_species 
+                        if s.lineage_code not in {h.lineage_code for h in highlight_species}]
         if other_species:
-            prompt_parts.append("【其他物种简况】")
-            for s in other_species[:5]:
-                prompt_parts.append(f"- {s.common_name}: 数量{s.population:,}, 死亡率{s.death_rate:.1%}")
-            prompt_parts.append("")
+            prompt_parts.append("""
+<other_species>
+## 📋 其他存活物种简报""")
+            
+            # 按死亡率排序，展示状态差异
+            sorted_species = sorted(other_species, key=lambda x: x.death_rate)
+            
+            prompt_parts.append("""
+| 物种 | 谱系码 | 种群 | 死亡率 | 状态 |
+|------|--------|------|--------|------|""")
+            
+            for s in sorted_species[:8]:
+                status = "🟢稳定" if s.death_rate < 0.15 else "🟡承压" if s.death_rate < 0.35 else "🔴危机"
+                prompt_parts.append(f"| {s.common_name} | `{s.lineage_code}` | {s.population:,} | {s.death_rate:.1%} | {status} |")
+            
+            if len(other_species) > 8:
+                prompt_parts.append(f"\n*（另有 {len(other_species) - 8} 个物种未列出）*")
+            
+            prompt_parts.append("</other_species>")
         
-        # === 写作提示 ===
-        prompt_parts.append("【写作提示】")
+        # --- 7. 生态网络 ---
+        # 构建简单的营养级分布
+        trophic_distribution: dict[str, list[str]] = {
+            "生产者": [],
+            "初级消费者": [],
+            "次级消费者": [],
+            "高级消费者": [],
+            "顶级掠食者": [],
+        }
         
-        # 根据事件类型给出不同的写作方向
+        for s in alive_species:
+            tl = s.trophic_level or 1.0
+            if tl < 1.5:
+                trophic_distribution["生产者"].append(s.common_name)
+            elif tl < 2.5:
+                trophic_distribution["初级消费者"].append(s.common_name)
+            elif tl < 3.5:
+                trophic_distribution["次级消费者"].append(s.common_name)
+            elif tl < 4.5:
+                trophic_distribution["高级消费者"].append(s.common_name)
+            else:
+                trophic_distribution["顶级掠食者"].append(s.common_name)
+        
+        prompt_parts.append("""
+<food_web>
+## 🔗 生态网络结构（营养级金字塔）
+
+```
+       🦅 顶级掠食者""")
+        prompt_parts.append(f"          [{', '.join(trophic_distribution['顶级掠食者'][:2]) or '空缺'}]")
+        prompt_parts.append(f"       🦁 高级消费者")
+        prompt_parts.append(f"          [{', '.join(trophic_distribution['高级消费者'][:3]) or '空缺'}]")
+        prompt_parts.append(f"       🦎 次级消费者")
+        prompt_parts.append(f"          [{', '.join(trophic_distribution['次级消费者'][:3]) or '空缺'}]")
+        prompt_parts.append(f"       🐛 初级消费者")
+        prompt_parts.append(f"          [{', '.join(trophic_distribution['初级消费者'][:3]) or '空缺'}]")
+        prompt_parts.append(f"       🌱 生产者")
+        prompt_parts.append(f"          [{', '.join(trophic_distribution['生产者'][:3]) or '空缺'}]")
+        prompt_parts.append("```")
+        prompt_parts.append("</food_web>")
+        
+        # ╔══════════════════════════════════════════════════════════════╗
+        # ║                        写作指导                              ║
+        # ╚══════════════════════════════════════════════════════════════╝
+        prompt_parts.append("""
+═══════════════════════════════════════════════════════════════════════
+                           【写作指导】
+═══════════════════════════════════════════════════════════════════════
+
+<writing_tips>
+## 本回合叙事要点""")
+        
+        # 根据数据特征给出具体建议
+        tips: list[str] = []
+        
         if extinct_species:
-            prompt_parts.append("- 这是一个有物种灭绝的回合，可以带有一些哀伤和反思的基调")
-        elif branching_events:
-            prompt_parts.append("- 这是一个有新物种诞生的回合，可以突出生命的创造力和多样性")
-        elif stats and stats.get('avg_death_rate', 0) > 0.3:
-            prompt_parts.append("- 这是一个高压力的回合，可以描写物种的挣扎与适应")
-        else:
-            prompt_parts.append("- 这是一个相对平稳的回合，可以描写生态系统的日常运转")
+            tips.append(f"💀 有 {len(extinct_species)} 个物种灭绝 → 可以用追忆的笔触，讲述它们的最后时刻")
         
-        prompt_parts.append("- 记得将数据转化为画面感的描述")
-        prompt_parts.append("- 让读者感受到演化的宏大和生命的脆弱")
-        prompt_parts.append("")
-        prompt_parts.append("请开始撰写：")
+        if branching_events:
+            tips.append(f"🧬 有 {len(branching_events)} 次物种分化 → 重点描写分化的「瞬间」，环境压力如何催生新物种")
+        
+        if stats.get('avg_death_rate', 0) > 0.35:
+            tips.append(f"⚠️ 平均死亡率 {stats.get('avg_death_rate', 0):.1%} 较高 → 可以渲染生存竞争的残酷")
+        elif stats.get('avg_death_rate', 0) < 0.1:
+            tips.append(f"🌿 平均死亡率 {stats.get('avg_death_rate', 0):.1%} 较低 → 可以描绘生态系统的和谐")
+        
+        if stats.get('avg_net_change', 0) > 0.15:
+            tips.append(f"📈 种群净增长 {stats.get('avg_net_change', 0):+.1%} → 生机勃勃的扩张期")
+        elif stats.get('avg_net_change', 0) < -0.15:
+            tips.append(f"📉 种群净下降 {stats.get('avg_net_change', 0):+.1%} → 衰退期，暗示危机")
+        
+        if pressures:
+            tips.append(f"🌍 存在 {len(pressures)} 个环境压力 → 作为叙事的背景和驱动力")
+        
+        if highlight_species:
+            names = [h.common_name for h in highlight_species[:3]]
+            tips.append(f"🌟 重点物种：{', '.join(names)} → 以它们的视角串联叙事")
+        
+        if not tips:
+            tips.append("📝 这是一个相对平静的回合，可以用白描手法展现生态系统的日常")
+        
+        for tip in tips:
+            prompt_parts.append(f"- {tip}")
+        
+        prompt_parts.append("""
+## 写作技巧提醒
+- 开头要有「钩子」，吸引读者继续阅读
+- 中间用具体数据支撑叙事，但要转化为画面
+- 结尾可以留下悬念或哲理性的感悟
+- 记住：你不是在写数据报告，而是在讲述生命的史诗
+</writing_tips>
+
+═══════════════════════════════════════════════════════════════════════
+
+请开始撰写第 """ + str(turn_index) + f""" 回合（{era_name}，{time_span_str}/回合）的演化叙事报告：""")
         
         return "\n".join(prompt_parts)
 
@@ -323,14 +606,23 @@ class ReportBuilderV2:
     def _generate_stats(self, species: Sequence[SpeciesSnapshot], turn_index: int = 0) -> dict:
         """生成统计数据"""
         if not species:
-            return {"total": 0, "avg_death_rate": 0, "total_deaths": 0, "turn_index": turn_index}
+            return {
+                "total": 0,
+                "avg_death_rate": 0,
+                "avg_net_change": 0,
+                "total_deaths": 0,
+                "total_births": 0,
+                "turn_index": turn_index,
+            }
         
         total = len(species)
         alive = [s for s in species if s.status != "extinct"]
         extinct_count = total - len(alive)
         total_pop = sum(s.population for s in alive)
         total_deaths = sum(s.deaths for s in species)
+        total_births = sum(getattr(s, "births", 0) or 0 for s in species)
         avg_death_rate = sum(s.death_rate for s in species) / max(1, total)
+        avg_net_change = sum(getattr(s, "net_change_rate", 0) or 0 for s in species) / max(1, total)
         
         return {
             "turn_index": turn_index,
@@ -340,6 +632,8 @@ class ReportBuilderV2:
             "total_population": total_pop,
             "total_deaths": total_deaths,
             "avg_death_rate": avg_death_rate,
+            "avg_net_change": avg_net_change,
+            "total_births": total_births,
         }
 
     # ──────────────────────────────────────────────────────────
@@ -511,28 +805,120 @@ class ReportBuilderV2:
         pressures: Sequence[ParsedPressure],
         highlights: list[SpeciesHighlight]
     ) -> str:
-        """LLM 失败时的降级报告"""
-        lines = [f"# 第 {stats.get('turn_index', '?')} 回合", ""]
+        """LLM 失败时的降级报告 - 提供丰富的 Markdown 格式报告"""
+        turn_index = stats.get('turn_index', 0)
+        lines: list[str] = []
         
-        # 环境
-        if pressures:
-            lines.append("## 环境")
-            for p in pressures:
-                lines.append(f"- {p.narrative}")
-            lines.append("")
+        # 获取当前时代信息
+        time_config = get_time_config(turn_index if isinstance(turn_index, int) else 0)
+        years_per_turn = time_config["years_per_turn"]
+        era_name = time_config["era_name"]
+        current_year = time_config["current_year"]
         
-        # 概况
-        lines.append("## 概况")
-        lines.append(f"物种总数 {stats.get('total', 0)}，")
-        lines.append(f"死亡 {stats.get('total_deaths', 0):,} 个体，")
-        lines.append(f"平均死亡率 {stats.get('avg_death_rate', 0):.1%}。")
+        # 格式化时间跨度显示
+        if years_per_turn >= 1_000_000:
+            time_span_str = f"{years_per_turn // 1_000_000} 百万年"
+        else:
+            time_span_str = f"{years_per_turn // 10_000} 万年"
+        
+        # 格式化当前年份显示
+        if current_year < 0:
+            if abs(current_year) >= 100_000_000:
+                year_str = f"{abs(current_year) / 100_000_000:.1f} 亿年前"
+            else:
+                year_str = f"{abs(current_year) / 1_000_000:.1f} 百万年前"
+        else:
+            year_str = "现代"
+        
+        # ═══ 标题 ═══
+        lines.append(f"## 🕐 第 {turn_index} 回合")
+        lines.append(f"**{era_name}** · {year_str} · {time_span_str}/回合")
         lines.append("")
         
-        # 重点物种
+        # ═══ 环境状况 ═══
+        lines.append("### 🌍 环境变迁")
+        if pressures:
+            for p in pressures:
+                if p.narrative:
+                    lines.append(f"- {p.narrative}")
+                else:
+                    intensity_desc = "轻微" if p.intensity < 0.3 else "中等" if p.intensity < 0.6 else "强烈"
+                    lines.append(f"- **{p.kind}** 压力 ({intensity_desc}，强度 {p.intensity:.1f})")
+        else:
+            lines.append("- 环境相对稳定，无显著压力变化")
+        lines.append("")
+        
+        # ═══ 生态概况 ═══
+        lines.append("### 📊 生态概况")
+        
+        total = stats.get('total', 0)
+        alive = stats.get('alive', 0)
+        extinct = stats.get('extinct', 0)
+        total_pop = stats.get('total_population', 0)
+        total_deaths = stats.get('total_deaths', 0)
+        total_births = stats.get('total_births', 0)
+        avg_death_rate = stats.get('avg_death_rate', 0)
+        avg_net_change = stats.get('avg_net_change', 0)
+        
+        lines.append(f"| 指标 | 数值 |")
+        lines.append(f"|------|------|")
+        lines.append(f"| 存活物种 | **{alive}** 种 |")
+        lines.append(f"| 总生物量 | **{total_pop:,}** 个体 |")
+        
+        if total_births > 0 or total_deaths > 0:
+            net_change = total_births - total_deaths
+            change_icon = "📈" if net_change > 0 else "📉" if net_change < 0 else "➡️"
+            lines.append(f"| 本回合出生 | +{total_births:,} |")
+            lines.append(f"| 本回合死亡 | -{total_deaths:,} |")
+            lines.append(f"| 净变化 | {change_icon} {net_change:+,} |")
+        
+        # 死亡率评估
+        rate_desc = "稳定" if avg_death_rate < 0.15 else "略高" if avg_death_rate < 0.3 else "较高" if avg_death_rate < 0.5 else "危机"
+        lines.append(f"| 平均死亡率 | {avg_death_rate:.1%} ({rate_desc}) |")
+        
+        # 净变化率
+        if avg_net_change != 0:
+            change_desc = "增长" if avg_net_change > 0 else "收缩"
+            lines.append(f"| 平均净变化率 | {avg_net_change:+.1%} ({change_desc}) |")
+        
+        if extinct > 0:
+            lines.append(f"| ⚠️ 本回合灭绝 | {extinct} 种 |")
+        
+        lines.append("")
+        
+        # ═══ 值得关注的物种 ═══
         if highlights:
-            lines.append("## 值得关注")
+            lines.append("### 🐾 物种动态")
+            lines.append("")
+            
             for h in highlights:
-                lines.append(f"- **{h.common_name}**: {h.reason}")
+                # 根据原因选择图标
+                icon = "🧬" if "新物种" in h.reason or "分化" in h.reason else \
+                       "🌟" if "适应" in h.reason else \
+                       "👑" if "主导" in h.reason else \
+                       "⚠️" if "危机" in h.reason or "挣扎" in h.reason else \
+                       "🔬" if "器官" in h.reason else "📌"
+                
+                lines.append(f"**{icon} {h.common_name}** (*{h.latin_name}*) `{h.lineage_code}`")
+                lines.append(f"> {h.reason}")
+                for fact in h.key_facts:
+                    lines.append(f"> - {fact}")
+                lines.append("")
+        
+        # ═══ 小结 ═══
+        lines.append("---")
+        
+        # 根据统计数据生成小结
+        if extinct > 0:
+            lines.append(f"*本回合 {extinct} 个物种消逝于自然选择的无情筛选中。生命脆弱，适者生存。*")
+        elif avg_death_rate > 0.4:
+            lines.append("*高压环境下，物种面临严峻考验。只有最适应的个体才能延续血脉。*")
+        elif avg_net_change > 0.1:
+            lines.append("*生态系统欣欣向荣，物种繁衍旺盛，生命之树茁壮成长。*")
+        elif avg_net_change < -0.1:
+            lines.append("*生态系统承受压力，种群数量有所下降，但生命仍在坚持。*")
+        else:
+            lines.append("*生态系统保持动态平衡，物种在竞争与共存中延续演化之路。*")
         
         return "\n".join(lines)
 

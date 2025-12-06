@@ -9,15 +9,15 @@ import type { TurnReport, PressureDraft, ActionQueueStatus, PressureTemplate } f
 const TURN_TIMEOUT = 5 * 60 * 1000;
 
 /**
- * 执行单回合推演
+ * 执行推演（支持多回合）
  */
-export async function runTurn(pressures: PressureDraft[] = []): Promise<TurnReport[]> {
+export async function runTurn(pressures: PressureDraft[] = [], rounds = 1): Promise<TurnReport[]> {
   console.log("🚀 [演化] 发送推演请求...");
   console.log("📋 [演化] 压力数量:", pressures.length);
 
   const data = await http.post<TurnReport[]>(
     "/api/turns/run",
-    { rounds: 1, pressures },
+    { rounds, pressures },
     { timeout: TURN_TIMEOUT }
   );
 

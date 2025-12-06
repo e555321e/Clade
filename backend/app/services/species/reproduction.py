@@ -19,6 +19,7 @@ from ...models.environment import MapTile, HabitatPopulation
 from ...repositories.environment_repository import environment_repository
 from .population_calculator import PopulationCalculator
 from ...core.config import get_settings
+from ...simulation.constants import get_time_config
 
 if TYPE_CHECKING:
     from .habitat_manager import HabitatManager
@@ -1118,6 +1119,23 @@ class ReproductionService:
         # 综合繁殖加成（取最大值，避免双重加成过高）
         fertility_bonus = max(size_bonus, repro_bonus)
         base_growth_multiplier *= fertility_bonus
+        
+        # 【时代缩放】早期时代（太古宙/元古宙）繁殖极快
+        # 每回合代表几千万年，单细胞生物可繁衍天文数字的代数
+        current_turn = getattr(self, '_current_turn_index', 0)
+        time_config = get_time_config(current_turn)
+        time_scaling = time_config["scaling_factor"]
+        
+        if time_scaling > 1.0:
+            # 使用平方根缓和极端值：太古宙 sqrt(40)≈6.3x, 元古宙 sqrt(100)=10x
+            effective_scaling = max(1.0, time_scaling ** 0.5)
+            base_growth_multiplier *= effective_scaling
+            
+            if time_scaling > 1.5:
+                logger.info(
+                    f"[时代缩放] {species.common_name} 处于 {time_config['era_name']}，"
+                    f"繁殖倍率={effective_scaling:.1f}x"
+                )
         
         # 【新增v4】新物种繁殖率加成
         # 新分化物种在前几回合获得繁殖率加成，体现适应性优势

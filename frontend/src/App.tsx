@@ -14,7 +14,7 @@
  * │           └── AppContent (场景切换)
  */
 
-import { useCallback, useEffect, useRef, lazy, Suspense } from "react";
+import { useCallback, useEffect, useRef, lazy, Suspense, useMemo } from "react";
 import "./layout.css";
 
 // Providers
@@ -163,8 +163,28 @@ function GameScene() {
   const mapPanelRef = useRef<CanvasMapPanelHandle | null>(null);
 
   // 派生数据
+  const extinctSpeciesSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of speciesList) {
+      if (s.status === "extinct") set.add(s.lineage_code);
+    }
+    return set;
+  }, [speciesList]);
+
+  const liveHabitats = useMemo(() => {
+    if (!mapData?.habitats) return [];
+    return mapData.habitats.filter(
+      (h) => h.population > 0 && !extinctSpeciesSet.has(h.lineage_code)
+    );
+  }, [mapData?.habitats, extinctSpeciesSet]);
+
+  const mapForDisplay = useMemo(() => {
+    if (!mapData) return null;
+    return { ...mapData, habitats: liveHabitats };
+  }, [mapData, liveHabitats]);
+
   const selectedTile = mapData?.tiles.find((t) => t.id === selectedTileId) ?? null;
-  const selectedTileHabitats = mapData?.habitats.filter((h) => h.tile_id === selectedTileId) ?? [];
+  const selectedTileHabitats = liveHabitats.filter((h) => h.tile_id === selectedTileId);
 
   // 相机控制
   const captureCamera = useCallback((): CameraState | null => {
@@ -204,11 +224,11 @@ function GameScene() {
 
   // 执行回合
   const executeTurn = useCallback(
-    async (drafts: PressureDraft[]) => {
+    async (drafts: PressureDraft[], rounds = 1) => {
       setLoading(true);
       setError(null);
       try {
-        const next = await runTurn(drafts);
+        const next = await runTurn(drafts, rounds);
         addReports(next);
         if (next.length > 0) {
           const latest = next[next.length - 1];
@@ -398,7 +418,7 @@ function GameScene() {
           <>
             <CanvasMapPanel
               ref={mapPanelRef}
-              map={mapData}
+              map={mapForDisplay}
               onRefresh={refreshMap}
               selectedTile={selectedTile}
               onSelectTile={handleTileSelect}
