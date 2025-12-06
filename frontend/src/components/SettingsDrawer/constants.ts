@@ -265,6 +265,26 @@ export const DEFAULT_ECOLOGY_BALANCE_CONFIG: EcologyBalanceConfig = {
   environment_noise: 0.03,
   base_escape_rate: 0.3,
   size_advantage_factor: 0.1,
+  
+  // 世代更替
+  lifespan_limit: 5,
+  lifespan_decay_rate: 0.08,
+  dead_end_threshold: 3,
+  dead_end_penalty: 0.15,
+  obsolescence_penalty: 0.35,
+  allee_threshold: 50000,
+  
+  // 子代压制
+  offspring_suppression_coefficient: 0.40,
+  parent_lag_penalty_turn0: 0.25,
+  parent_lag_penalty_turn1: 0.18,
+  parent_lag_penalty_turn2: 0.12,
+  
+  // 新物种优势
+  enable_new_species_advantage: true,
+  new_species_advantage_turn0: 0.10,
+  new_species_advantage_turn1: 0.06,
+  new_species_advantage_turn2: 0.03,
 };
 
 export const DEFAULT_PRESSURE_INTENSITY_CONFIG: PressureIntensityConfig = {

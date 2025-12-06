@@ -602,6 +602,26 @@ export interface EcologyBalanceConfig {
   // ========== 防御/逃逸 ==========
   base_escape_rate?: number;               // 基础逃逸成功率
   size_advantage_factor?: number;          // 体型优势因子
+  
+  // ========== 世代更替（加速前代物种淘汰）==========
+  lifespan_limit?: number;                 // 基因衰老阈值（回合）
+  lifespan_decay_rate?: number;            // 衰老速率（每回合增加的死亡率）
+  dead_end_threshold?: number;             // 进化死胡同阈值（回合）
+  dead_end_penalty?: number;               // 进化死胡同惩罚
+  obsolescence_penalty?: number;           // 亲代让位惩罚（有子代时）
+  allee_threshold?: number;                // 阿利效应阈值（种群数量）
+  
+  // ========== 子代压制 ==========
+  offspring_suppression_coefficient?: number;  // 子代压制系数
+  parent_lag_penalty_turn0?: number;           // 亲代滞后惩罚T0
+  parent_lag_penalty_turn1?: number;           // 亲代滞后惩罚T1
+  parent_lag_penalty_turn2?: number;           // 亲代滞后惩罚T2
+  
+  // ========== 新物种优势 ==========
+  enable_new_species_advantage?: boolean;      // 是否启用新物种优势
+  new_species_advantage_turn0?: number;        // 新物种T0死亡率减免
+  new_species_advantage_turn1?: number;        // 新物种T1死亡率减免
+  new_species_advantage_turn2?: number;        // 新物种T2死亡率减免
 }
 
 /**

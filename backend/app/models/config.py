@@ -469,6 +469,20 @@ class EcologyBalanceConfig(BaseModel):
     # 稀有型最大优势（死亡率减免）
     rare_type_max_advantage: float = 0.08
     
+    # ========== 世代更替（加速前代物种淘汰）==========
+    # 基因衰老阈值：物种存在多少回合后开始衰老
+    lifespan_limit: int = 5
+    # 衰老速率：超过阈值后每回合增加的死亡率
+    lifespan_decay_rate: float = 0.08
+    # 进化死胡同阈值：物种存在多少回合后若无子代则视为死胡同
+    dead_end_threshold: int = 3
+    # 进化死胡同惩罚：死胡同物种的额外死亡率
+    dead_end_penalty: float = 0.15
+    # 亲代让位惩罚：有存活子代时额外承受的死亡率
+    obsolescence_penalty: float = 0.35
+    # 阿利效应阈值：种群低于此数量时开始受阿利效应惩罚
+    allee_threshold: int = 50000
+    
     # ========== 新物种适应性优势 ==========
     # 【新增】新分化物种在前几回合获得适应性优势
     # 是否启用新物种优势
@@ -482,16 +496,16 @@ class EcologyBalanceConfig(BaseModel):
     # 新物种繁殖率加成（第1回合）
     new_species_reproduction_boost: float = 1.15
     
-    # ========== 增强版子代压制 ==========
+    # ========== 增强版子代压制（加速世代更替）==========
     # 【新增】子代对亲代的压制效果增强
-    # 子代压制系数（原0.20，现提高）
-    offspring_suppression_coefficient: float = 0.28
-    # 亲代演化滞后惩罚第1回合
-    parent_lag_penalty_turn0: float = 0.18
+    # 子代压制系数（大幅提高以加速世代更替）
+    offspring_suppression_coefficient: float = 0.40
+    # 亲代演化滞后惩罚第1回合（分化后立即受惩罚）
+    parent_lag_penalty_turn0: float = 0.25
     # 亲代演化滞后惩罚第2回合
-    parent_lag_penalty_turn1: float = 0.12
+    parent_lag_penalty_turn1: float = 0.18
     # 亲代演化滞后惩罚第3回合
-    parent_lag_penalty_turn2: float = 0.06
+    parent_lag_penalty_turn2: float = 0.12
     
     # ========== 生态位重叠直接竞争 ==========
     # 【新增】高生态位重叠时的直接竞争效应

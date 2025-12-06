@@ -6,7 +6,7 @@
 import { memo, type Dispatch } from "react";
 import type { EcologyBalanceConfig } from "@/services/api.types";
 import type { SettingsAction } from "../types";
-import { SectionHeader, Card, ConfigGroup, SliderRow, NumberInput, ActionButton, InfoBox } from "../common/Controls";
+import { SectionHeader, Card, ConfigGroup, SliderRow, NumberInput, ActionButton, InfoBox, ToggleRow } from "../common/Controls";
 import { DEFAULT_ECOLOGY_BALANCE_CONFIG } from "../constants";
 
 interface Props {
@@ -327,6 +327,180 @@ export const EcologySection = memo(function EcologySection({
           onChange={(v) => handleUpdate({ environment_noise: v })}
           formatValue={(v) => `±${(v * 100).toFixed(0)}%`}
         />
+      </Card>
+
+      {/* 世代更替 */}
+      <Card title="世代更替" icon="🔄" desc="加速前代物种淘汰，促进物种演替">
+        <InfoBox variant="warning">
+          这些参数控制物种的"自然寿命"。分化出新物种后，前代物种会加速死亡，为新物种腾出生态位。数值越大，世代更替越快。
+        </InfoBox>
+        
+        <ConfigGroup title="基因衰老 — 物种存在时间过长后的自然衰退">
+          <NumberInput
+            label="衰老阈值"
+            desc="物种存在多少回合后开始基因衰老"
+            value={c.lifespan_limit ?? 5}
+            min={1}
+            max={30}
+            step={1}
+            onChange={(v) => handleUpdate({ lifespan_limit: v })}
+            suffix="回合"
+          />
+          <SliderRow
+            label="衰老速率"
+            desc="超过阈值后，每回合增加的死亡率"
+            value={c.lifespan_decay_rate ?? 0.08}
+            min={0.01}
+            max={0.20}
+            step={0.01}
+            onChange={(v) => handleUpdate({ lifespan_decay_rate: v })}
+            formatValue={(v) => `+${(v * 100).toFixed(0)}%/回合`}
+          />
+        </ConfigGroup>
+
+        <ConfigGroup title="进化死胡同 — 长期不分化的物种受惩罚">
+          <NumberInput
+            label="触发阈值"
+            desc="物种存在多少回合后若无子代则视为死胡同"
+            value={c.dead_end_threshold ?? 3}
+            min={1}
+            max={20}
+            step={1}
+            onChange={(v) => handleUpdate({ dead_end_threshold: v })}
+            suffix="回合"
+          />
+          <SliderRow
+            label="死胡同惩罚"
+            desc="进化死胡同物种的额外死亡率"
+            value={c.dead_end_penalty ?? 0.15}
+            min={0}
+            max={0.5}
+            step={0.05}
+            onChange={(v) => handleUpdate({ dead_end_penalty: v })}
+            formatValue={(v) => `+${(v * 100).toFixed(0)}%`}
+          />
+        </ConfigGroup>
+
+        <ConfigGroup title="亲代让位 — 有子代后加速退场">
+          <SliderRow
+            label="让位惩罚"
+            desc="有存活子代的物种额外承受的死亡率"
+            value={c.obsolescence_penalty ?? 0.35}
+            min={0}
+            max={0.6}
+            step={0.05}
+            onChange={(v) => handleUpdate({ obsolescence_penalty: v })}
+            formatValue={(v) => `+${(v * 100).toFixed(0)}%`}
+          />
+        </ConfigGroup>
+
+        <ConfigGroup title="阿利效应 — 种群过小时加速灭亡">
+          <NumberInput
+            label="崩溃阈值"
+            desc="种群低于此数量时开始受阿利效应惩罚"
+            value={c.allee_threshold ?? 50000}
+            min={100}
+            max={200000}
+            step={1000}
+            onChange={(v) => handleUpdate({ allee_threshold: v })}
+            suffix="个体"
+          />
+        </ConfigGroup>
+      </Card>
+
+      {/* 子代压制 */}
+      <Card title="子代压制" icon="👶" desc="新物种对亲代的竞争压力">
+        <InfoBox>
+          当物种分化出新子代后，子代会对亲代形成竞争压力。这模拟了演化中"适者生存"的替代过程。
+        </InfoBox>
+        <SliderRow
+          label="压制系数"
+          desc="子代对亲代的整体竞争强度"
+          value={c.offspring_suppression_coefficient ?? 0.40}
+          min={0}
+          max={0.8}
+          step={0.05}
+          onChange={(v) => handleUpdate({ offspring_suppression_coefficient: v })}
+        />
+        <ConfigGroup title="亲代滞后惩罚 — 分化后前3回合的递减惩罚">
+          <SliderRow
+            label="第1回合"
+            desc="分化发生当回合，亲代受到的惩罚"
+            value={c.parent_lag_penalty_turn0 ?? 0.25}
+            min={0}
+            max={0.5}
+            step={0.05}
+            onChange={(v) => handleUpdate({ parent_lag_penalty_turn0: v })}
+            formatValue={(v) => `+${(v * 100).toFixed(0)}%`}
+          />
+          <SliderRow
+            label="第2回合"
+            desc="分化后第2回合，亲代受到的惩罚"
+            value={c.parent_lag_penalty_turn1 ?? 0.18}
+            min={0}
+            max={0.4}
+            step={0.05}
+            onChange={(v) => handleUpdate({ parent_lag_penalty_turn1: v })}
+            formatValue={(v) => `+${(v * 100).toFixed(0)}%`}
+          />
+          <SliderRow
+            label="第3回合"
+            desc="分化后第3回合，亲代受到的惩罚"
+            value={c.parent_lag_penalty_turn2 ?? 0.12}
+            min={0}
+            max={0.3}
+            step={0.05}
+            onChange={(v) => handleUpdate({ parent_lag_penalty_turn2: v })}
+            formatValue={(v) => `+${(v * 100).toFixed(0)}%`}
+          />
+        </ConfigGroup>
+      </Card>
+
+      {/* 新物种优势 */}
+      <Card title="新物种优势" icon="✨" desc="新分化物种的适应性优势">
+        <InfoBox>
+          新分化的物种通常更适应当前环境，因此在前几回合享有死亡率减免，帮助其站稳脚跟。
+        </InfoBox>
+        <ToggleRow
+          label="启用新物种优势"
+          desc="是否给予新分化物种前3回合的死亡率减免"
+          value={c.enable_new_species_advantage ?? true}
+          onChange={(v) => handleUpdate({ enable_new_species_advantage: v })}
+        />
+        {c.enable_new_species_advantage !== false && (
+          <ConfigGroup title="死亡率减免 — 新物种前3回合的优势">
+            <SliderRow
+              label="第1回合"
+              desc="分化发生当回合，新物种的死亡率减免"
+              value={c.new_species_advantage_turn0 ?? 0.10}
+              min={0}
+              max={0.3}
+              step={0.02}
+              onChange={(v) => handleUpdate({ new_species_advantage_turn0: v })}
+              formatValue={(v) => `-${(v * 100).toFixed(0)}%`}
+            />
+            <SliderRow
+              label="第2回合"
+              desc="分化后第2回合，新物种的死亡率减免"
+              value={c.new_species_advantage_turn1 ?? 0.06}
+              min={0}
+              max={0.2}
+              step={0.02}
+              onChange={(v) => handleUpdate({ new_species_advantage_turn1: v })}
+              formatValue={(v) => `-${(v * 100).toFixed(0)}%`}
+            />
+            <SliderRow
+              label="第3回合"
+              desc="分化后第3回合，新物种的死亡率减免"
+              value={c.new_species_advantage_turn2 ?? 0.03}
+              min={0}
+              max={0.15}
+              step={0.01}
+              onChange={(v) => handleUpdate({ new_species_advantage_turn2: v })}
+              formatValue={(v) => `-${(v * 100).toFixed(0)}%`}
+            />
+          </ConfigGroup>
+        )}
       </Card>
     </div>
   );

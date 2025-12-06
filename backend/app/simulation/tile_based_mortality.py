@@ -2783,12 +2783,12 @@ class TileBasedMortalityEngine:
             # 任何物种都有其寿命极限，无论怎么适应，老了就是老了
             species_age = turn_index - species_arrays['created_turn'][sp_idx]
             
-            # 寿命阈值：20回合（约1000万年）
-            # 超过这个时间，每回合增加 5% 死亡率，直到灭绝
-            LIFESPAN_LIMIT = 20
+            # 寿命阈值：5回合（约250万年）- 加速世代更替
+            # 超过这个时间，每回合增加 8% 死亡率，直到灭绝
+            LIFESPAN_LIMIT = 5
             if species_age > LIFESPAN_LIMIT:
                 excess_age = species_age - LIFESPAN_LIMIT
-                decay_penalty = min(0.8, excess_age * 0.05)  # 上限80%
+                decay_penalty = min(0.8, excess_age * 0.08)  # 上限80%，加速衰老
                 evolution_adjustment += decay_penalty
                 adjustment_notes.append(f"基因衰老T{species_age}+{decay_penalty:.1%}")
 
@@ -2808,20 +2808,20 @@ class TileBasedMortalityEngine:
             if has_children:
                 # 场景A：有子代 -> 亲代应加速退场，为子代腾出空间
                 # 这是一个非常强的惩罚，确保老物种被新物种取代
-                obsolescence_penalty = 0.25  # 固定 +25% 死亡率
+                obsolescence_penalty = 0.35  # 固定 +35% 死亡率（加速世代更替）
                 evolution_adjustment += obsolescence_penalty
                 adjustment_notes.append(f"亲代让位+{obsolescence_penalty:.1%}")
-            elif species_age > 10:
+            elif species_age > 3:
                 # 场景B：老了但没子代 -> 进化死胡同
-                # 施加轻微压力逼迫其分化或灭亡
-                dead_end_penalty = 0.10
+                # 施加较强压力逼迫其分化或灭亡
+                dead_end_penalty = 0.15
                 evolution_adjustment += dead_end_penalty
                 adjustment_notes.append(f"进化死胡同+{dead_end_penalty:.1%}")
 
             # 3. 阿利效应 (Allee Effect) / 崩溃加速
             # 种群过低时不再享受保护，反而加速灭亡
-            # 阈值设为 500 (对于大多数物种来说这已经很少了)
-            ALLEE_THRESHOLD = 500
+            # 阈值设为 50000 (对于大多数物种来说这已经很少了)
+            ALLEE_THRESHOLD = 50000
             if total_pop < ALLEE_THRESHOLD and total_pop > 0:
                 # 种群越少，惩罚越大
                 # pop=250 -> 额外+25%死亡率
