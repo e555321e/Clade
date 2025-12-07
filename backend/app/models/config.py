@@ -1060,12 +1060,22 @@ class GeneDiversityConfig(BaseModel):
     phanerozoic_mutation_chance: float = Field(default=0.08, description="古生代突变发现概率 (8%)")
     
     # ========== 激活机制参数 ==========
-    # 每回合激活休眠基因的概率
-    activation_chance_per_turn: float = Field(default=0.08, description="每回合激活概率 (5-10%)")
+    # 每回合激活休眠基因的概率（大幅提升以增加基因活跃度）
+    activation_chance_per_turn: float = Field(default=0.30, description="每回合激活概率 (30%)")
     # 压力匹配时的激活加成倍数
-    pressure_match_bonus: float = Field(default=2.0, description="压力匹配激活加成 (×2)")
-    # 分化时发现新器官的概率
-    organ_discovery_chance: float = Field(default=0.04, description="分化时新器官发现概率 (3-5%)")
+    pressure_match_bonus: float = Field(default=2.5, description="压力匹配激活加成 (×2.5)")
+    # 分化时发现新器官的概率（大幅提升）
+    organ_discovery_chance: float = Field(default=0.20, description="分化时新器官发现概率 (20%)")
+    # 激活所需的死亡率阈值（降低门槛）
+    activation_death_rate_threshold: float = Field(default=0.25, description="激活所需死亡率阈值 (25%)")
+    # 激活所需的最小暴露次数（降低门槛）
+    activation_min_exposure: int = Field(default=1, description="激活所需最小暴露次数 (1次)")
+    # 分化时继承休眠基因的概率（大幅提升）
+    dormant_gene_inherit_chance: float = Field(default=0.50, description="分化时休眠基因继承概率 (50%)")
+    # 分化时从基因库继承的最大特质数
+    max_inherit_traits_from_library: int = Field(default=4, description="从基因库继承最大特质数")
+    # 分化时从基因库继承的最大器官数
+    max_inherit_organs_from_library: int = Field(default=2, description="从基因库继承最大器官数")
 
 
 class TensorUIConfig(BaseModel):

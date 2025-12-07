@@ -279,6 +279,10 @@ SPECIES_PROMPTS = {
 - 已探索方向：{explored_directions} 个
 - 指南：半径>0.4 可大胆适应/允许1个新器官；半径<0.2 仅小幅微调，禁止新增器官
 
+=== 🧬 推荐激活的休眠基因 ===
+{dormant_genes_summary}
+优先在 activated_genes 和 trait_changes 中体现这些基因的激活
+
 === 可用器官枚举（organ_key，用于 organ_evolution）===
 {organ_key_catalog}
 输出 organ_evolution 时必须包含 organ_key（从上表选择），并提供 structure_name 作为中文展示名。
@@ -384,6 +388,7 @@ SPECIES_PROMPTS = {
     "prey_species": ["继承或调整猎物列表"],
     "prey_preferences": {{"物种代码": 偏好比例}},
     "key_innovations": ["1-3个演化特征（器官/能力/形态）"],
+    "activated_genes": ["从休眠基因库中选择激活的基因名，如有"],
     "trait_changes": {{"增强属性": "+数值", "减弱属性": "-数值"}},
     "morphology_changes": {{"body_length_cm": 0.8-1.3倍}},
     "event_description": "30-50字分化摘要",

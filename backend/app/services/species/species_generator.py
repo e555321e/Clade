@@ -275,6 +275,12 @@ class SpeciesGenerator:
         except Exception:
             pass
 
+        # 【新增】为新物种生成初始休眠基因
+        try:
+            self._generate_initial_dormant_genes(species)
+        except Exception as e:
+            logger.warning(f"[物种生成器] 生成初始休眠基因失败: {e}")
+
         # 【新增】如果是消费者但没有猎物，自动分配
         if trophic_level >= 2.0 and not species.prey_species and existing_species:
             auto_prey, auto_prefs = self.predation_service.auto_assign_prey(
@@ -657,4 +663,96 @@ class SpeciesGenerator:
         
         logger.info(f"[物种生成器(增强版)] 物种生成成功: {species.latin_name} / {species.common_name}")
         return species
+
+    def _generate_initial_dormant_genes(self, species) -> None:
+        """为新物种生成初始休眠基因
+        
+        让物种从创建时就携带潜在可激活的基因，
+        增加基因系统的活跃度。
+        """
+        if species.dormant_genes is None:
+            species.dormant_genes = {"traits": {}, "organs": {}}
+        
+        species.dormant_genes.setdefault("traits", {})
+        species.dormant_genes.setdefault("organs", {})
+        
+        # 基于物种现有特质生成休眠变异版本
+        for trait_name, trait_value in species.abstract_traits.items():
+            # 60% 概率为每个特质生成一个增强版休眠基因
+            if random.random() < 0.60:
+                enhanced_name = f"强化{trait_name}" if not trait_name.startswith("强化") else trait_name
+                if enhanced_name not in species.dormant_genes["traits"]:
+                    species.dormant_genes["traits"][enhanced_name] = {
+                        "potential_value": min(15.0, trait_value * 1.25),
+                        "activation_threshold": 0.20,  # 低门槛
+                        "pressure_types": self._infer_pressure_types_for_trait(trait_name),
+                        "exposure_count": 0,
+                        "activated": False,
+                        "inherited_from": "initial"
+                    }
+        
+        # 为物种生成一些通用的休眠特质
+        universal_dormant_traits = [
+            ("适应性", ["adaptive", "environment"]),
+            ("恢复力", ["stress", "damage"]),
+            ("代谢效率", ["resource", "competition"]),
+        ]
+        for trait_name, pressure_types in universal_dormant_traits:
+            if trait_name not in species.abstract_traits and trait_name not in species.dormant_genes["traits"]:
+                if random.random() < 0.50:  # 50% 概率
+                    species.dormant_genes["traits"][trait_name] = {
+                        "potential_value": random.uniform(5.0, 8.0),
+                        "activation_threshold": 0.15,
+                        "pressure_types": pressure_types,
+                        "exposure_count": 0,
+                        "activated": False,
+                        "inherited_from": "initial"
+                    }
+        
+        # 为物种生成一些休眠器官潜力
+        potential_organs = [
+            {"name": "感光点", "category": "sensory", "type": "photoreceptor", "parameters": {"sensitivity": 0.5}},
+            {"name": "化学感受器", "category": "sensory", "type": "chemoreceptor", "parameters": {"range": 0.3}},
+            {"name": "纤毛", "category": "locomotion", "type": "cilia", "parameters": {"efficiency": 0.4}},
+            {"name": "防护层", "category": "defense", "type": "protective_layer", "parameters": {"resistance": 0.3}},
+        ]
+        
+        for organ in potential_organs:
+            # 30% 概率生成每个休眠器官
+            if random.random() < 0.30:
+                organ_name = organ["name"]
+                if organ_name not in species.dormant_genes["organs"]:
+                    species.dormant_genes["organs"][organ_name] = {
+                        "organ_data": {
+                            "category": organ["category"],
+                            "type": organ["type"],
+                            "parameters": organ["parameters"]
+                        },
+                        "activation_threshold": 0.20,
+                        "pressure_types": ["adaptive", "competition", "predation"],
+                        "exposure_count": 0,
+                        "activated": False,
+                        "inherited_from": "initial"
+                    }
+        
+        total_dormant = len(species.dormant_genes.get("traits", {})) + len(species.dormant_genes.get("organs", {}))
+        if total_dormant > 0:
+            logger.info(f"[物种生成器] {species.lineage_code} 生成了 {total_dormant} 个初始休眠基因")
+
+    def _infer_pressure_types_for_trait(self, trait_name: str) -> list[str]:
+        """根据特质名推断触发压力类型"""
+        mapping = {
+            "耐寒性": ["cold", "temperature"],
+            "耐热性": ["heat", "temperature"],
+            "耐旱性": ["drought", "humidity"],
+            "耐盐性": ["salinity", "osmotic"],
+            "免疫力": ["disease", "pathogen"],
+            "运动能力": ["predation", "competition"],
+            "繁殖速度": ["population", "adaptive"],
+            "社会性": ["group", "cooperation"],
+        }
+        for key, types in mapping.items():
+            if key in trait_name:
+                return types
+        return ["adaptive", "environment"]
 

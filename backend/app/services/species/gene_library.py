@@ -97,7 +97,14 @@ class GeneLibraryService:
         child: Species,
         genus: Genus
     ):
-        """子代继承休眠基因"""
+        """子代继承休眠基因 - 大幅提升继承概率版本
+        
+        改进：
+        - 从父代继承特质的概率从25%提升到50%
+        - 从基因库继承的特质数从2提升到4
+        - 从基因库继承的器官数从1提升到2
+        - 激活阈值大幅降低
+        """
         if not child.dormant_genes:
             child.dormant_genes = {"traits": {}, "organs": {}}
         
@@ -106,11 +113,12 @@ class GeneLibraryService:
         
         inherited_count = 0
         
+        # 从父代继承特质 - 概率提升到50%
         for trait_name, trait_value in parent.abstract_traits.items():
-            if random.random() < 0.25:
+            if random.random() < 0.50:  # 从25%提升到50%
                 child.dormant_genes["traits"][trait_name] = {
-                    "potential_value": min(15.0, trait_value * 1.15),
-                    "activation_threshold": 0.6,
+                    "potential_value": min(15.0, trait_value * 1.20),  # 更高的潜力值
+                    "activation_threshold": 0.20,  # 降低激活阈值（20%死亡率）
                     "pressure_types": self._infer_pressure_types(trait_name),
                     "exposure_count": 0,
                     "activated": False,
@@ -118,16 +126,37 @@ class GeneLibraryService:
                 }
                 inherited_count += 1
         
+        # 从父代继承休眠的器官潜力
+        if parent.organs:
+            for organ_cat, organ_data in parent.organs.items():
+                if random.random() < 0.40:  # 40%概率继承器官变异潜力
+                    organ_name = f"{organ_data.get('type', organ_cat)}_variant"
+                    if organ_name not in child.dormant_genes["organs"]:
+                        child.dormant_genes["organs"][organ_name] = {
+                            "organ_data": {
+                                "category": organ_cat,
+                                "type": organ_data.get("type", organ_cat) + "_evolved",
+                                "parameters": {**organ_data.get("parameters", {}), "efficiency": 1.2}
+                            },
+                            "activation_threshold": 0.25,  # 降低阈值
+                            "pressure_types": ["adaptive", "competition"],
+                            "exposure_count": 0,
+                            "activated": False,
+                            "inherited_from": parent.lineage_code
+                        }
+                        inherited_count += 1
+        
+        # 从基因库继承 - 增加数量
         if genus and genus.gene_library:
             available_traits = list(genus.gene_library.get("traits", {}).keys())
             if available_traits:
-                inherit_count = min(2, len(available_traits))
+                inherit_count = min(4, len(available_traits))  # 从2提升到4
                 for trait_name in random.sample(available_traits, inherit_count):
                     if trait_name not in child.abstract_traits and trait_name not in child.dormant_genes["traits"]:
                         trait_data = genus.gene_library["traits"][trait_name]
                         child.dormant_genes["traits"][trait_name] = {
-                            "potential_value": trait_data["max_value"] * random.uniform(0.7, 0.9),
-                            "activation_threshold": 0.65,
+                            "potential_value": trait_data["max_value"] * random.uniform(0.8, 1.0),
+                            "activation_threshold": 0.20,  # 降低阈值
                             "pressure_types": ["adaptive"],
                             "exposure_count": 0,
                             "activated": False,
@@ -137,7 +166,7 @@ class GeneLibraryService:
             
             available_organs = list(genus.gene_library.get("organs", {}).keys())
             if available_organs:
-                inherit_count = min(1, len(available_organs))
+                inherit_count = min(2, len(available_organs))  # 从1提升到2
                 for organ_name in random.sample(available_organs, inherit_count):
                     if organ_name not in child.dormant_genes["organs"]:
                         organ_data = genus.gene_library["organs"][organ_name]
@@ -147,7 +176,7 @@ class GeneLibraryService:
                                 "type": organ_data["type"],
                                 "parameters": organ_data["parameters"]
                             },
-                            "activation_threshold": 0.70,
+                            "activation_threshold": 0.25,  # 降低阈值
                             "pressure_types": ["adaptive"],
                             "exposure_count": 0,
                             "activated": False,
@@ -156,7 +185,7 @@ class GeneLibraryService:
                         inherited_count += 1
         
         if inherited_count > 0:
-            logger.debug(f"[基因遗传] {child.lineage_code} 继承了 {inherited_count} 个休眠基因")
+            logger.info(f"[基因遗传] {child.lineage_code} 继承了 {inherited_count} 个休眠基因")
     
     def update_activation_count(self, genus_code: str, gene_name: str, gene_type: str):
         """更新基因激活计数"""

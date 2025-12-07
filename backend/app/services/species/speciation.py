@@ -218,16 +218,23 @@ class SpeciationService:
         # 保存 AI 分化候选
         self._ai_speciation_candidates = speciation_candidates or set()
         
-        # 提取压力描述摘要
+        # 提取压力描述摘要和压力类型列表
         pressure_summary = "无显著环境压力"
+        self._current_pressure_types: list[str] = ["adaptive"]  # 默认
         if pressures:
             # 使用 set 去重描述，避免重复
             narratives = sorted(list(set(p.narrative for p in pressures)))
             pressure_summary = "; ".join(narratives)
+            # 提取压力类型用于基因筛选
+            self._current_pressure_types = list(set(p.kind for p in pressures if p.kind))
+            if not self._current_pressure_types:
+                self._current_pressure_types = ["adaptive"]
         elif major_events:
             pressure_summary = "重大地质/气候变迁"
+            self._current_pressure_types = ["environment", "catastrophe"]
         elif average_pressure > 5.0:
             pressure_summary = f"高环境压力 ({average_pressure:.1f}/10)"
+            self._current_pressure_types = ["environment", "stress"]
         
         # 生成食物链状态描述（用于AI）
         self._food_chain_summary = self._summarize_food_chain_status(trophic_interactions)
@@ -1198,6 +1205,12 @@ class SpeciationService:
                     "gene_diversity_radius": getattr(species, "gene_diversity_radius", 0.35) or 0.35,
                     "gene_stability": getattr(species, "gene_stability", 0.5) or 0.5,
                     "explored_directions": len(getattr(species, "explored_directions", []) or []),
+                    # 【新增】休眠基因信息，智能筛选后指导AI分化方向
+                    "dormant_genes_summary": self._summarize_dormant_genes(
+                        species, 
+                        pressure_types=self._current_pressure_types,
+                        pressure_strength=average_pressure
+                    ),
                     # 【新增】器官枚举提示（闭集 organ_key）
                     "organ_key_catalog": "\n".join(
                         [f"- {c['organ_key']} ({c['category']})：{c['default_name']}" for c in self._organ_catalog]
@@ -1461,6 +1474,23 @@ class SpeciationService:
                     self.gene_library_service.inherit_dormant_genes(ctx["parent"], new_species, genus)
                     species_repository.upsert(new_species)
             
+            # 【AI指定基因激活】处理 AI 返回的 activated_genes
+            ai_activated_genes = ai_content.get("activated_genes", []) if ai_content else []
+            if ai_activated_genes:
+                activated_count = self._process_ai_activated_genes(new_species, ai_activated_genes, turn_index)
+                if activated_count > 0:
+                    species_repository.upsert(new_species)
+                    logger.info(f"[AI基因激活] {new_species.common_name} 激活了 {activated_count} 个AI指定的基因")
+            
+            # 【分化突破】50% 概率在分化时直接激活一个休眠基因
+            breakthrough_result = self._try_speciation_breakthrough(new_species, turn_index)
+            if breakthrough_result:
+                species_repository.upsert(new_species)
+                logger.info(
+                    f"[分化突破] {new_species.common_name} 在分化中获得新基因: "
+                    f"{breakthrough_result}"
+                )
+            
             # 【植物演化】主动检查并触发里程碑
             milestone_result = self._check_and_trigger_plant_milestones(new_species, turn_index)
             if milestone_result:
@@ -1553,6 +1583,15 @@ class SpeciationService:
                 if genus:
                     self.gene_library_service.inherit_dormant_genes(ctx["parent"], new_species, genus)
                     species_repository.upsert(new_species)
+            
+            # 【分化突破】背景物种也有机会获得新基因
+            breakthrough_result = self._try_speciation_breakthrough(new_species, turn_index)
+            if breakthrough_result:
+                species_repository.upsert(new_species)
+                logger.info(
+                    f"[分化突破-背景] {new_species.common_name} 在分化中获得新基因: "
+                    f"{breakthrough_result}"
+                )
             
             species_repository.log_event(
                 LineageEvent(
@@ -3677,6 +3716,277 @@ class SpeciationService:
                 return f"{severity}级{desc}"
         
         return "重大环境事件"
+    
+    def _process_ai_activated_genes(
+        self,
+        species: Species,
+        activated_genes: list[str],
+        turn_index: int
+    ) -> int:
+        """处理 AI 指定要激活的休眠基因
+        
+        Args:
+            species: 新物种对象
+            activated_genes: AI 指定的要激活的基因名列表
+            turn_index: 当前回合
+            
+        Returns:
+            成功激活的基因数量
+        """
+        if not activated_genes:
+            return 0
+        
+        if not species.dormant_genes:
+            return 0
+        
+        activated_count = 0
+        
+        for gene_name in activated_genes:
+            # 尝试在休眠特质中查找
+            if "traits" in species.dormant_genes:
+                for trait_name, gene_data in species.dormant_genes["traits"].items():
+                    # 模糊匹配：基因名包含或被包含
+                    if (gene_name in trait_name or trait_name in gene_name) and not gene_data.get("activated", False):
+                        potential_value = gene_data.get("potential_value", 8.0)
+                        species.abstract_traits[trait_name] = min(15.0, potential_value)
+                        gene_data["activated"] = True
+                        gene_data["activation_turn"] = turn_index
+                        activated_count += 1
+                        logger.info(f"[AI基因激活] {species.common_name} 激活特质: {trait_name} = {potential_value:.1f}")
+                        break
+            
+            # 尝试在休眠器官中查找
+            if "organs" in species.dormant_genes:
+                for organ_name, gene_data in species.dormant_genes["organs"].items():
+                    if (gene_name in organ_name or organ_name in gene_name) and not gene_data.get("activated", False):
+                        organ_data = gene_data.get("organ_data", {})
+                        organ_category = organ_data.get("category", "sensory")
+                        
+                        species.organs[organ_category] = {
+                            "type": organ_data.get("type", organ_name),
+                            "parameters": organ_data.get("parameters", {}),
+                            "acquired_turn": turn_index,
+                            "is_active": True
+                        }
+                        gene_data["activated"] = True
+                        gene_data["activation_turn"] = turn_index
+                        activated_count += 1
+                        logger.info(f"[AI基因激活] {species.common_name} 激活器官: {organ_name}")
+                        break
+        
+        return activated_count
+    
+    def _summarize_dormant_genes(
+        self, 
+        species: Species, 
+        pressure_types: list[str] | None = None,
+        pressure_strength: float = 5.0
+    ) -> str:
+        """智能筛选并总结休眠基因信息，供 AI 参考分化方向。
+        
+        筛选策略：
+        1. 优先选择与当前压力类型匹配的基因
+        2. 按潜力值从高到低排序
+        3. 最多返回 3个特质 + 1个器官，控制 prompt 长度
+        
+        Args:
+            species: 物种对象
+            pressure_types: 当前环境压力类型列表
+            pressure_strength: 压力强度 (0-10)
+            
+        Returns:
+            精简的休眠基因摘要字符串
+        """
+        if not species.dormant_genes:
+            return "无休眠基因"
+        
+        pressure_types = pressure_types or ["adaptive"]
+        dormant_traits = species.dormant_genes.get("traits", {})
+        dormant_organs = species.dormant_genes.get("organs", {})
+        
+        # 过滤未激活的休眠基因
+        available_traits = [
+            (name, data) for name, data in dormant_traits.items()
+            if not data.get("activated", False)
+        ]
+        available_organs = [
+            (name, data) for name, data in dormant_organs.items()
+            if not data.get("activated", False)
+        ]
+        
+        if not available_traits and not available_organs:
+            return "无可激活基因"
+        
+        # === 智能筛选特质 ===
+        def score_trait(item: tuple) -> float:
+            """计算特质的优先级分数"""
+            name, data = item
+            score = 0.0
+            
+            # 1. 潜力值权重 (0-15 -> 0-3分)
+            potential = data.get("potential_value", 5.0)
+            score += potential / 5.0
+            
+            # 2. 压力匹配加成 (+5分)
+            gene_pressures = set(data.get("pressure_types", []))
+            if gene_pressures & set(pressure_types):
+                score += 5.0
+            
+            # 3. 暴露次数加成 (已有暴露说明曾接近激活)
+            exposure = data.get("exposure_count", 0)
+            score += min(exposure * 0.5, 2.0)
+            
+            # 4. 高压力时优先选择与压力直接相关的
+            if pressure_strength >= 7:
+                # 压力关键词匹配
+                pressure_keywords = {
+                    "cold": ["耐寒", "寒"],
+                    "heat": ["耐热", "热"],
+                    "drought": ["耐旱", "旱"],
+                    "temperature": ["耐寒", "耐热", "温度"],
+                    "competition": ["竞争", "适应", "运动"],
+                    "predation": ["防御", "速度", "感知"],
+                }
+                for ptype in pressure_types:
+                    for keyword in pressure_keywords.get(ptype, []):
+                        if keyword in name:
+                            score += 3.0
+                            break
+            
+            return score
+        
+        # 排序并选择最重要的特质（最多3个）
+        sorted_traits = sorted(available_traits, key=score_trait, reverse=True)
+        top_traits = sorted_traits[:3]
+        
+        # === 智能筛选器官 ===
+        def score_organ(item: tuple) -> float:
+            """计算器官的优先级分数"""
+            name, data = item
+            score = 0.0
+            
+            organ_data = data.get("organ_data", {})
+            category = organ_data.get("category", "")
+            
+            # 压力匹配
+            gene_pressures = set(data.get("pressure_types", []))
+            if gene_pressures & set(pressure_types):
+                score += 3.0
+            
+            # 高压力时优先防御/感知器官
+            if pressure_strength >= 7:
+                if category in ["defense", "sensory"]:
+                    score += 2.0
+            
+            # 暴露次数
+            exposure = data.get("exposure_count", 0)
+            score += min(exposure * 0.3, 1.0)
+            
+            return score
+        
+        # 排序并选择最重要的器官（最多1个）
+        sorted_organs = sorted(available_organs, key=score_organ, reverse=True)
+        top_organs = sorted_organs[:1]
+        
+        # === 生成简洁摘要 ===
+        lines = []
+        
+        if top_traits:
+            trait_items = []
+            for name, data in top_traits:
+                potential = data.get("potential_value", 8.0)
+                # 检查是否与压力匹配
+                gene_pressures = set(data.get("pressure_types", []))
+                is_matched = "⭐" if gene_pressures & set(pressure_types) else ""
+                trait_items.append(f"{is_matched}{name}({potential:.0f})")
+            lines.append(f"推荐特质: {', '.join(trait_items)}")
+        
+        if top_organs:
+            name, data = top_organs[0]
+            organ_data = data.get("organ_data", {})
+            category = organ_data.get("category", "")
+            lines.append(f"推荐器官: {name}({category})")
+        
+        if not lines:
+            return "无推荐基因"
+        
+        # 极简提示
+        lines.append("(⭐=匹配当前压力，优先激活)")
+        
+        return "\n".join(lines)
+    
+    def _try_speciation_breakthrough(
+        self,
+        species: Species,
+        turn_index: int
+    ) -> str | None:
+        """【分化突破】分化时有概率直接获得新基因
+        
+        50% 概率在分化时直接激活一个休眠基因或生成新基因，
+        让基因系统更加活跃。
+        
+        Args:
+            species: 新分化的物种
+            turn_index: 当前回合
+            
+        Returns:
+            获得的基因名称，如果没有获得则返回 None
+        """
+        import random
+        
+        # 50% 概率触发分化突破
+        if random.random() > 0.50:
+            return None
+        
+        # 确保 dormant_genes 存在
+        if not species.dormant_genes:
+            species.dormant_genes = {"traits": {}, "organs": {}}
+        species.dormant_genes.setdefault("traits", {})
+        species.dormant_genes.setdefault("organs", {})
+        
+        # 优先激活已有的休眠基因
+        dormant_traits = [
+            (name, data) for name, data in species.dormant_genes.get("traits", {}).items()
+            if not data.get("activated", False)
+        ]
+        
+        if dormant_traits and random.random() < 0.70:  # 70% 概率激活已有休眠基因
+            trait_name, gene_data = random.choice(dormant_traits)
+            potential_value = gene_data.get("potential_value", 8.0)
+            
+            # 直接激活到 abstract_traits
+            species.abstract_traits[trait_name] = min(15.0, potential_value)
+            gene_data["activated"] = True
+            gene_data["activation_turn"] = turn_index
+            
+            logger.info(f"[分化突破] {species.common_name} 激活休眠特质: {trait_name} = {potential_value:.1f}")
+            return f"激活特质: {trait_name}"
+        
+        # 30% 概率直接生成新基因
+        new_gene_candidates = [
+            ("适应性增强", 7.0, ["adaptive"]),
+            ("代谢优化", 6.5, ["resource"]),
+            ("繁殖增益", 7.5, ["population"]),
+            ("环境耐受", 6.0, ["temperature", "humidity"]),
+            ("免疫提升", 5.5, ["disease"]),
+        ]
+        
+        # 选择一个物种还没有的新基因
+        existing_traits = set(species.abstract_traits.keys())
+        available_genes = [g for g in new_gene_candidates if g[0] not in existing_traits]
+        
+        if available_genes:
+            gene_name, base_value, pressure_types = random.choice(available_genes)
+            # 添加一些随机性
+            final_value = base_value + random.uniform(-1.0, 2.0)
+            final_value = max(3.0, min(12.0, final_value))
+            
+            species.abstract_traits[gene_name] = round(final_value, 2)
+            
+            logger.info(f"[分化突破] {species.common_name} 获得新基因: {gene_name} = {final_value:.1f}")
+            return f"新基因: {gene_name}"
+        
+        return None
     
     def _check_and_trigger_plant_milestones(
         self,

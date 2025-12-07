@@ -129,10 +129,10 @@ class GeneActivationService:
     ) -> list[str]:
         """检查特质激活
         
-        【Embedding 集成】
-        - 使用 is_reachable 判断压力方向是否在基因多样性半径内
-        - 压力匹配时应用 pressure_match_bonus 加成
-        - 基础激活概率从 activation_chance_per_turn 配置读取
+        【大幅降低门槛版本】
+        - 死亡率阈值从配置读取（默认25%）
+        - 暴露次数从配置读取（默认1次）
+        - 激活概率大幅提升（默认30%）
         """
         activated = []
         
@@ -141,8 +141,10 @@ class GeneActivationService:
         
         # 获取配置参数
         cfg = self.config
-        base_activation_chance = cfg.activation_chance_per_turn
-        pressure_match_bonus = cfg.pressure_match_bonus
+        base_activation_chance = cfg.activation_chance_per_turn  # 30%
+        pressure_match_bonus = cfg.pressure_match_bonus  # ×2.5
+        death_rate_threshold = getattr(cfg, 'activation_death_rate_threshold', 0.25)  # 25%
+        min_exposure = getattr(cfg, 'activation_min_exposure', 1)  # 1次
         
         reachable = self._is_reachable(species, pressure_type)
 
@@ -150,22 +152,22 @@ class GeneActivationService:
             if gene_data.get("activated", False):
                 continue
             
-            # 压力匹配检查
+            # 压力匹配检查 - 任何压力都增加暴露计数
+            gene_data["exposure_count"] = gene_data.get("exposure_count", 0) + 1
             pressure_matched = pressure_type in gene_data.get("pressure_types", [])
-            if pressure_matched:
-                gene_data["exposure_count"] = gene_data.get("exposure_count", 0) + 1
             
-            activation_threshold = gene_data.get("activation_threshold", 0.65)
             exposure_count = gene_data.get("exposure_count", 0)
             evolution_potential = species.hidden_traits.get("evolution_potential", 0.5)
             
-            # 计算激活概率：基础概率 × 演化潜力 × 压力匹配加成
-            activation_prob = base_activation_chance * evolution_potential
+            # 计算激活概率：基础概率 × (1 + 演化潜力) × 压力匹配加成
+            # 演化潜力作为加成而非乘数，确保基础概率不会过低
+            activation_prob = base_activation_chance * (1.0 + evolution_potential)
             if pressure_matched:
                 activation_prob *= pressure_match_bonus
             
-            if (death_rate > activation_threshold and
-                exposure_count >= 3 and
+            # 降低门槛：死亡率25%+，暴露1次+
+            if (death_rate > death_rate_threshold and
+                exposure_count >= min_exposure and
                 reachable and
                 random.random() < activation_prob):
                 
@@ -208,10 +210,9 @@ class GeneActivationService:
     ) -> list[str]:
         """检查器官激活
         
-        【Embedding 集成】
-        - 器官激活门槛略高于特质（需要更强的压力和暴露）
-        - 同样应用压力匹配加成
-        - 新器官发现概率从 organ_discovery_chance 配置读取
+        【大幅降低门槛版本】
+        - 器官激活门槛与特质相近
+        - 新器官发现概率大幅提升（默认20%）
         """
         activated = []
         
@@ -220,8 +221,10 @@ class GeneActivationService:
         
         # 获取配置参数
         cfg = self.config
-        organ_discovery_chance = cfg.organ_discovery_chance
-        pressure_match_bonus = cfg.pressure_match_bonus
+        organ_discovery_chance = cfg.organ_discovery_chance  # 20%
+        pressure_match_bonus = cfg.pressure_match_bonus  # ×2.5
+        death_rate_threshold = getattr(cfg, 'activation_death_rate_threshold', 0.25) + 0.05  # 器官略高30%
+        min_exposure = getattr(cfg, 'activation_min_exposure', 1)  # 1次
         
         reachable = self._is_reachable(species, pressure_type)
 
@@ -229,22 +232,21 @@ class GeneActivationService:
             if gene_data.get("activated", False):
                 continue
             
-            # 压力匹配检查
+            # 任何压力都增加暴露计数
+            gene_data["exposure_count"] = gene_data.get("exposure_count", 0) + 1
             pressure_matched = pressure_type in gene_data.get("pressure_types", [])
-            if pressure_matched:
-                gene_data["exposure_count"] = gene_data.get("exposure_count", 0) + 1
             
-            activation_threshold = gene_data.get("activation_threshold", 0.70)
             exposure_count = gene_data.get("exposure_count", 0)
             evolution_potential = species.hidden_traits.get("evolution_potential", 0.5)
             
-            # 计算激活概率：器官发现概率 × 演化潜力 × 压力匹配加成
-            activation_prob = organ_discovery_chance * evolution_potential * 5  # 器官需要更多暴露
+            # 计算激活概率：器官发现概率 × (1 + 演化潜力 × 2) × 压力匹配加成
+            activation_prob = organ_discovery_chance * (1.0 + evolution_potential * 2)
             if pressure_matched:
                 activation_prob *= pressure_match_bonus
             
-            if (death_rate > activation_threshold and
-                exposure_count >= 3 and
+            # 降低门槛：死亡率30%+，暴露1次+
+            if (death_rate > death_rate_threshold and
+                exposure_count >= min_exposure and
                 reachable and
                 random.random() < activation_prob):
                 
@@ -299,7 +301,8 @@ class GeneActivationService:
             else:
                 death_rate = result.death_rate
             
-            if death_rate < 0.5:
+            # 降低门槛：只要有死亡就检查激活（之前是50%）
+            if death_rate < 0.1:
                 continue
             
             pressure_type = self._infer_pressure_type(result)
