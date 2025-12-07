@@ -295,7 +295,14 @@ class GameHintsService:
             # 高种群 + 压力可能触发分化
             if pop > 100000:
                 stress = sp.stress_exposure or {}
-                total_stress = sum(stress.values())
+                # stress_exposure 结构: {pressure_type: {"count": int, "max_death_rate": float}}
+                # 提取所有压力类型的暴露次数求和
+                total_stress = 0
+                for v in stress.values():
+                    if isinstance(v, dict):
+                        total_stress += v.get("count", 0)
+                    elif isinstance(v, (int, float)):
+                        total_stress += v  # 兼容旧数据格式
                 
                 if total_stress > 3:
                     hints.append(GameHint(
