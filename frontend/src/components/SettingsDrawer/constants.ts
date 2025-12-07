@@ -359,37 +359,44 @@ export const DEFAULT_GENE_DIVERSITY_CONFIG: GeneDiversityConfig = {
   activation_cost: 0.02,
   bottleneck_coefficient: 50.0,
   recovery_threshold: 50000,
-  
+
   // 杂交/发现加成
   hybrid_bonus_min: 0.20,
   hybrid_bonus_max: 0.40,
   discovery_bonus_min: 0.05,
   discovery_bonus_max: 0.12,
-  
+
   // 太古宙参数（<50回合）
   archean_initial_radius: 0.50,
   archean_growth_rate: 0.03,
   archean_inherit_min: 0.95,
   archean_inherit_max: 1.00,
   archean_mutation_chance: 0.15,
-  
+
   // 元古宙参数（50-150回合）
   proterozoic_initial_radius: 0.40,
   proterozoic_growth_rate: 0.02,
   proterozoic_inherit_min: 0.90,
   proterozoic_inherit_max: 0.98,
   proterozoic_mutation_chance: 0.10,
-  
+
   // 古生代及以后参数（>150回合）
   phanerozoic_initial_radius: 0.35,
   phanerozoic_growth_rate: 0.015,
   phanerozoic_inherit_min: 0.85,
   phanerozoic_inherit_max: 0.95,
   phanerozoic_mutation_chance: 0.08,
-  
+
   // 激活机制参数
-  activation_chance_per_turn: 0.08,
-  pressure_match_bonus: 2.0,
-  organ_discovery_chance: 0.04,
+  activation_chance_per_turn: 0.30,  // 30% 基础激活概率
+  pressure_match_bonus: 2.5,         // 压力匹配时 ×2.5
+  organ_discovery_chance: 0.20,      // 20% 新器官发现概率
+  activation_death_rate_threshold: 0.25,  // 25% 死亡率阈值
+  activation_min_exposure: 1,        // 最少暴露1次
+
+  // 分化继承参数
+  dormant_gene_inherit_chance: 0.50, // 50% 继承概率
+  max_inherit_traits_from_library: 4,
+  max_inherit_organs_from_library: 2,
 };
 

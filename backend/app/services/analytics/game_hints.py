@@ -106,30 +106,27 @@ class GameHintsService:
             提示列表（按优先级排序）
         """
         hints: list[GameHint] = []
-        alive_species = [sp for sp in all_species if sp.status == "alive"]
+        alive_species = [sp for sp in all_species if getattr(sp, "status", None) == "alive"]
         
         # 更新冷却
         expired_keys = [k for k, v in self._hint_cooldown.items() if v <= current_turn]
         for k in expired_keys:
             del self._hint_cooldown[k]
         
-        # === 濒危警告 ===
-        hints.extend(self._check_endangered_species(alive_species, current_turn))
-        
-        # === 生态失衡 ===
-        hints.extend(self._check_ecosystem_balance(alive_species, current_turn))
-        
-        # === 演化机会 ===
-        hints.extend(self._check_evolution_opportunities(alive_species, current_turn, recent_report))
-        
-        # === 竞争警告 ===
-        hints.extend(self._check_competition(alive_species, current_turn))
-        
-        # === 食物链问题 ===
-        hints.extend(self._check_food_chain(alive_species, current_turn))
-        
-        # === 多样性提示 ===
-        hints.extend(self._check_biodiversity(alive_species, current_turn, recent_report, previous_report))
+        # === 分阶段生成，防御性捕获单个阶段的异常，避免整个接口 500 ===
+        generators = [
+            ("endangered", self._check_endangered_species, (alive_species, current_turn)),
+            ("ecosystem", self._check_ecosystem_balance, (alive_species, current_turn)),
+            ("evolution", self._check_evolution_opportunities, (alive_species, current_turn, recent_report)),
+            ("competition", self._check_competition, (alive_species, current_turn)),
+            ("food_chain", self._check_food_chain, (alive_species, current_turn)),
+            ("biodiversity", self._check_biodiversity, (alive_species, current_turn, recent_report, previous_report)),
+        ]
+        for name, fn, args in generators:
+            try:
+                hints.extend(fn(*args))
+            except Exception as e:
+                logger.warning(f"[提示] 阶段 {name} 生成失败，已跳过: {e}", exc_info=True)
         
         # 过滤冷却中的提示
         hints = [h for h in hints if self._get_hint_key(h) not in self._hint_cooldown]
@@ -154,12 +151,30 @@ class GameHintsService:
         species_key = "_".join(sorted(hint.related_species[:2])) if hint.related_species else ""
         return f"{hint.hint_type.value}:{hint.title}:{species_key}"
     
+    def _get_population(self, sp: "Species") -> int:
+        """安全获取种群数量，避免脏数据导致异常"""
+        stats = getattr(sp, "morphology_stats", None) or {}
+        try:
+            return int(stats.get("population", 0) or 0)
+        except Exception as exc:  # 防御性兜底，避免提示接口 500
+            logger.warning(f"[提示] population 数据异常: {exc}")
+            return 0
+
+    def _get_trophic_level(self, sp: "Species") -> float:
+        """安全获取营养级，缺失时回退为生产者"""
+        try:
+            level = getattr(sp, "trophic_level", None)
+            return float(level) if level is not None else 1.0
+        except Exception as exc:
+            logger.warning(f"[提示] trophic_level 数据异常: {exc}")
+            return 1.0
+
     def _check_endangered_species(self, alive_species: Sequence["Species"], turn: int) -> list[GameHint]:
         """检查濒危物种"""
         hints = []
         
         for sp in alive_species:
-            pop = sp.morphology_stats.get("population", 0) or 0
+            pop = self._get_population(sp)
             
             # 极度濒危（<100）
             if pop < 100 and pop > 0:
@@ -214,7 +229,7 @@ class GameHintsService:
         # 统计营养级分布
         trophic_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
         for sp in alive_species:
-            level = min(5, max(1, int(sp.trophic_level)))
+            level = min(5, max(1, int(self._get_trophic_level(sp))))
             trophic_counts[level] += 1
         
         # 检查生产者不足
@@ -242,12 +257,12 @@ class GameHintsService:
         
         # 检查消费者过多
         producers_pop = sum(
-            sp.morphology_stats.get("population", 0) or 0
-            for sp in alive_species if sp.trophic_level < 2
+            self._get_population(sp)
+            for sp in alive_species if self._get_trophic_level(sp) < 2
         )
         consumers_pop = sum(
-            sp.morphology_stats.get("population", 0) or 0
-            for sp in alive_species if sp.trophic_level >= 2
+            self._get_population(sp)
+            for sp in alive_species if self._get_trophic_level(sp) >= 2
         )
         
         if producers_pop > 0 and consumers_pop / producers_pop > 0.5:
@@ -275,7 +290,7 @@ class GameHintsService:
         hints = []
         
         for sp in alive_species:
-            pop = sp.morphology_stats.get("population", 0) or 0
+            pop = self._get_population(sp)
             
             # 高种群 + 压力可能触发分化
             if pop > 100000:
@@ -298,8 +313,15 @@ class GameHintsService:
         
         # 最近有分化事件
         if recent_report and recent_report.branching_events:
-            # 使用 new_lineage 属性（BranchingEvent 的正确属性名）
-            new_species = [e.new_lineage for e in recent_report.branching_events]
+            new_species: list[str] = []
+            for e in recent_report.branching_events:
+                try:
+                    # 支持对象或 dict 形式
+                    code = getattr(e, "new_lineage", None) or (e.get("new_lineage") if isinstance(e, dict) else None)
+                    if code:
+                        new_species.append(code)
+                except Exception:
+                    continue
             if new_species:
                 hints.append(GameHint(
                     hint_type=HintType.EVOLUTION,
@@ -323,7 +345,7 @@ class GameHintsService:
         # 按营养级分组
         by_trophic: dict[int, list["Species"]] = {}
         for sp in alive_species:
-            level = int(sp.trophic_level)
+            level = int(self._get_trophic_level(sp))
             if level not in by_trophic:
                 by_trophic[level] = []
             by_trophic[level].append(sp)
@@ -376,7 +398,7 @@ class GameHintsService:
         species_map = {sp.lineage_code: sp for sp in alive_species}
         
         for sp in alive_species:
-            if sp.trophic_level < 2:
+            if self._get_trophic_level(sp) < 2:
                 continue  # 生产者不需要猎物
             
             prey_codes = sp.prey_species or []
@@ -426,7 +448,18 @@ class GameHintsService:
         
         # 与上一回合比较
         if recent_report and previous_report:
-            prev_alive = sum(1 for sp in previous_report.species if sp.status == "alive")
+            try:
+                prev_species = getattr(previous_report, "species", None) or []
+                prev_alive = 0
+                for sp in prev_species:
+                    status = getattr(sp, "status", None)
+                    if status is None and isinstance(sp, dict):
+                        status = sp.get("status")
+                    if status == "alive":
+                        prev_alive += 1
+            except Exception as e:
+                logger.warning(f"[提示] 比较上一回合物种失败，跳过多样性对比: {e}")
+                prev_alive = 0
             
             # 物种急剧减少
             if prev_alive > 0:

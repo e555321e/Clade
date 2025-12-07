@@ -17,6 +17,7 @@ from ...repositories.species_repository import species_repository
 from ...repositories.environment_repository import environment_repository
 from ...repositories.history_repository import history_repository
 from ...repositories.genus_repository import genus_repository
+from .species_cache import get_species_cache
 
 if TYPE_CHECKING:
     from .embedding import EmbeddingService
@@ -422,6 +423,8 @@ class SaveManager:
         species_repository.clear_state()
         history_repository.clear_state()
         genus_repository.clear_state()
+        # 清空全局物种缓存，避免旧剧本数据覆盖读档内容
+        get_species_cache().clear()
 
         # 恢复物种数据到数据库
         restored_species = []
@@ -430,6 +433,10 @@ class SaveManager:
             species = Species(**normalized)
             species_repository.upsert(species)
             restored_species.append(species)
+        
+        # 同步物种缓存为读档后的状态
+        if restored_species:
+            get_species_cache().update(restored_species, turn_index)
         
         # 恢复地图地块
         if save_data.get("map_tiles"):

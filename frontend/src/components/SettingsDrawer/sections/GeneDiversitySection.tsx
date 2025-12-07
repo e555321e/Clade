@@ -38,16 +38,27 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
       />
 
       {/* 概念说明 */}
-      <InfoBox variant="info" title="什么是基因多样性？">
-        基因多样性代表物种在 Embedding 空间中的"可演化范围"。半径越大，物种能够演化的方向越多，适应新环境的能力越强。
-        当种群经历瓶颈（如大灭绝后幸存）时，基因多样性会减少；而杂交、突变发现等事件会增加多样性。
+      <InfoBox variant="info" title="🧬 核心概念：基因多样性半径">
+        <strong>简单理解：</strong>基因多样性半径就像物种的"演化潜力池"，决定了物种能往哪些方向演化。
+        <br /><br />
+        <strong>工作原理：</strong>
+        <ul style={{ margin: "8px 0", paddingLeft: "20px" }}>
+          <li>每个物种有一个"生态向量"（表示当前特征）</li>
+          <li>基因多样性半径 = 以这个向量为圆心，能够"触及"的演化范围</li>
+          <li>休眠基因只有在这个半径范围内才能被激活</li>
+        </ul>
+        <strong>影响因素：</strong>种群越大 → 半径越容易增长；种群瓶颈 → 半径快速衰减（近亲繁殖效应）
       </InfoBox>
 
       {/* 基础参数 */}
-      <Card title="基础参数" icon="⚙️" desc="基因多样性的核心控制参数">
+      <Card title="基础参数" icon="⚙️" desc="控制基因多样性半径的增减规则">
+        <InfoBox variant="warning">
+          <strong>⚠️ 半径太小会导致基因无法激活！</strong>当物种的基因多样性半径小于压力方向的距离时，
+          系统会判定该压力方向"不可达"，休眠基因将无法被激活。建议保持 min_radius ≥ 0.05。
+        </InfoBox>
         <SliderRow
-          label="最小半径"
-          desc="物种的基因多样性不会低于此值，确保始终保有基本的演化能力"
+          label="最小半径（保底演化能力）"
+          desc="物种的基因多样性不会低于此值。值越大，即使经历瓶颈也能保持演化潜力。建议 0.05-0.10"
           value={c.min_radius ?? 0.05}
           min={0.01}
           max={0.2}
@@ -56,8 +67,8 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
           formatValue={(v) => v.toFixed(2)}
         />
         <SliderRow
-          label="最大衰减率"
-          desc="每回合基因多样性最多衰减的比例，防止半径瞬间归零"
+          label="最大衰减率（每回合上限）"
+          desc="种群减少时，基因多样性每回合最多衰减的比例。防止大灭绝后演化能力瞬间归零"
           value={c.max_decay_per_turn ?? 0.05}
           min={0.01}
           max={0.15}
@@ -66,8 +77,8 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
           formatValue={(v) => `${(v * 100).toFixed(0)}%/回合`}
         />
         <SliderRow
-          label="激活消耗"
-          desc="每次激活休眠基因后，基因多样性半径会略微缩小"
+          label="激活消耗（每次激活扣除）"
+          desc="每激活一个休眠基因，半径会缩小此比例。模拟使用演化潜力的代价。建议 0-5%"
           value={c.activation_cost ?? 0.02}
           min={0}
           max={0.1}
@@ -76,8 +87,8 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
           formatValue={(v) => `${(v * 100).toFixed(1)}%`}
         />
         <NumberInput
-          label="瓶颈系数"
-          desc="瓶颈衰减 = 系数 / sqrt(种群) × 压力系数。值越大，小种群衰减越快"
+          label="瓶颈系数（小种群惩罚强度）"
+          desc="公式：衰减 = 系数 / √种群 × 压力。种群1万时约0.5%衰减，种群100时约5%衰减。值越大惩罚越重"
           value={c.bottleneck_coefficient ?? 50}
           min={10}
           max={200}
@@ -85,26 +96,29 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
           onChange={(v) => handleUpdate({ bottleneck_coefficient: v })}
         />
         <NumberInput
-          label="恢复阈值"
-          desc="种群超过此值时，基因多样性开始正向增长"
+          label="恢复阈值（正增长门槛）"
+          desc="种群超过此值时，基因多样性每回合自然增长（按时代增长率）。低于此值则只会衰减"
           value={c.recovery_threshold ?? 50000}
           min={10000}
           max={200000}
           step={5000}
           onChange={(v) => handleUpdate({ recovery_threshold: v })}
-          suffix="个体"
+          suffix="kg生物量"
         />
       </Card>
 
       {/* 杂交与发现 */}
-      <Card title="杂交与发现" icon="🔬" desc="杂交和新基因发现对多样性的影响">
+      <Card title="杂交与发现加成" icon="🔬" desc="增加基因多样性半径的途径">
         <InfoBox>
-          杂交会显著增加基因多样性（基因重组），而新基因/器官的发现也会扩展物种的演化范围。
+          <strong>💡 增加基因多样性半径的主要方式：</strong>
+          <br />1. <strong>杂交</strong>：两个物种杂交产生的后代，获得双亲的基因混合，半径大幅增加
+          <br />2. <strong>新基因发现</strong>：通过突变或分化发现新基因时，演化范围扩展
+          <br />3. <strong>自然增长</strong>：种群健康时，每回合按时代增长率缓慢增加
         </InfoBox>
-        <ConfigGroup title="杂交半径提升">
+        <ConfigGroup title="杂交后代半径加成">
           <SliderRow
-            label="杂交提升（最小）"
-            desc="杂交后代的基因多样性至少提升此比例"
+            label="杂交提升（下限）"
+            desc="杂交后代的半径 = max(父母半径) × (1 + 加成)。这是加成的最小值"
             value={c.hybrid_bonus_min ?? 0.20}
             min={0.05}
             max={0.5}
@@ -113,8 +127,8 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
             formatValue={(v) => `+${(v * 100).toFixed(0)}%`}
           />
           <SliderRow
-            label="杂交提升（最大）"
-            desc="杂交后代的基因多样性最多提升此比例"
+            label="杂交提升（上限）"
+            desc="杂交加成的最大值。实际加成在[下限, 上限]之间随机"
             value={c.hybrid_bonus_max ?? 0.40}
             min={0.1}
             max={0.8}
@@ -123,10 +137,10 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
             formatValue={(v) => `+${(v * 100).toFixed(0)}%`}
           />
         </ConfigGroup>
-        <ConfigGroup title="新基因发现提升">
+        <ConfigGroup title="发现新基因时半径加成">
           <SliderRow
-            label="发现提升（最小）"
-            desc="发现新基因/器官时的半径提升下限"
+            label="发现提升（下限）"
+            desc="发现新基因或器官时，半径扩展的最小比例"
             value={c.discovery_bonus_min ?? 0.05}
             min={0.01}
             max={0.2}
@@ -135,8 +149,8 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
             formatValue={(v) => `+${(v * 100).toFixed(0)}%`}
           />
           <SliderRow
-            label="发现提升（最大）"
-            desc="发现新基因/器官时的半径提升上限"
+            label="发现提升（上限）"
+            desc="发现新基因或器官时，半径扩展的最大比例"
             value={c.discovery_bonus_max ?? 0.12}
             min={0.05}
             max={0.3}
@@ -148,34 +162,37 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
       </Card>
 
       {/* 太古宙参数 */}
-      <Card title="太古宙（第 1-50 回合）" icon="🌋" desc="生命起源时期，基因多样性快速积累">
+      <Card title="太古宙（第 1-50 回合）" icon="🌋" desc="生命起源，基因多样性爆发期">
         <InfoBox>
-          太古宙是生命起源的时期，早期生物简单但基因潜力巨大。此阶段基因多样性增长最快，分化时继承也最完整。
+          <strong>🌋 太古宙特点：</strong>早期生命简单但基因潜力巨大，是演化最活跃的时期。
+          <br />• 初始半径大 → 新物种一出生就有很大的演化空间
+          <br />• 增长率高 → 基因多样性快速积累
+          <br />• 继承完整 → 分化时几乎不损失演化潜力
         </InfoBox>
         <SliderRow
           label="初始半径"
-          desc="太古宙新物种的初始基因多样性半径"
+          desc="太古宙新创建/分化物种的起始基因多样性半径。建议 0.5-0.8，值越大起始演化空间越大"
           value={c.archean_initial_radius ?? 0.50}
           min={0.3}
-          max={0.8}
+          max={0.9}
           step={0.05}
           onChange={(v) => handleUpdate({ archean_initial_radius: v })}
           formatValue={(v) => v.toFixed(2)}
         />
         <SliderRow
           label="增长率"
-          desc="每回合基因多样性自然增长的比例"
+          desc="种群健康时（超过恢复阈值），每回合半径自然增长的比例。太古宙增长最快"
           value={c.archean_growth_rate ?? 0.03}
           min={0.01}
-          max={0.08}
+          max={0.10}
           step={0.005}
           onChange={(v) => handleUpdate({ archean_growth_rate: v })}
           formatValue={(v) => `+${(v * 100).toFixed(1)}%/回合`}
         />
-        <ConfigGroup title="分化继承系数">
+        <ConfigGroup title="分化继承系数（子代继承父代多少演化潜力）">
           <SliderRow
-            label="继承（最小）"
-            desc="子种继承父种基因多样性的最小比例"
+            label="继承下限"
+            desc="子物种至少继承父物种半径的此比例。95%表示几乎完整继承"
             value={c.archean_inherit_min ?? 0.95}
             min={0.7}
             max={1.0}
@@ -184,8 +201,8 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
             formatValue={(v) => `${(v * 100).toFixed(0)}%`}
           />
           <SliderRow
-            label="继承（最大）"
-            desc="子种继承父种基因多样性的最大比例"
+            label="继承上限"
+            desc="子物种最多继承父物种半径的此比例。100%表示可能完全继承"
             value={c.archean_inherit_max ?? 1.00}
             min={0.8}
             max={1.0}
@@ -196,10 +213,10 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
         </ConfigGroup>
         <SliderRow
           label="突变发现概率"
-          desc="每回合发现新基因/扩展演化范围的概率"
+          desc="（暂未启用）每回合自发发现新基因、扩展演化范围的概率"
           value={c.archean_mutation_chance ?? 0.15}
           min={0.05}
-          max={0.3}
+          max={0.4}
           step={0.01}
           onChange={(v) => handleUpdate({ archean_mutation_chance: v })}
           formatValue={(v) => `${(v * 100).toFixed(0)}%`}
@@ -207,13 +224,14 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
       </Card>
 
       {/* 元古宙参数 */}
-      <Card title="元古宙（第 50-150 回合）" icon="🌊" desc="真核生物兴起，多样性持续增长">
+      <Card title="元古宙（第 50-150 回合）" icon="🌊" desc="真核生物时代，增长趋缓">
         <InfoBox>
-          元古宙见证了真核生物的兴起和多细胞生命的出现。基因多样性继续增长，但速度放缓，分化时的继承也开始减少（奠基者效应）。
+          <strong>🌊 元古宙特点：</strong>真核生物和多细胞生命出现，演化速度开始放缓。
+          <br />• 分化时的"奠基者效应"开始显现 → 子代继承的演化潜力略有损失
         </InfoBox>
         <SliderRow
           label="初始半径"
-          desc="元古宙新物种的初始基因多样性半径"
+          desc="元古宙新物种的起始半径，比太古宙略小"
           value={c.proterozoic_initial_radius ?? 0.40}
           min={0.25}
           max={0.6}
@@ -223,7 +241,7 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
         />
         <SliderRow
           label="增长率"
-          desc="每回合基因多样性自然增长的比例"
+          desc="种群健康时每回合半径增长比例，比太古宙慢"
           value={c.proterozoic_growth_rate ?? 0.02}
           min={0.005}
           max={0.05}
@@ -233,8 +251,8 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
         />
         <ConfigGroup title="分化继承系数">
           <SliderRow
-            label="继承（最小）"
-            desc="子种继承父种基因多样性的最小比例"
+            label="继承下限"
+            desc="子物种至少继承父物种半径的此比例"
             value={c.proterozoic_inherit_min ?? 0.90}
             min={0.6}
             max={0.98}
@@ -243,8 +261,8 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
             formatValue={(v) => `${(v * 100).toFixed(0)}%`}
           />
           <SliderRow
-            label="继承（最大）"
-            desc="子种继承父种基因多样性的最大比例"
+            label="继承上限"
+            desc="子物种最多继承父物种半径的此比例"
             value={c.proterozoic_inherit_max ?? 0.98}
             min={0.7}
             max={1.0}
@@ -255,7 +273,7 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
         </ConfigGroup>
         <SliderRow
           label="突变发现概率"
-          desc="每回合发现新基因/扩展演化范围的概率"
+          desc="（暂未启用）每回合自发发现新基因的概率"
           value={c.proterozoic_mutation_chance ?? 0.10}
           min={0.03}
           max={0.2}
@@ -266,13 +284,14 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
       </Card>
 
       {/* 古生代及以后参数 */}
-      <Card title="古生代及以后（第 150+ 回合）" icon="🦖" desc="复杂生命繁荣，演化趋于稳定">
+      <Card title="古生代及以后（第 150+ 回合）" icon="🦖" desc="复杂生命时代，演化趋稳">
         <InfoBox>
-          古生代以后，生命形式趋于复杂和稳定。基因多样性增长放缓，分化时的继承损失增加，但大灭绝后的幸存者仍可逐渐恢复。
+          <strong>🦖 古生代后特点：</strong>生命形式复杂稳定，演化放缓但更精细。
+          <br />• 分化损失更大 → 但大灭绝幸存者仍可恢复（只是需要更长时间）
         </InfoBox>
         <SliderRow
           label="初始半径"
-          desc="古生代及以后新物种的初始基因多样性半径"
+          desc="古生代及以后新物种的起始半径"
           value={c.phanerozoic_initial_radius ?? 0.35}
           min={0.2}
           max={0.5}
@@ -282,7 +301,7 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
         />
         <SliderRow
           label="增长率"
-          desc="每回合基因多样性自然增长的比例"
+          desc="种群健康时每回合半径增长比例，最慢的时代"
           value={c.phanerozoic_growth_rate ?? 0.015}
           min={0.005}
           max={0.03}
@@ -292,8 +311,8 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
         />
         <ConfigGroup title="分化继承系数">
           <SliderRow
-            label="继承（最小）"
-            desc="子种继承父种基因多样性的最小比例"
+            label="继承下限"
+            desc="子物种至少继承父物种半径的此比例"
             value={c.phanerozoic_inherit_min ?? 0.85}
             min={0.5}
             max={0.95}
@@ -302,8 +321,8 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
             formatValue={(v) => `${(v * 100).toFixed(0)}%`}
           />
           <SliderRow
-            label="继承（最大）"
-            desc="子种继承父种基因多样性的最大比例"
+            label="继承上限"
+            desc="子物种最多继承父物种半径的此比例"
             value={c.phanerozoic_inherit_max ?? 0.95}
             min={0.6}
             max={1.0}
@@ -314,7 +333,7 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
         </ConfigGroup>
         <SliderRow
           label="突变发现概率"
-          desc="每回合发现新基因/扩展演化范围的概率"
+          desc="（暂未启用）每回合自发发现新基因的概率"
           value={c.phanerozoic_mutation_chance ?? 0.08}
           min={0.02}
           max={0.15}
@@ -325,39 +344,107 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
       </Card>
 
       {/* 激活机制 */}
-      <Card title="休眠基因激活" icon="🔓" desc="控制休眠基因的激活条件">
-        <InfoBox>
-          休眠基因是物种演化范围内"尚未表达"的适应能力。当面临环境压力时，匹配的休眠基因更容易被激活。
+      <Card title="🔑 休眠基因激活（关键！）" icon="🔓" desc="决定基因能否成功激活的核心参数">
+        <InfoBox variant="warning">
+          <strong>⚠️ 基因激活必须同时满足以下条件：</strong>
+          <ol style={{ margin: "8px 0", paddingLeft: "20px" }}>
+            <li><strong>死亡率超标</strong>：特质需要 &gt;25%，器官需要 &gt;30%</li>
+            <li><strong>暴露次数达标</strong>：至少暴露压力 1 次</li>
+            <li><strong>方向可达</strong>：压力方向在基因多样性半径范围内（is_reachable）</li>
+            <li><strong>概率检定</strong>：30%基础 × (1 + 演化潜力) × 压力匹配加成</li>
+          </ol>
+          如果物种很难激活新基因，检查：半径是否太小？死亡率是否太低？
         </InfoBox>
         <SliderRow
-          label="激活概率"
-          desc="每回合有此概率激活一个休眠基因"
-          value={c.activation_chance_per_turn ?? 0.08}
-          min={0.02}
-          max={0.2}
-          step={0.01}
+          label="基础激活概率"
+          desc="每个休眠基因每回合的基础激活概率。实际概率 = 基础 × (1 + 演化潜力) × 压力匹配加成"
+          value={c.activation_chance_per_turn ?? 0.30}
+          min={0.05}
+          max={0.50}
+          step={0.05}
           onChange={(v) => handleUpdate({ activation_chance_per_turn: v })}
-          formatValue={(v) => `${(v * 100).toFixed(0)}%/回合`}
+          formatValue={(v) => `${(v * 100).toFixed(0)}%`}
         />
         <SliderRow
-          label="压力匹配加成"
-          desc="当休眠基因方向与当前压力匹配时，激活概率乘以此值"
-          value={c.pressure_match_bonus ?? 2.0}
+          label="压力匹配加成倍数"
+          desc="当休眠基因的压力类型与当前环境压力匹配时，激活概率乘以此值。例如耐热性基因在高温压力下更容易激活"
+          value={c.pressure_match_bonus ?? 2.5}
           min={1.0}
-          max={4.0}
+          max={5.0}
           step={0.25}
           onChange={(v) => handleUpdate({ pressure_match_bonus: v })}
-          formatValue={(v) => `×${v.toFixed(2)}`}
+          formatValue={(v) => `×${v.toFixed(1)}`}
         />
         <SliderRow
-          label="新器官发现概率"
-          desc="分化时发现新器官的概率（扩展演化范围）"
-          value={c.organ_discovery_chance ?? 0.04}
-          min={0.01}
-          max={0.1}
-          step={0.005}
+          label="器官发现概率"
+          desc="分化时有机会发现全新器官（不是激活已有休眠器官）。新器官会扩展演化范围"
+          value={c.organ_discovery_chance ?? 0.20}
+          min={0.05}
+          max={0.40}
+          step={0.05}
           onChange={(v) => handleUpdate({ organ_discovery_chance: v })}
-          formatValue={(v) => `${(v * 100).toFixed(1)}%`}
+          formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+        />
+        <SliderRow
+          label="激活死亡率阈值"
+          desc="物种必须承受至少此死亡率才能激活休眠特质。值越低越容易激活，但会降低压力选择的意义"
+          value={c.activation_death_rate_threshold ?? 0.25}
+          min={0.10}
+          max={0.50}
+          step={0.05}
+          onChange={(v) => handleUpdate({ activation_death_rate_threshold: v })}
+          formatValue={(v) => `${(v * 100).toFixed(0)}%死亡率`}
+        />
+        <NumberInput
+          label="最小暴露次数"
+          desc="休眠基因必须暴露压力至少此次数才能激活。1次=第一回合就可能激活"
+          value={c.activation_min_exposure ?? 1}
+          min={1}
+          max={5}
+          step={1}
+          onChange={(v) => handleUpdate({ activation_min_exposure: v })}
+          suffix="次"
+        />
+      </Card>
+
+      {/* 分化时的基因继承 */}
+      <Card title="分化时基因继承" icon="👶" desc="新物种如何继承父代的休眠基因">
+        <InfoBox>
+          <strong>📋 分化时休眠基因的来源：</strong>
+          <br />1. <strong>父代继承</strong>：50%概率继承父物种的每个特质作为休眠基因
+          <br />2. <strong>基因库继承</strong>：从属（Genus）级基因库继承已发现的基因
+          <br />3. <strong>分化突破</strong>：50%概率直接激活一个休眠基因或发现新基因
+          <br />4. <strong>Bootstrap补齐</strong>：对没有休眠基因的物种自动补齐基础基因
+        </InfoBox>
+        <SliderRow
+          label="休眠基因继承概率"
+          desc="分化时，子代有此概率继承父代的每个休眠基因"
+          value={c.dormant_gene_inherit_chance ?? 0.50}
+          min={0.20}
+          max={0.80}
+          step={0.05}
+          onChange={(v) => handleUpdate({ dormant_gene_inherit_chance: v })}
+          formatValue={(v) => `${(v * 100).toFixed(0)}%`}
+        />
+        <NumberInput
+          label="基因库最大继承特质数"
+          desc="从属级基因库继承的最大特质数量"
+          value={c.max_inherit_traits_from_library ?? 4}
+          min={1}
+          max={8}
+          step={1}
+          onChange={(v) => handleUpdate({ max_inherit_traits_from_library: v })}
+          suffix="个"
+        />
+        <NumberInput
+          label="基因库最大继承器官数"
+          desc="从属级基因库继承的最大器官数量"
+          value={c.max_inherit_organs_from_library ?? 2}
+          min={1}
+          max={4}
+          step={1}
+          onChange={(v) => handleUpdate({ max_inherit_organs_from_library: v })}
+          suffix="个"
         />
       </Card>
     </div>

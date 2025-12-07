@@ -609,6 +609,13 @@ export interface GeneDiversityConfig {
   activation_chance_per_turn?: number;   // 每回合激活休眠基因的概率
   pressure_match_bonus?: number;         // 压力匹配时的激活加成倍数
   organ_discovery_chance?: number;       // 分化时发现新器官的概率
+  activation_death_rate_threshold?: number;  // 激活所需的死亡率阈值
+  activation_min_exposure?: number;      // 激活所需的最小暴露次数
+  
+  // ========== 分化继承参数 ==========
+  dormant_gene_inherit_chance?: number;  // 分化时休眠基因继承概率
+  max_inherit_traits_from_library?: number;  // 从基因库继承最大特质数
+  max_inherit_organs_from_library?: number;  // 从基因库继承最大器官数
 }
 
 /**

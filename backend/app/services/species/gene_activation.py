@@ -97,8 +97,9 @@ class GeneActivationService:
         except Exception:
             pass
 
-        if not species.dormant_genes:
-            return {"traits": [], "organs": []}
+        # 旧存档/初始剧本可能没有休眠基因，自动补齐一组基础基因
+        if not species.dormant_genes or not any(species.dormant_genes.values()):
+            self._bootstrap_dormant_genes(species)
         
         activated = {"traits": [], "organs": []}
         
@@ -119,6 +120,66 @@ class GeneActivationService:
         activated["organs"] = activated_organs
         
         return activated
+    
+    def _bootstrap_dormant_genes(self, species: Species) -> None:
+        """为缺失休眠基因的物种补齐基础基因，避免基因系统无事件。
+        
+        逻辑：
+        - 从现有 abstract_traits 中选前2个生成强化版休眠特质
+        - 补充1个通用「适应性」特质
+        - 补充1个通用「感知提升」器官
+        """
+        if species.dormant_genes is None:
+            species.dormant_genes = {"traits": {}, "organs": {}}
+        species.dormant_genes.setdefault("traits", {})
+        species.dormant_genes.setdefault("organs", {})
+        
+        traits = list((species.abstract_traits or {}).items())
+        traits = sorted(traits, key=lambda kv: kv[1], reverse=True)[:2]
+        
+        for name, value in traits:
+            enhanced = f"强化{name}" if not name.startswith("强化") else name
+            species.dormant_genes["traits"].setdefault(
+                enhanced,
+                {
+                    "potential_value": min(15.0, (value or 0) * 1.2 if isinstance(value, (int, float)) else 6.0),
+                    "activation_threshold": 0.2,
+                    "pressure_types": ["adaptive", "competition"],
+                    "exposure_count": 0,
+                    "activated": False,
+                    "inherited_from": "bootstrap",
+                },
+            )
+        
+        # 通用适应性特质
+        species.dormant_genes["traits"].setdefault(
+            "适应性",
+            {
+                "potential_value": 7.0,
+                "activation_threshold": 0.15,
+                "pressure_types": ["adaptive", "environment"],
+                "exposure_count": 0,
+                "activated": False,
+                "inherited_from": "bootstrap",
+            },
+        )
+        
+        # 通用感知器官
+        species.dormant_genes["organs"].setdefault(
+            "感知提升",
+            {
+                "organ_data": {
+                    "category": "sensory",
+                    "type": "bootstrap_sensor",
+                    "parameters": {"sensitivity": 0.4},
+                },
+                "activation_threshold": 0.2,
+                "pressure_types": ["adaptive", "predation", "competition"],
+                "exposure_count": 0,
+                "activated": False,
+                "inherited_from": "bootstrap",
+            },
+        )
     
     def _check_trait_activation(
         self,

@@ -3246,8 +3246,26 @@ def get_game_hints() -> dict:
     返回：
     - hints: 提示列表（按优先级排序）
     """
-    all_species = species_repository.list_species()
-    current_turn = simulation_engine.turn_counter
+    try:
+        all_species = species_repository.list_species()
+        current_turn = simulation_engine.turn_counter
+    except Exception as e:
+        logger.error(f"[提示API] 获取物种/回合失败: {e}")
+        return {"hints": [], "turn": 0}
+    
+    def _safe_parse_turn_report(record_data) -> TurnReport | None:
+        """防御性解析回合报告，避免脏数据导致 500。"""
+        if not record_data:
+            return None
+        try:
+            # record_data 可能是 JSON 字符串或 dict
+            if isinstance(record_data, str):
+                import json
+                record_data = json.loads(record_data)
+            return TurnReport.model_validate(record_data)
+        except Exception as e:
+            logger.warning(f"[Hints] 解析回合报告失败，忽略该记录: {e}")
+            return None
     
     # 获取最近的报告
     logs = history_repository.list_turns(limit=2)
@@ -3255,21 +3273,24 @@ def get_game_hints() -> dict:
     previous_report = None
     
     if logs:
-        recent_report = TurnReport.model_validate(logs[0].record_data)
+        recent_report = _safe_parse_turn_report(logs[0].record_data)
         if len(logs) > 1:
-            previous_report = TurnReport.model_validate(logs[1].record_data)
+            previous_report = _safe_parse_turn_report(logs[1].record_data)
     
-    hints = game_hints_service.generate_hints(
-        all_species=all_species,
-        current_turn=current_turn,
-        recent_report=recent_report,
-        previous_report=previous_report,
-    )
-    
-    return {
-        "hints": [h.to_dict() for h in hints],
-        "turn": current_turn,
-    }
+    try:
+        hints = game_hints_service.generate_hints(
+            all_species=all_species,
+            current_turn=current_turn,
+            recent_report=recent_report,
+            previous_report=previous_report,
+        )
+        return {
+            "hints": [h.to_dict() for h in hints],
+            "turn": current_turn,
+        }
+    except Exception as e:
+        logger.error(f"[提示API] 生成提示失败: {e}", exc_info=True)
+        return {"hints": [], "turn": current_turn, "error": "failed_to_generate_hints"}
 
 
 @router.post("/hints/clear", tags=["hints"])
