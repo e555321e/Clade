@@ -293,6 +293,32 @@ SPECIES_PROMPTS = {
 优先在 activated_genes 和 trait_changes 中体现这些基因的激活
 activated_genes 示例：["强化耐寒性", "原始眼点"] - 从上方推荐列表选择
 
+=== 🧬 新休眠基因生成（重要！）===
+分化时你需要为子代**创造1-3个全新的休眠基因**，这些基因将成为子代未来演化的潜力。
+
+【新基因生成规则】
+1. **符合生态位**：基因必须符合该物种的栖息地、食性、生活方式
+2. **有益为主**：约85%应为有益/中性基因，约15%可为轻微有害（遗传负荷）
+3. **多样化**：基因类型包括特质强化、器官原基、行为模式、代谢路径等
+4. **合理潜力**：潜力值4.0-8.0之间，符合物种当前能力范围
+5. **压力响应**：基因应与可能面临的环境压力相关
+
+【基因类型参考】
+- 特质基因：强化XX、XX效率、XX抗性、XX适应（如：强化耐寒性、代谢效率优化）
+- 器官基因：XX原基、XX雏形、XX前体（如：眼点原基、鳍状突起雏形）
+- 行为基因：XX本能、XX行为模式（如：群居本能、迁徙行为模式）
+- 代谢基因：XX代谢路径、XX合成能力（如：抗冻蛋白合成、色素代谢路径）
+
+【显隐性分配】
+- dominant（显性）：约25%，容易表达的基因
+- codominant（共显性）：约40%，中间表达
+- recessive（隐性）：约30%，需要纯合才表达
+- overdominant（超显性）：约5%，杂合优势
+
+【有害基因示例】（约15%概率生成1个）
+- 代谢缺陷、温度敏感、渗透失调、感知迟钝等
+- 有害基因必须为隐性（recessive），mutation_effect设为"mildly_harmful"或"harmful"
+
 === 可用器官枚举（organ_key，用于 organ_evolution）===
 {organ_key_catalog}
 输出 organ_evolution 时必须包含 organ_key（从上表选择），并提供 structure_name 作为中文展示名。
@@ -414,6 +440,31 @@ activated_genes 示例：["强化耐寒性", "原始眼点"] - 从上方推荐�
             "description": "变化描述"
         }}
     ],
+    "new_dormant_genes": {{
+        "traits": [
+            {{
+                "name": "基因名称（如：强化耐寒性、代谢效率优化）",
+                "potential_value": 4.0-8.0之间的潜力值,
+                "pressure_types": ["触发该基因激活的压力类型，如cold/heat/drought/competition"],
+                "dominance": "dominant/codominant/recessive/overdominant",
+                "mutation_effect": "beneficial/neutral/mildly_harmful",
+                "description": "该基因的生物学描述（20-40字）"
+            }}
+        ],
+        "organs": [
+            {{
+                "name": "器官原基名称（如：眼点原基、鳍状突起雏形）",
+                "organ_data": {{
+                    "category": "器官类别（sensory/locomotion/defense等）",
+                    "type": "具体类型",
+                    "parameters": {{"效率/敏感度等参数": 0.3-0.6}}
+                }},
+                "pressure_types": ["触发该器官发育的压力类型"],
+                "dominance": "显隐性",
+                "description": "该器官的功能描述"
+            }}
+        ]
+    }},
     "life_form_stage": "🌱植物专用：当前阶段或+1（0-6整数）",
     "growth_form": "🌱植物专用：aquatic/moss/herb/shrub/tree",
     "milestone_triggered": "🌱植物专用：里程碑ID或null"
@@ -443,7 +494,40 @@ activated_genes 示例：["强化耐寒性", "原始眼点"] - 从上方推荐�
     "reason": "光感知优势带来生存收益，代价是维护成本增加。",
     "organ_evolution": [
         {{"category": "sensory", "action": "enhance", "current_stage": 1, "target_stage": 2, "structure_name": "眼凹", "description": "感光点内陷"}}
-    ]
+    ],
+    "new_dormant_genes": {{
+        "traits": [
+            {{
+                "name": "视网膜色素强化",
+                "potential_value": 6.5,
+                "pressure_types": ["light_limitation", "predation"],
+                "dominance": "codominant",
+                "mutation_effect": "beneficial",
+                "description": "增强视网膜色素密度，提高弱光环境下的感知能力"
+            }},
+            {{
+                "name": "滤食效率优化",
+                "potential_value": 5.5,
+                "pressure_types": ["starvation", "competition"],
+                "dominance": "dominant",
+                "mutation_effect": "beneficial",
+                "description": "优化纤毛滤食结构，提高藻类过滤效率"
+            }}
+        ],
+        "organs": [
+            {{
+                "name": "晶状体原基",
+                "organ_data": {{
+                    "category": "sensory",
+                    "type": "proto_lens",
+                    "parameters": {{"focus_ability": 0.3}}
+                }},
+                "pressure_types": ["predation", "hunting"],
+                "dominance": "recessive",
+                "description": "眼凹进一步发育的潜力，可形成原始晶状体聚焦光线"
+            }}
+        ]
+    }}
 }}
 
 === 示例2：🌱植物分化（阶段2群体藻类，保水能力=5.2，耐旱性=4.5，准备登陆）===
@@ -466,6 +550,47 @@ activated_genes 示例：["强化耐寒性", "原始眼点"] - 从上方推荐�
         {{"category": "protection", "action": "initiate", "current_stage": 0, "target_stage": 1, "structure_name": "角质层", "description": "发展原始角质层防止水分散失"}},
         {{"category": "root_system", "action": "initiate", "current_stage": 0, "target_stage": 1, "structure_name": "假根", "description": "简单假根固着岩石"}}
     ],
+    "new_dormant_genes": {{
+        "traits": [
+            {{
+                "name": "木质素合成前体",
+                "potential_value": 5.0,
+                "pressure_types": ["drought", "competition"],
+                "dominance": "recessive",
+                "mutation_effect": "beneficial",
+                "description": "木质素合成的基础代谢路径，为未来维管组织发展奠定基础"
+            }},
+            {{
+                "name": "气孔调节基因",
+                "potential_value": 6.0,
+                "pressure_types": ["drought", "temperature_fluctuation"],
+                "dominance": "codominant",
+                "mutation_effect": "beneficial",
+                "description": "控制气孔开闭的基因，平衡光合作用与水分散失"
+            }},
+            {{
+                "name": "UV敏感",
+                "potential_value": 0,
+                "pressure_types": ["uv_radiation"],
+                "dominance": "recessive",
+                "mutation_effect": "mildly_harmful",
+                "description": "缺乏完善的UV防护机制，高紫外环境下易受损"
+            }}
+        ],
+        "organs": [
+            {{
+                "name": "原始维管束雏形",
+                "organ_data": {{
+                    "category": "vascular",
+                    "type": "proto_vascular",
+                    "parameters": {{"transport_efficiency": 0.2}}
+                }},
+                "pressure_types": ["drought", "competition"],
+                "dominance": "recessive",
+                "description": "最早的水分运输结构原基，为未来真正的维管束发展提供可能"
+            }}
+        ]
+    }},
     "life_form_stage": 3,
     "growth_form": "moss",
     "milestone_triggered": "first_land_plant"
@@ -621,7 +746,12 @@ activated_genes 示例：["强化耐寒性", "原始眼点"] - 从上方推荐�
    - 基于父代营养级（见摘要中的父代营养级信息）
    - 通常继承父代值，演化方向改变时可调整 ±0.5
    - 植物/藻类: 1.0-1.5, 食草动物: 2.0-2.5, 杂食: 2.5-3.5, 肉食: 3.0-5.0
-5) 输出 JSON 对象，results 数组与输入 request_id 对应。
+5) **为每个物种生成1-3个新休眠基因**（new_dormant_genes）：
+   - 基因应符合物种的生态位和演化方向
+   - 包含特质基因和/或器官原基
+   - 约85%有益/中性，15%轻微有害（遗传负荷）
+   - 有害基因必须是隐性的
+6) 输出 JSON 对象，results 数组与输入 request_id 对应。
 
 === 输出格式（所有字段必填）===
 {{
@@ -640,6 +770,27 @@ activated_genes 示例：["强化耐寒性", "原始眼点"] - 从上方推荐�
           "gains": {{"属性名": +数值}}
         }}
       ],
+      "new_dormant_genes": {{
+        "traits": [
+          {{
+            "name": "基因名称",
+            "potential_value": 4.0-8.0,
+            "pressure_types": ["压力类型"],
+            "dominance": "dominant/codominant/recessive/overdominant",
+            "mutation_effect": "beneficial/neutral/mildly_harmful",
+            "description": "基因描述"
+          }}
+        ],
+        "organs": [
+          {{
+            "name": "器官原基名称",
+            "organ_data": {{"category": "类别", "type": "类型", "parameters": {{}}}},
+            "pressure_types": ["压力类型"],
+            "dominance": "显隐性",
+            "description": "器官描述"
+          }}
+        ]
+      }},
       "event_description": "分化叙事"
     }}
   ]

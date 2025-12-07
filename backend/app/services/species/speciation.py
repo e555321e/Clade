@@ -1482,12 +1482,20 @@ class SpeciationService:
                     species_repository.upsert(new_species)
                     logger.info(f"[AI基因激活] {new_species.common_name} 激活了 {activated_count} 个AI指定的基因")
             
-            # 【分化突破】50% 概率在分化时直接激活一个休眠基因
+            # 【LLM新基因】处理 AI 返回的 new_dormant_genes（分化时生成的新休眠基因）
+            ai_new_genes = ai_content.get("new_dormant_genes") if ai_content else None
+            if ai_new_genes:
+                added_count = self._process_ai_new_dormant_genes(new_species, ai_new_genes, turn_index)
+                if added_count > 0:
+                    species_repository.upsert(new_species)
+                    logger.info(f"[LLM新基因] {new_species.common_name} 获得了 {added_count} 个LLM生成的新休眠基因")
+            
+            # 【分化突破】仅激活已有休眠基因（不再本地生成新基因）
             breakthrough_result = self._try_speciation_breakthrough(new_species, turn_index)
             if breakthrough_result:
                 species_repository.upsert(new_species)
                 logger.info(
-                    f"[分化突破] {new_species.common_name} 在分化中获得新基因: "
+                    f"[分化突破] {new_species.common_name} 在分化中激活休眠基因: "
                     f"{breakthrough_result}"
                 )
             
@@ -1584,12 +1592,12 @@ class SpeciationService:
                     self.gene_library_service.inherit_dormant_genes(ctx["parent"], new_species, genus)
                     species_repository.upsert(new_species)
             
-            # 【分化突破】背景物种也有机会获得新基因
+            # 【分化突破】背景物种仅激活已有休眠基因（不生成新基因）
             breakthrough_result = self._try_speciation_breakthrough(new_species, turn_index)
             if breakthrough_result:
                 species_repository.upsert(new_species)
                 logger.info(
-                    f"[分化突破-背景] {new_species.common_name} 在分化中获得新基因: "
+                    f"[分化突破-背景] {new_species.common_name} 在分化中激活休眠基因: "
                     f"{breakthrough_result}"
                 )
             
@@ -4040,28 +4048,214 @@ class SpeciationService:
         
         return "\n".join(lines)
     
+    def _process_ai_new_dormant_genes(
+        self,
+        species: Species,
+        new_genes_data: dict,
+        turn_index: int
+    ) -> int:
+        """【LLM新基因】处理AI返回的新休眠基因，添加到物种基因库
+        
+        分化时LLM生成的新休眠基因，这些基因将成为子代未来演化的潜力。
+        
+        Args:
+            species: 新分化的物种
+            new_genes_data: LLM返回的 new_dormant_genes 字典
+            turn_index: 当前回合
+            
+        Returns:
+            成功添加的基因数量
+        """
+        if not new_genes_data:
+            return 0
+        
+        # 确保 dormant_genes 结构存在
+        if not species.dormant_genes:
+            species.dormant_genes = {"traits": {}, "organs": {}}
+        species.dormant_genes.setdefault("traits", {})
+        species.dormant_genes.setdefault("organs", {})
+        
+        added_count = 0
+        
+        # 处理特质基因
+        traits_list = new_genes_data.get("traits", [])
+        if isinstance(traits_list, list):
+            for trait_data in traits_list:
+                if not isinstance(trait_data, dict):
+                    continue
+                
+                trait_name = trait_data.get("name")
+                if not trait_name:
+                    continue
+                
+                # 跳过已存在的基因
+                if trait_name in species.dormant_genes["traits"]:
+                    continue
+                if trait_name in (species.abstract_traits or {}):
+                    continue
+                
+                # 解析基因数据
+                potential_value = trait_data.get("potential_value", 6.0)
+                try:
+                    potential_value = float(potential_value)
+                    potential_value = max(0.0, min(15.0, potential_value))
+                except (ValueError, TypeError):
+                    potential_value = 6.0
+                
+                pressure_types = trait_data.get("pressure_types", ["competition"])
+                if not isinstance(pressure_types, list):
+                    pressure_types = ["competition"]
+                
+                dominance = trait_data.get("dominance", "codominant")
+                valid_dominance = ["dominant", "codominant", "recessive", "overdominant"]
+                if dominance not in valid_dominance:
+                    dominance = "codominant"
+                
+                mutation_effect = trait_data.get("mutation_effect", "beneficial")
+                valid_effects = ["beneficial", "neutral", "mildly_harmful", "harmful", "lethal"]
+                if mutation_effect not in valid_effects:
+                    mutation_effect = "beneficial"
+                
+                description = trait_data.get("description", "")
+                
+                # 构建休眠基因数据
+                dormant_gene = {
+                    "potential_value": potential_value,
+                    "activation_threshold": 0.20,
+                    "pressure_types": pressure_types,
+                    "exposure_count": 0,
+                    "activated": False,
+                    "inherited_from": "llm_speciation",
+                    "dominance": dominance,
+                    "mutation_effect": mutation_effect,
+                    "description": description,
+                    "created_turn": turn_index,
+                }
+                
+                # 有害突变的额外处理
+                if mutation_effect in ("mildly_harmful", "harmful", "lethal"):
+                    # 确保有害突变是隐性的
+                    dormant_gene["dominance"] = "recessive"
+                    # 提取目标特质（如果描述中提到）
+                    target_trait = trait_data.get("target_trait")
+                    if target_trait:
+                        dormant_gene["target_trait"] = target_trait
+                    value_modifier = trait_data.get("value_modifier", -1.0)
+                    try:
+                        dormant_gene["value_modifier"] = float(value_modifier)
+                    except (ValueError, TypeError):
+                        dormant_gene["value_modifier"] = -1.0
+                
+                species.dormant_genes["traits"][trait_name] = dormant_gene
+                added_count += 1
+                
+                effect_label = {"beneficial": "有益", "neutral": "中性", "mildly_harmful": "轻微有害", "harmful": "有害"}.get(mutation_effect, "")
+                dom_label = {"dominant": "显", "codominant": "共显", "recessive": "隐", "overdominant": "超显"}.get(dominance, "")
+                logger.debug(
+                    f"[LLM新基因] {species.common_name} 获得特质基因: {trait_name} "
+                    f"(潜力{potential_value:.1f}, {dom_label}, {effect_label})"
+                )
+        
+        # 处理器官原基
+        organs_list = new_genes_data.get("organs", [])
+        if isinstance(organs_list, list):
+            for organ_data in organs_list:
+                if not isinstance(organ_data, dict):
+                    continue
+                
+                organ_name = organ_data.get("name")
+                if not organ_name:
+                    continue
+                
+                # 跳过已存在的器官
+                if organ_name in species.dormant_genes["organs"]:
+                    continue
+                
+                # 解析器官数据
+                organ_info = organ_data.get("organ_data", {})
+                if not isinstance(organ_info, dict):
+                    organ_info = {}
+                
+                category = organ_info.get("category", "sensory")
+                organ_type = organ_info.get("type", organ_name)
+                parameters = organ_info.get("parameters", {})
+                if not isinstance(parameters, dict):
+                    parameters = {}
+                
+                pressure_types = organ_data.get("pressure_types", ["competition", "predation"])
+                if not isinstance(pressure_types, list):
+                    pressure_types = ["competition", "predation"]
+                
+                dominance = organ_data.get("dominance", "codominant")
+                valid_dominance = ["dominant", "codominant", "recessive", "overdominant"]
+                if dominance not in valid_dominance:
+                    dominance = "codominant"
+                
+                description = organ_data.get("description", "")
+                
+                # 构建休眠器官数据
+                dormant_organ = {
+                    "organ_data": {
+                        "category": category,
+                        "type": organ_type,
+                        "parameters": parameters
+                    },
+                    "activation_threshold": 0.25,
+                    "pressure_types": pressure_types,
+                    "exposure_count": 0,
+                    "activated": False,
+                    "inherited_from": "llm_speciation",
+                    "dominance": dominance,
+                    "development_stage": None,  # 渐进发育系统
+                    "stage_start_turn": None,
+                    "description": description,
+                    "created_turn": turn_index,
+                }
+                
+                species.dormant_genes["organs"][organ_name] = dormant_organ
+                added_count += 1
+                
+                dom_label = {"dominant": "显", "codominant": "共显", "recessive": "隐", "overdominant": "超显"}.get(dominance, "")
+                logger.debug(
+                    f"[LLM新基因] {species.common_name} 获得器官原基: {organ_name} "
+                    f"({category}, {dom_label})"
+                )
+        
+        if added_count > 0:
+            logger.info(
+                f"[LLM新基因] {species.common_name} 成功添加 {added_count} 个LLM生成的休眠基因 "
+                f"(特质: {len(traits_list) if isinstance(traits_list, list) else 0}, "
+                f"器官: {len(organs_list) if isinstance(organs_list, list) else 0})"
+            )
+        
+        return added_count
+    
     def _try_speciation_breakthrough(
         self,
         species: Species,
         turn_index: int
     ) -> str | None:
-        """【分化突破 v2.0】分化时有概率直接获得新基因
+        """【分化突破 v3.0】分化时有概率激活已有休眠基因
         
-        【v2.0 更新】
+        【v3.0 更新】
+        - 移除本地规则生成新基因的功能
+        - 新基因完全由 LLM 在分化时生成（通过 new_dormant_genes 字段）
+        - 本方法仅负责激活已有的休眠基因
+        
+        【v2.0 保留功能】
         - 排除有害突变（避免分化时激活有害基因）
         - 应用显隐性效果到表达值
         - 显性基因更容易被选中
         - 使用新的压力类型系统
         
-        50% 概率在分化时直接激活一个休眠基因或生成新基因，
-        让基因系统更加活跃。
+        50% 概率在分化时直接激活一个已有的休眠基因。
         
         Args:
             species: 新分化的物种
             turn_index: 当前回合
             
         Returns:
-            获得的基因名称，如果没有获得则返回 None
+            激活的基因名称，如果没有激活则返回 None
         """
         import random
         
@@ -4149,31 +4343,9 @@ class SpeciationService:
             )
             return f"激活特质: {trait_name} ({dom_label})"
         
-        # 30% 概率直接生成新基因（使用新压力类型）
-        new_gene_candidates = [
-            ("适应性增强", 7.0, ["competition", "temperature_fluctuation"]),
-            ("代谢优化", 6.5, ["starvation"]),
-            ("繁殖增益", 7.5, ["competition"]),
-            ("环境耐受", 6.0, ["temperature_fluctuation", "drought"]),
-            ("免疫提升", 5.5, ["disease", "parasitism"]),
-            ("感知强化", 6.0, ["predation", "hunting"]),
-        ]
-        
-        # 选择一个物种还没有的新基因
-        existing_traits = set(species.abstract_traits.keys())
-        available_genes = [g for g in new_gene_candidates if g[0] not in existing_traits]
-        
-        if available_genes:
-            gene_name, base_value, pressure_types = random.choice(available_genes)
-            # 添加一些随机性
-            final_value = base_value + random.uniform(-1.0, 2.0)
-            final_value = max(3.0, min(12.0, final_value))
-            
-            species.abstract_traits[gene_name] = round(final_value, 2)
-            
-            logger.info(f"[分化突破] {species.common_name} 获得新基因: {gene_name} = {final_value:.1f}")
-            return f"新基因: {gene_name}"
-        
+        # 【v3.0 移除】不再本地生成新基因
+        # 新基因完全由 LLM 在分化时生成（通过 new_dormant_genes 字段）
+        # 这样可以更好地利用 LLM 的语义理解能力，生成符合物种特性的基因
         return None
     
     def _check_and_trigger_plant_milestones(
