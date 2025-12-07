@@ -136,10 +136,10 @@ class GeneDiversityService:
         turn_index: int,
     ) -> dict:
         """
-        应用自然增长 + 瓶颈衰减。
+        应用自然增长 + 瓶颈衰减 + 自发突变发现。
 
         返回 dict 便于日志/报告：
-        {"old": float, "new": float, "delta": float, "reason": str}
+        {"old": float, "new": float, "delta": float, "reason": str, "mutation_discovered": bool}
         """
         self.ensure_initialized(species, turn_index)
 
@@ -148,6 +148,7 @@ class GeneDiversityService:
 
         params = self._epoch_params(turn_index)
         growth = params["growth_rate"]  # 比例
+        mutation_chance = params.get("mutation_chance", 0.0)
 
         # 瓶颈衰减 = k / sqrt(pop) × 压力系数（缩放 0.01 以得到百分比）
         pressure_factor = 1.0 + death * 1.5  # 高死亡率 → 更强压力
@@ -159,12 +160,39 @@ class GeneDiversityService:
         net_change = growth - decay
         old_radius = float(species.gene_diversity_radius or self.MIN_RADIUS)
         new_radius = self._clamp_radius(old_radius * (1.0 + net_change))
+        
+        # 【新增】自发突变发现：按概率扩展演化范围
+        mutation_discovered = False
+        if mutation_chance > 0 and random.random() < mutation_chance:
+            # 高死亡率环境下突变发现更容易（压力驱动演化）
+            pressure_bonus = min(0.5, death * 0.5)  # 最高+50%概率
+            if random.random() < (1.0 + pressure_bonus):
+                mutation_discovered = True
+                # 应用发现加成
+                discovery_bonus = random.uniform(*self.DISCOVERY_BONUS_RANGE)
+                new_radius = self._clamp_radius(new_radius * (1.0 + discovery_bonus))
+                logger.info(
+                    f"[突变发现] {getattr(species, 'common_name', species.lineage_code)} "
+                    f"自发发现新基因，演化范围扩展 +{discovery_bonus:.1%}"
+                )
 
         species.gene_diversity_radius = new_radius
         species.hidden_traits["gene_diversity"] = new_radius
 
-        reason = "自然增长" if net_change >= 0 else "瓶颈衰减"
-        return {"old": old_radius, "new": new_radius, "delta": new_radius - old_radius, "reason": reason}
+        if mutation_discovered:
+            reason = "突变发现"
+        elif net_change >= 0:
+            reason = "自然增长"
+        else:
+            reason = "瓶颈衰减"
+        
+        return {
+            "old": old_radius, 
+            "new": new_radius, 
+            "delta": new_radius - old_radius, 
+            "reason": reason,
+            "mutation_discovered": mutation_discovered,
+        }
 
     # ------------------------------------------------------------------ #
     # 分化/杂交/激活
@@ -219,7 +247,7 @@ class GeneDiversityService:
             turn_index: 当前回合
             
         Returns:
-            [{"lineage_code": str, "name": str, "old": float, "new": float, "delta": float, "reason": str}, ...]
+            [{"lineage_code": str, "name": str, "old": float, "new": float, "delta": float, "reason": str, "mutation_discovered": bool}, ...]
         """
         if not species_list:
             return []
@@ -231,6 +259,7 @@ class GeneDiversityService:
         # 获取时代参数（所有物种共享）
         params = self._epoch_params(turn_index)
         growth = params["growth_rate"]
+        mutation_chance = params.get("mutation_chance", 0.0)
         
         # 构建张量
         n = len(species_list)
@@ -265,8 +294,31 @@ class GeneDiversityService:
         net_changes = growth - decays
         new_radii = np.clip(radii * (1.0 + net_changes), self.MIN_RADIUS, 1.0)
         
+        # 【新增】自发突变发现（向量化概率判定）
+        mutation_discovered = np.zeros(n, dtype=bool)
+        if mutation_chance > 0:
+            # 基础突变概率
+            base_rolls = np.random.random(n)
+            # 压力驱动加成（高死亡率环境更易突变）
+            pressure_bonus = np.minimum(0.5, deaths * 0.5)
+            mutation_discovered = base_rolls < (mutation_chance * (1.0 + pressure_bonus))
+            
+            # 为突变发现的物种应用额外加成
+            if np.any(mutation_discovered):
+                discovery_bonuses = np.random.uniform(
+                    self.DISCOVERY_BONUS_RANGE[0],
+                    self.DISCOVERY_BONUS_RANGE[1],
+                    n
+                )
+                new_radii = np.where(
+                    mutation_discovered,
+                    np.clip(new_radii * (1.0 + discovery_bonuses), self.MIN_RADIUS, 1.0),
+                    new_radii
+                )
+        
         # 批量更新物种对象
         results = []
+        mutation_count = 0
         for i, sp in enumerate(species_list):
             old_r = float(radii[i])
             new_r = float(new_radii[i])
@@ -275,7 +327,15 @@ class GeneDiversityService:
                 sp.hidden_traits = {}
             sp.hidden_traits["gene_diversity"] = new_r
             
-            reason = "自然增长" if net_changes[i] >= 0 else "瓶颈衰减"
+            is_mutation = bool(mutation_discovered[i])
+            if is_mutation:
+                reason = "突变发现"
+                mutation_count += 1
+            elif net_changes[i] >= 0:
+                reason = "自然增长"
+            else:
+                reason = "瓶颈衰减"
+            
             results.append({
                 "lineage_code": codes[i],
                 "name": names[i],
@@ -283,7 +343,11 @@ class GeneDiversityService:
                 "new": new_r,
                 "delta": new_r - old_r,
                 "reason": reason,
+                "mutation_discovered": is_mutation,
             })
+        
+        if mutation_count > 0:
+            logger.info(f"[突变发现] 本回合有 {mutation_count} 个物种自发发现新基因")
         
         return results
 

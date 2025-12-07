@@ -213,7 +213,7 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
         </ConfigGroup>
         <SliderRow
           label="突变发现概率"
-          desc="（暂未启用）每回合自发发现新基因、扩展演化范围的概率"
+          desc="每回合自发发现新基因、扩展演化范围的概率。高死亡率环境下概率更高"
           value={c.archean_mutation_chance ?? 0.15}
           min={0.05}
           max={0.4}
@@ -273,7 +273,7 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
         </ConfigGroup>
         <SliderRow
           label="突变发现概率"
-          desc="（暂未启用）每回合自发发现新基因的概率"
+          desc="每回合自发发现新基因的概率，比太古宙略低"
           value={c.proterozoic_mutation_chance ?? 0.10}
           min={0.03}
           max={0.2}
@@ -333,7 +333,7 @@ export const GeneDiversitySection = memo(function GeneDiversitySection({
         </ConfigGroup>
         <SliderRow
           label="突变发现概率"
-          desc="（暂未启用）每回合自发发现新基因的概率"
+          desc="每回合自发发现新基因的概率，复杂生命时代更低"
           value={c.phanerozoic_mutation_chance ?? 0.08}
           min={0.02}
           max={0.15}
