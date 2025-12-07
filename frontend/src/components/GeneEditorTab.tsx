@@ -37,19 +37,60 @@ interface Props {
   onSpeciesUpdate: (species: SpeciesDetail) => void;
 }
 
-// 压力类型选项
+// 压力类型选项（使用新的细化系统）
 const PRESSURE_TYPE_OPTIONS = [
-  { value: "temperature", label: "温度" },
-  { value: "drought", label: "干旱" },
-  { value: "cold", label: "寒冷" },
-  { value: "toxin", label: "毒性" },
-  { value: "predation", label: "捕食" },
-  { value: "competition", label: "竞争" },
-  { value: "disease", label: "疾病" },
-  { value: "radiation", label: "辐射" },
-  { value: "anoxic", label: "缺氧" },
-  { value: "salinity", label: "盐度" },
+  // 温度压力
+  { value: "cold", label: "🥶 寒冷", category: "温度" },
+  { value: "heat", label: "🔥 高温", category: "温度" },
+  { value: "temperature_fluctuation", label: "🌡️ 温差", category: "温度" },
+  // 水分压力
+  { value: "drought", label: "🏜️ 干旱", category: "水分" },
+  { value: "flooding", label: "🌊 水涝", category: "水分" },
+  // 化学压力
+  { value: "salinity", label: "🧂 盐度", category: "化学" },
+  { value: "toxin", label: "☠️ 毒素", category: "化学" },
+  { value: "acidic", label: "🧪 酸性", category: "化学" },
+  // 生物压力
+  { value: "predation", label: "🦁 捕食", category: "生物" },
+  { value: "hunting", label: "🎯 捕猎", category: "生物" },
+  { value: "competition", label: "⚔️ 竞争", category: "生物" },
+  { value: "disease", label: "🦠 疾病", category: "生物" },
+  { value: "parasitism", label: "🪱 寄生虫", category: "生物" },
+  // 资源压力
+  { value: "starvation", label: "😫 饥饿", category: "资源" },
+  { value: "light_limitation", label: "☀️ 光照不足", category: "资源" },
+  { value: "nutrient_poor", label: "🌱 营养贫瘠", category: "资源" },
+  { value: "oxygen_low", label: "💨 缺氧", category: "资源" },
+  // 其他
+  { value: "uv_radiation", label: "☢️ UV辐射", category: "辐射" },
+  { value: "pressure_deep", label: "🌊 深海高压", category: "机械" },
+  { value: "abrasion", label: "🪨 磨损", category: "机械" },
 ];
+
+// 显隐性类型显示
+const DOMINANCE_LABELS: Record<string, { label: string; color: string }> = {
+  recessive: { label: "隐性", color: "#94a3b8" },
+  codominant: { label: "共显性", color: "#60a5fa" },
+  dominant: { label: "显性", color: "#22c55e" },
+  overdominant: { label: "超显性", color: "#f59e0b" },
+};
+
+// 突变效果显示
+const MUTATION_EFFECT_LABELS: Record<string, { label: string; color: string; icon: string }> = {
+  beneficial: { label: "有益", color: "#22c55e", icon: "✨" },
+  neutral: { label: "中性", color: "#94a3b8", icon: "◯" },
+  mildly_harmful: { label: "轻微有害", color: "#f59e0b", icon: "⚠️" },
+  harmful: { label: "有害", color: "#ef4444", icon: "☠️" },
+  lethal: { label: "致死", color: "#7f1d1d", icon: "💀" },
+};
+
+// 器官发育阶段显示
+const ORGAN_STAGE_LABELS: Record<number, { label: string; efficiency: string; color: string }> = {
+  0: { label: "原基", efficiency: "0%", color: "#64748b" },
+  1: { label: "初级结构", efficiency: "25%", color: "#f59e0b" },
+  2: { label: "功能原型", efficiency: "60%", color: "#3b82f6" },
+  3: { label: "成熟器官", efficiency: "100%", color: "#22c55e" },
+};
 
 // 器官类别选项
 const ORGAN_CATEGORY_OPTIONS = [
@@ -225,60 +266,158 @@ export function GeneEditorTab({ species, onSpeciesUpdate }: Props) {
     );
   };
 
-  // 渲染基因列表项
+  // 渲染基因列表项 v2.0 - 支持显隐性、有害突变、器官发育阶段
   const renderGeneItem = (
     name: string,
     gene: DormantGeneData,
     type: "trait" | "organ"
   ) => {
     const isTrait = type === "trait";
+    
+    // 获取突变效果信息
+    const mutationEffect = gene.mutation_effect 
+      ? MUTATION_EFFECT_LABELS[gene.mutation_effect] 
+      : MUTATION_EFFECT_LABELS.beneficial;
+    const isHarmful = gene.mutation_effect && 
+      ['mildly_harmful', 'harmful', 'lethal'].includes(gene.mutation_effect);
+    
+    // 获取显隐性信息
+    const dominance = gene.dominance 
+      ? DOMINANCE_LABELS[gene.dominance] 
+      : DOMINANCE_LABELS.codominant;
+    
+    // 获取器官发育阶段信息
+    const organStage = (!isTrait && gene.development_stage != null) 
+      ? ORGAN_STAGE_LABELS[gene.development_stage] 
+      : null;
 
     return (
-      <div key={name} className={`get-gene-item ${gene.activated ? "activated" : ""}`}>
+      <div key={name} className={`get-gene-item ${gene.activated ? "activated" : ""} ${isHarmful ? "harmful" : ""}`}>
         <div className="get-gene-header">
           <div className="get-gene-name">
-            <span className="get-gene-icon">{isTrait ? "🧬" : "🔬"}</span>
+            <span className="get-gene-icon">
+              {isTrait 
+                ? (isHarmful ? mutationEffect.icon : "🧬") 
+                : (organStage ? "🔬" : "🧫")
+              }
+            </span>
             <span>{name}</span>
+            {/* 显隐性标签 */}
+            {gene.dominance && (
+              <span 
+                className="get-dominance-badge" 
+                style={{ color: dominance.color, borderColor: dominance.color }}
+                title={`${dominance.label}遗传`}
+              >
+                {dominance.label}
+              </span>
+            )}
           </div>
           {renderGeneStatus(gene)}
         </div>
 
         <div className="get-gene-details">
-          {isTrait && gene.potential_value != null && (
+          {/* 特质潜力值 */}
+          {isTrait && gene.potential_value != null && !isHarmful && (
             <div className="get-gene-stat">
               <span className="get-stat-label">潜力值</span>
               <span className="get-stat-value">{gene.potential_value.toFixed(1)}</span>
+              {gene.expressed_value != null && gene.expressed_value !== gene.potential_value && (
+                <span className="get-stat-note">
+                  (表达: {gene.expressed_value.toFixed(1)})
+                </span>
+              )}
             </div>
           )}
-
-          {!isTrait && gene.organ_data && (
-            <div className="get-gene-stat">
-              <span className="get-stat-label">类别</span>
-              <span className="get-stat-value">
-                {ORGAN_CATEGORY_OPTIONS.find((o) => o.value === gene.organ_data?.category)?.label ||
-                  gene.organ_data.category}
+          
+          {/* 有害突变信息 */}
+          {isTrait && isHarmful && (
+            <div className="get-gene-stat get-harmful">
+              <span className="get-stat-label" style={{ color: mutationEffect.color }}>
+                {mutationEffect.icon} {mutationEffect.label}
               </span>
+              {gene.target_trait && (
+                <span className="get-stat-value">
+                  影响: {gene.target_trait} {gene.value_modifier && `(${gene.value_modifier > 0 ? '+' : ''}${gene.value_modifier})`}
+                </span>
+              )}
             </div>
           )}
 
+          {/* 器官类别和发育阶段 */}
+          {!isTrait && gene.organ_data && (
+            <>
+              <div className="get-gene-stat">
+                <span className="get-stat-label">类别</span>
+                <span className="get-stat-value">
+                  {ORGAN_CATEGORY_OPTIONS.find((o) => o.value === gene.organ_data?.category)?.label ||
+                    gene.organ_data.category}
+                </span>
+              </div>
+              {organStage && (
+                <div className="get-gene-stat">
+                  <span className="get-stat-label">发育阶段</span>
+                  <span className="get-stat-value" style={{ color: organStage.color }}>
+                    {organStage.label} ({organStage.efficiency})
+                  </span>
+                </div>
+              )}
+              {!organStage && !gene.activated && (
+                <div className="get-gene-stat">
+                  <span className="get-stat-label">发育状态</span>
+                  <span className="get-stat-value" style={{ color: "#64748b" }}>
+                    未开始发育
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* 触发压力类型 */}
           {gene.pressure_types && gene.pressure_types.length > 0 && (
             <div className="get-gene-stat">
               <span className="get-stat-label">触发压力</span>
               <span className="get-stat-value get-pressure-tags">
-                {gene.pressure_types.map((p) => (
+                {gene.pressure_types.slice(0, 3).map((p) => (
                   <span key={p} className="get-pressure-tag">
                     {PRESSURE_TYPE_OPTIONS.find((o) => o.value === p)?.label || p}
                   </span>
                 ))}
+                {gene.pressure_types.length > 3 && (
+                  <span className="get-pressure-tag">+{gene.pressure_types.length - 3}</span>
+                )}
               </span>
             </div>
           )}
 
+          {/* 暴露次数 */}
           {gene.exposure_count != null && gene.exposure_count > 0 && (
             <div className="get-gene-stat">
               <Target size={12} />
               <span className="get-stat-label">暴露</span>
               <span className="get-stat-value">{gene.exposure_count}次</span>
+            </div>
+          )}
+          
+          {/* 来源信息 */}
+          {gene.inherited_from && (
+            <div className="get-gene-stat">
+              <span className="get-stat-label">来源</span>
+              <span className="get-stat-value get-source-tag">
+                {gene.inherited_from === 'initial' && '初始'}
+                {gene.inherited_from === 'ecological' && '生态适应'}
+                {gene.inherited_from === 'mutation' && '突变'}
+                {gene.inherited_from === 'hgt' && '水平转移'}
+                {gene.inherited_from === 'bootstrap' && '系统补齐'}
+                {!['initial', 'ecological', 'mutation', 'hgt', 'bootstrap'].includes(gene.inherited_from) && gene.inherited_from}
+              </span>
+            </div>
+          )}
+          
+          {/* 基因描述 */}
+          {gene.description && (
+            <div className="get-gene-desc">
+              {gene.description}
             </div>
           )}
         </div>
@@ -289,10 +428,10 @@ export function GeneEditorTab({ species, onSpeciesUpdate }: Props) {
               className="get-action-btn activate"
               onClick={() => handleActivate(type, name)}
               disabled={isLoading}
-              title="手动激活此基因"
+              title={isHarmful ? "激活此有害突变（可能产生负面效果）" : "手动激活此基因"}
             >
               <Zap size={14} />
-              激活
+              {isHarmful ? "强制激活" : "激活"}
             </button>
             <button
               className="get-action-btn delete"

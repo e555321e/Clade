@@ -863,7 +863,16 @@ export interface PressureTemplate {
   narrative_template?: string; // Optional template for the description
   default_intensity?: number; // Optional default intensity
 }
-// 休眠基因数据结构
+// 显隐性类型
+export type DominanceType = 'recessive' | 'codominant' | 'dominant' | 'overdominant';
+
+// 突变效果类型
+export type MutationEffect = 'beneficial' | 'neutral' | 'mildly_harmful' | 'harmful' | 'lethal';
+
+// 器官发育阶段
+export type OrganStage = 0 | 1 | 2 | 3; // 0=原基, 1=初级, 2=功能, 3=成熟
+
+// 休眠基因数据结构 v2.0
 export interface DormantGeneData {
   potential_value?: number;         // 特质潜力值 (0-15)
   organ_data?: {                    // 器官数据
@@ -876,6 +885,19 @@ export interface DormantGeneData {
   max_death_rate?: number;          // 最大死亡率
   activated: boolean;               // 是否已激活
   activated_turn?: number | null;   // 激活回合
+  
+  // v2.0 新增字段
+  dominance?: DominanceType;        // 显隐性类型
+  mutation_effect?: MutationEffect; // 突变效果（有益/中性/有害）
+  target_trait?: string;            // 有害突变的目标特质
+  value_modifier?: number;          // 有害突变的数值修正
+  description?: string;             // 基因描述
+  inherited_from?: string;          // 来源（initial/ecological/mutation/hgt）
+  expressed_value?: number;         // 实际表达值（受显隐性影响）
+  
+  // 器官发育阶段（渐进发育系统）
+  development_stage?: OrganStage | null;  // 发育阶段 (null=未开始)
+  stage_start_turn?: number | null;       // 当前阶段开始回合
 }
 
 export interface DormantGenes {

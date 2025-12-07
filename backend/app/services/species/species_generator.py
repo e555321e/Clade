@@ -673,11 +673,23 @@ class SpeciesGenerator:
         return species
 
     def _generate_initial_dormant_genes(self, species) -> None:
-        """为新物种生成初始休眠基因
+        """为新物种生成初始休眠基因 v2.0
         
-        根据物种的生态特性（栖息地、食性、营养级）生成符合其特质的休眠基因，
-        确保每个物种从创建时就携带潜在可激活的休眠基因。
+        根据物种的生态特性（栖息地、食性、营养级）生成符合其特质的休眠基因。
+        
+        【v2.0 新功能】
+        - 显隐性遗传：每个基因有显隐性类型
+        - 有害突变：15%概率生成有害基因
+        - 细化压力类型：使用新的压力-基因映射系统
+        - 器官发育阶段：器官初始为未发育状态
         """
+        from .gene_constants import (
+            DominanceType,
+            MutationEffect,
+            HARMFUL_MUTATIONS,
+            roll_dominance,
+        )
+        
         if species.dormant_genes is None:
             species.dormant_genes = {"traits": {}, "organs": {}}
         
@@ -685,7 +697,7 @@ class SpeciesGenerator:
         species.dormant_genes.setdefault("organs", {})
         
         # 使用物种信息作为种子确保可重复性
-        seed = abs(hash(f"{species.lineage_code}-dormant-gen")) % 1_000_000_007
+        seed = abs(hash(f"{species.lineage_code}-dormant-gen-v2")) % 1_000_000_007
         rng = random.Random(seed)
         
         # 获取物种生态位信息
@@ -706,13 +718,16 @@ class SpeciesGenerator:
             if rng.random() < 0.60:
                 enhanced_name = f"强化{trait_name}" if not trait_name.startswith("强化") else trait_name
                 if enhanced_name not in species.dormant_genes["traits"]:
+                    dominance = roll_dominance("trait")
                     species.dormant_genes["traits"][enhanced_name] = {
                         "potential_value": min(15.0, float(trait_value) * 1.25),
                         "activation_threshold": 0.20,
                         "pressure_types": self._infer_pressure_types_for_trait(trait_name),
                         "exposure_count": 0,
                         "activated": False,
-                        "inherited_from": "initial"
+                        "inherited_from": "initial",
+                        "dominance": dominance.value,
+                        "mutation_effect": MutationEffect.BENEFICIAL.value,
                     }
         
         # ========== 2. 根据生态位生成特化休眠特质 ==========
@@ -720,53 +735,79 @@ class SpeciesGenerator:
         
         if is_producer:
             ecological_traits.extend([
-                ("光合效率提升", ["light", "resource"], 6.0),
-                ("固碳强化", ["resource", "competition"], 5.5),
+                ("光合效率提升", ["light_limitation"], 6.0),
+                ("固碳强化", ["nutrient_poor", "competition"], 5.5),
             ])
         
         if is_consumer:
             ecological_traits.extend([
-                ("消化效率", ["resource", "competition"], 5.5),
+                ("消化效率", ["starvation", "competition"], 5.5),
                 ("感知敏锐", ["predation", "hunting"], 5.0),
             ])
         
         if is_predator:
             ecological_traits.extend([
-                ("捕猎本能", ["predation", "hunting"], 6.0),
+                ("捕猎本能", ["hunting"], 6.0),
             ])
         
         if is_aquatic:
             ecological_traits.extend([
-                ("流线型优化", ["predation", "locomotion"], 5.0),
+                ("流线型优化", ["predation"], 5.0),
             ])
         
         if is_terrestrial:
             ecological_traits.extend([
-                ("保水强化", ["drought", "humidity"], 6.0),
+                ("保水强化", ["drought"], 6.0),
             ])
         
         if is_deep_sea:
             ecological_traits.extend([
-                ("耐压强化", ["pressure", "deep_sea"], 7.0),
+                ("耐压强化", ["pressure_deep"], 7.0),
             ])
         
         # 通用特质
         ecological_traits.extend([
-            ("环境适应性", ["adaptive", "environment"], rng.uniform(4.5, 6.5)),
-            ("恢复力", ["stress", "damage"], rng.uniform(4.0, 6.0)),
+            ("环境适应性", ["competition", "temperature_fluctuation"], rng.uniform(4.5, 6.5)),
+            ("恢复力", ["disease", "abrasion"], rng.uniform(4.0, 6.0)),
         ])
         
         for trait_name, pressure_types, base_value in ecological_traits:
             if trait_name not in (species.abstract_traits or {}) and trait_name not in species.dormant_genes["traits"]:
                 if rng.random() < 0.45:
+                    dominance = roll_dominance("trait")
                     species.dormant_genes["traits"][trait_name] = {
                         "potential_value": base_value + rng.uniform(-0.5, 1.0),
                         "activation_threshold": 0.18,
                         "pressure_types": pressure_types,
                         "exposure_count": 0,
                         "activated": False,
-                        "inherited_from": "ecological"
+                        "inherited_from": "ecological",
+                        "dominance": dominance.value,
+                        "mutation_effect": MutationEffect.BENEFICIAL.value,
                     }
+        
+        # ========== 2.5 添加有害突变（15%概率） ==========
+        if rng.random() < 0.15:
+            harmful_list = [m for m in HARMFUL_MUTATIONS 
+                          if m["effect"] in (MutationEffect.MILDLY_HARMFUL, MutationEffect.HARMFUL)]
+            if harmful_list:
+                harmful = rng.choice(harmful_list)
+                harm_name = harmful["name"]
+                if harm_name not in species.dormant_genes["traits"]:
+                    species.dormant_genes["traits"][harm_name] = {
+                        "potential_value": 0,
+                        "target_trait": harmful.get("target_trait"),
+                        "value_modifier": harmful.get("value_modifier", -1.0),
+                        "activation_threshold": 0.35,
+                        "pressure_types": ["disease", "starvation"],
+                        "exposure_count": 0,
+                        "activated": False,
+                        "inherited_from": "mutation",
+                        "dominance": DominanceType.RECESSIVE.value,
+                        "mutation_effect": harmful["effect"].value if hasattr(harmful["effect"], 'value') else str(harmful["effect"]),
+                        "description": harmful.get("description", ""),
+                    }
+                    logger.debug(f"[物种生成器] {species.lineage_code} 生成有害突变: {harm_name}")
         
         # ========== 3. 根据生态位生成符合物种特性的休眠器官 ==========
         potential_organs = []
@@ -774,9 +815,9 @@ class SpeciesGenerator:
         if is_producer:
             potential_organs.extend([
                 {"name": "增强叶绿体", "category": "photosynthetic", "type": "enhanced_chloroplast", 
-                 "parameters": {"efficiency": 1.5}, "pressure_types": ["light", "resource"], "prob": 0.50},
+                 "parameters": {"efficiency": 1.5}, "pressure_types": ["light_limitation"], "prob": 0.50},
                 {"name": "UV防护层", "category": "protection", "type": "uv_shield", 
-                 "parameters": {"uv_resist": 0.7}, "pressure_types": ["radiation", "damage"], "prob": 0.35},
+                 "parameters": {"uv_resist": 0.7}, "pressure_types": ["uv_radiation", "abrasion"], "prob": 0.35},
             ])
         
         if is_consumer:
@@ -787,41 +828,41 @@ class SpeciesGenerator:
                 )
             potential_organs.extend([
                 {"name": "化学感受器", "category": "sensory", "type": "chemoreceptor", 
-                 "parameters": {"range": 0.4}, "pressure_types": ["predation", "foraging"], "prob": 0.45},
+                 "parameters": {"range": 0.4}, "pressure_types": ["predation", "starvation"], "prob": 0.45},
             ])
         
         if is_predator:
             potential_organs.extend([
                 {"name": "捕食附肢", "category": "attack", "type": "grasping_appendage", 
-                 "parameters": {"grip_strength": 0.6}, "pressure_types": ["predation", "hunting"], "prob": 0.45},
+                 "parameters": {"grip_strength": 0.6}, "pressure_types": ["hunting"], "prob": 0.45},
             ])
         
         if is_aquatic:
             potential_organs.extend([
                 {"name": "纤毛", "category": "locomotion", "type": "cilia", 
-                 "parameters": {"efficiency": 0.5}, "pressure_types": ["predation", "locomotion"], "prob": 0.40},
+                 "parameters": {"efficiency": 0.5}, "pressure_types": ["predation"], "prob": 0.40},
                 {"name": "浮力调节囊", "category": "buoyancy", "type": "swim_bladder", 
-                 "parameters": {"control": 0.5}, "pressure_types": ["locomotion", "depth"], "prob": 0.30},
+                 "parameters": {"control": 0.5}, "pressure_types": ["pressure_deep"], "prob": 0.30},
             ])
         
         if is_terrestrial:
             potential_organs.extend([
                 {"name": "角质层强化", "category": "protection", "type": "cuticle", 
-                 "parameters": {"drought_resist": 0.6}, "pressure_types": ["drought", "protection"], "prob": 0.40},
+                 "parameters": {"drought_resist": 0.6}, "pressure_types": ["drought"], "prob": 0.40},
             ])
         
         if is_deep_sea:
             potential_organs.extend([
                 {"name": "耐压细胞壁", "category": "protection", "type": "pressure_resistant", 
-                 "parameters": {"pressure_resist": 0.8}, "pressure_types": ["pressure", "deep_sea"], "prob": 0.50},
+                 "parameters": {"pressure_resist": 0.8}, "pressure_types": ["pressure_deep"], "prob": 0.50},
                 {"name": "热感受器", "category": "sensory", "type": "thermoreceptor", 
-                 "parameters": {"range": 0.5}, "pressure_types": ["temperature", "navigation"], "prob": 0.35},
+                 "parameters": {"range": 0.5}, "pressure_types": ["heat"], "prob": 0.35},
             ])
         
         # 通用防御器官
         potential_organs.extend([
             {"name": "防护外壳", "category": "defense", "type": "shell", 
-             "parameters": {"hardness": 0.4}, "pressure_types": ["predation", "defense"], "prob": 0.25},
+             "parameters": {"hardness": 0.4}, "pressure_types": ["predation"], "prob": 0.25},
         ])
         
         for organ in potential_organs:
@@ -829,6 +870,7 @@ class SpeciesGenerator:
             if rng.random() < prob:
                 organ_name = organ["name"]
                 if organ_name not in species.dormant_genes["organs"]:
+                    dominance = roll_dominance("organ")
                     species.dormant_genes["organs"][organ_name] = {
                         "organ_data": {
                             "category": organ["category"],
@@ -836,35 +878,48 @@ class SpeciesGenerator:
                             "parameters": organ["parameters"]
                         },
                         "activation_threshold": 0.18,
-                        "pressure_types": organ.get("pressure_types", ["adaptive", "competition"]),
+                        "pressure_types": organ.get("pressure_types", ["competition", "predation"]),
                         "exposure_count": 0,
                         "activated": False,
-                        "inherited_from": "ecological"
+                        "inherited_from": "ecological",
+                        "dominance": dominance.value,
+                        "development_stage": None,  # 渐进发育系统
+                        "stage_start_turn": None,
                     }
         
+        # 统计生成结果
         total_traits = len(species.dormant_genes.get("traits", {}))
         total_organs = len(species.dormant_genes.get("organs", {}))
+        harmful_count = sum(1 for t in species.dormant_genes.get("traits", {}).values() 
+                          if t.get("mutation_effect") in (MutationEffect.HARMFUL.value, 
+                                                          MutationEffect.MILDLY_HARMFUL.value,
+                                                          "harmful", "mildly_harmful"))
         if total_traits + total_organs > 0:
-            logger.info(f"[物种生成器] {species.lineage_code} 生成了 {total_traits} 个休眠特质, {total_organs} 个休眠器官")
+            logger.info(
+                f"[物种生成器] {species.lineage_code} 生成了 "
+                f"{total_traits} 个休眠特质 (含 {harmful_count} 个有害), {total_organs} 个休眠器官"
+            )
 
     def _infer_pressure_types_for_trait(self, trait_name: str) -> list[str]:
-        """根据特质名推断触发压力类型"""
+        """根据特质名推断触发压力类型（使用新系统）"""
         mapping = {
-            "耐寒性": ["cold", "temperature"],
-            "耐热性": ["heat", "temperature"],
-            "耐旱性": ["drought", "humidity"],
-            "耐盐性": ["salinity", "osmotic"],
-            "免疫力": ["disease", "pathogen"],
-            "运动能力": ["predation", "competition"],
-            "繁殖速度": ["population", "adaptive"],
-            "社会性": ["group", "cooperation"],
-            "光合效率": ["light", "resource"],
-            "固碳能力": ["resource", "competition"],
-            "攻击性": ["predation", "competition"],
-            "防御能力": ["predation", "defense"],
+            "耐寒性": ["cold", "temperature_fluctuation"],
+            "耐热性": ["heat", "temperature_fluctuation"],
+            "耐旱性": ["drought"],
+            "耐盐性": ["salinity"],
+            "免疫力": ["disease", "parasitism"],
+            "运动能力": ["predation", "hunting"],
+            "繁殖速度": ["starvation", "competition"],
+            "社会性": ["competition"],
+            "光合效率": ["light_limitation"],
+            "固碳能力": ["nutrient_poor", "competition"],
+            "攻击性": ["hunting", "competition"],
+            "防御能力": ["predation"],
+            "代谢效率": ["starvation"],
+            "感知敏锐": ["predation", "hunting"],
         }
         for key, types in mapping.items():
             if key in trait_name:
                 return types
-        return ["adaptive", "environment"]
+        return ["competition", "starvation"]
 

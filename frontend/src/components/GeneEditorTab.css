@@ -507,3 +507,90 @@
   background: rgba(239, 68, 68, 0.2);
   border-color: rgba(239, 68, 68, 0.4);
 }
+
+/* ========== v2.0 新增样式 ========== */
+
+/* 显隐性徽章 */
+.get-dominance-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid;
+  background: rgba(0, 0, 0, 0.2);
+  margin-left: 6px;
+}
+
+/* 有害突变基因项 */
+.get-gene-item.harmful {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+.get-gene-item.harmful:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+/* 有害突变详情 */
+.get-gene-stat.get-harmful {
+  background: rgba(239, 68, 68, 0.1);
+  padding: 4px 8px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+
+/* 表达值注释 */
+.get-stat-note {
+  font-size: 10px;
+  color: #64748b;
+  margin-left: 4px;
+}
+
+/* 来源标签 */
+.get-source-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: rgba(139, 92, 246, 0.15);
+  border-radius: 4px;
+  color: #a78bfa;
+}
+
+/* 基因描述 */
+.get-gene-desc {
+  font-size: 11px;
+  color: #64748b;
+  font-style: italic;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  line-height: 1.4;
+}
+
+/* 器官发育阶段进度条 */
+.get-organ-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.get-organ-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.get-organ-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.get-organ-progress-label {
+  font-size: 10px;
+  color: #64748b;
+  min-width: 60px;
+  text-align: right;
+}
