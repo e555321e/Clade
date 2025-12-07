@@ -242,6 +242,7 @@ class SpeciationRules:
         """生成增强的预算上下文（供 prompt 使用）
         
         包含：边际递减警告、突破机会、栖息地加成、策略建议
+        使用核心预算计算系统（设计文档第三章）
         
         Args:
             species: 物种对象
@@ -253,7 +254,8 @@ class SpeciationRules:
         """
         from .trait_config import (
             get_diminishing_summary, get_breakthrough_summary, 
-            get_bonus_summary, get_single_trait_cap
+            get_bonus_summary, get_single_trait_cap,
+            calculate_budget_from_species, get_era_factor, get_trophic_factor
         )
         
         traits = getattr(species, 'abstract_traits', {}) or {}
@@ -261,12 +263,17 @@ class SpeciationRules:
         habitat_type = getattr(species, 'habitat_type', 'terrestrial')
         organs = getattr(species, 'organs', {}) or {}
         
-        # 1. 预算使用情况
-        budget = era_limits.get("total", 100)
-        single_cap = era_limits.get("specialized", 15)
+        # 1. 使用核心预算公式计算（设计文档第三章）
+        # 预算 = 基础值 × 时代因子 × 营养级因子 × 体型因子 × 器官因子
+        budget = calculate_budget_from_species(species, turn_index)
+        single_cap = get_single_trait_cap(turn_index, trophic_level)
         current_total = sum(traits.values())
         usage_percent = current_total / budget if budget > 0 else 0
         remaining = max(0, budget - current_total)
+        
+        # 获取因子分解（用于显示）
+        era_factor = get_era_factor(turn_index)
+        trophic_factor = get_trophic_factor(trophic_level)
         
         # 2. 边际递减摘要
         diminishing = get_diminishing_summary(traits, turn_index, trophic_level)
@@ -308,6 +315,8 @@ class SpeciationRules:
             "current_total": current_total,
             "budget": budget,
             "single_cap": single_cap,
+            "era_factor": era_factor,
+            "trophic_factor": trophic_factor,
             "diminishing_text": diminishing_text,
             "breakthrough_text": breakthrough_text,
             "bonus_text": bonus_text,

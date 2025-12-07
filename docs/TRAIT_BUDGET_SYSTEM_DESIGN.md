@@ -1,8 +1,8 @@
 # 属性预算系统设计文档 (Trait Budget System)
 
-> 版本: v1.0  
+> 版本: v1.1  
 > 日期: 2024-12  
-> 状态: 设计中
+> 状态: ✅ 已实现
 
 ## 一、设计背景
 
@@ -654,21 +654,37 @@ class TraitBudgetConfig(BaseModel):
 
 ### 11.1 文件修改清单
 
-| 文件 | 修改内容 |
-|------|---------|
-| `models/config.py` | 添加 `TraitBudgetConfig` 配置类 |
-| `services/species/trait_config.py` | 重构预算计算逻辑 |
-| `services/species/gene_activation.py` | 应用新的预算检查 |
-| `services/species/speciation.py` | 在分化时应用预算约束 |
-| `ai/prompts/species.py` | 更新 prompt 中的预算信息 |
+| 文件 | 修改内容 | 状态 |
+|------|---------|------|
+| `models/config.py` | 添加 `TraitBudgetConfig` 配置类 | ✅ 已完成 |
+| `services/species/trait_config.py` | 重构预算计算逻辑 | ✅ 已完成 |
+| `services/species/speciation_rules.py` | 应用新的预算检查 | ✅ 已完成 |
+| `services/species/speciation.py` | 在分化时应用预算约束 | ✅ 已完成 |
+| `ai/prompts/species.py` | 更新 prompt 中的预算信息 | ✅ 已完成 |
 
 ### 11.2 实现步骤
 
-1. **第一阶段**：添加配置类和基础计算函数
-2. **第二阶段**：重构 `trait_config.py` 的上限验证逻辑
-3. **第三阶段**：修改 `gene_activation.py` 应用新机制
-4. **第四阶段**：添加突破系统和事件日志
-5. **第五阶段**：更新 LLM prompt 的预算上下文
+1. **第一阶段**：添加配置类和基础计算函数 ✅
+2. **第二阶段**：重构 `trait_config.py` 的上限验证逻辑 ✅
+3. **第三阶段**：添加边际递减和突破系统 ✅
+4. **第四阶段**：添加超预算处理和基因激活检查 ✅
+5. **第五阶段**：更新 LLM prompt 的预算上下文 ✅
+
+### 11.3 已实现的核心函数
+
+```python
+# trait_config.py 新增函数
+get_era_factor(turn_index)           # 时代因子计算
+get_trophic_factor(trophic_level)    # 营养级因子计算
+get_size_factor(body_weight_g)       # 体型因子计算
+get_organ_factor(organ_count, mature_count)  # 器官因子计算
+calculate_budget(turn_index, trophic_level, body_weight_g, ...)  # 核心预算计算
+calculate_budget_from_species(species, turn_index)  # 从物种对象计算预算
+handle_budget_overflow(traits, budget, turn_index)  # 超预算处理
+can_activate_gene(species, trait_name, gain_value, turn_index)  # 基因激活检查
+get_budget_prompt_context(species, turn_index)  # LLM预算上下文
+get_full_budget_context(species, turn_index)    # 完整预算上下文
+```
 
 ---
 

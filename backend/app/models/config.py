@@ -1223,6 +1223,84 @@ class GeneDiversityConfig(BaseModel):
     )
 
 
+class TraitBudgetConfig(BaseModel):
+    """属性预算系统配置 - 控制属性上限、边际递减和突破系统
+    
+    核心公式：预算上限 = 基础值 × 时代因子 × 营养级因子 × 体型因子 × 器官因子
+    
+    设计文档：docs/TRAIT_BUDGET_SYSTEM_DESIGN.md
+    """
+    model_config = ConfigDict(extra="ignore")
+    
+    # ========== 基础参数 ==========
+    base_budget: float = Field(default=15.0, description="基础预算值")
+    
+    # ========== 时代因子参数 ==========
+    # 太古宙 (回合0-15)
+    archean_start: float = Field(default=1.0, description="太古宙起始因子")
+    archean_end: float = Field(default=1.5, description="太古宙结束因子")
+    
+    # 元古宙 (回合15-54)
+    proterozoic_end: float = Field(default=4.0, description="元古宙结束因子")
+    
+    # 古生代 (回合54-343) - 寒武纪大爆发！
+    paleozoic_exponent: float = Field(default=1.3, description="古生代增长指数")
+    paleozoic_end: float = Field(default=25.0, description="古生代结束因子")
+    
+    # 中生代 (回合343-715)
+    mesozoic_end: float = Field(default=50.0, description="中生代结束因子")
+    
+    # 新生代 (回合715-979)
+    cenozoic_end: float = Field(default=70.0, description="新生代结束因子")
+    
+    # 未来 (回合979+)
+    future_growth_rate: float = Field(default=15.0, description="未来增长系数")
+    future_scale: float = Field(default=200.0, description="未来增长缩放")
+    
+    # ========== 营养级因子 ==========
+    trophic_base: float = Field(default=0.6, description="营养级基础")
+    trophic_coefficient: float = Field(default=0.24, description="营养级系数")
+    
+    # ========== 体型因子 ==========
+    size_coefficient: float = Field(default=0.08, description="体型系数")
+    size_min: float = Field(default=0.5, description="体型因子下限")
+    size_max: float = Field(default=1.8, description="体型因子上限")
+    
+    # ========== 器官因子 ==========
+    organ_coefficient: float = Field(default=0.02, description="器官系数")
+    organ_max_count: int = Field(default=15, description="计算器官数上限")
+    mature_bonus: float = Field(default=0.02, description="成熟器官额外加成")
+    
+    # ========== 单属性上限 ==========
+    single_cap_archean: float = Field(default=8.0, description="太古宙单属性上限")
+    single_cap_proterozoic: float = Field(default=15.0, description="元古宙单属性上限")
+    single_cap_paleozoic: float = Field(default=25.0, description="古生代单属性上限")
+    single_cap_mesozoic: float = Field(default=40.0, description="中生代单属性上限")
+    single_cap_cenozoic: float = Field(default=50.0, description="新生代单属性上限")
+    
+    # ========== 边际递减 ==========
+    diminishing_t1_ratio: float = Field(default=0.5, description="第一递减阈值比例")
+    diminishing_t2_ratio: float = Field(default=0.7, description="第二递减阈值比例")
+    diminishing_t3_ratio: float = Field(default=0.85, description="第三递减阈值比例")
+    diminishing_t4_ratio: float = Field(default=0.95, description="第四递减阈值比例")
+    diminishing_f1: float = Field(default=0.6, description="第一区间系数")
+    diminishing_f2: float = Field(default=0.3, description="第二区间系数")
+    diminishing_f3: float = Field(default=0.1, description="第三区间系数")
+    diminishing_f4: float = Field(default=0.02, description="第四区间系数")
+    
+    # ========== 突破阈值（相对比例）==========
+    breakthrough_specialist: float = Field(default=0.50, description="专精阈值")
+    breakthrough_master: float = Field(default=0.65, description="大师阈值")
+    breakthrough_excellent: float = Field(default=0.80, description="卓越阈值")
+    breakthrough_legend: float = Field(default=0.90, description="传奇阈值")
+    breakthrough_myth: float = Field(default=0.98, description="神话阈值")
+    
+    # ========== 超预算处理 ==========
+    overflow_warning: float = Field(default=0.15, description="警告阈值")
+    overflow_tradeoff: float = Field(default=0.40, description="强制权衡阈值")
+    tradeoff_efficiency: float = Field(default=0.70, description="权衡效率")
+
+
 class TensorUIConfig(BaseModel):
     """张量系统可调参数（前端可配置）
     
@@ -1383,6 +1461,9 @@ class UIConfig(BaseModel):
     
     # 20. 基因多样性配置
     gene_diversity: GeneDiversityConfig = Field(default_factory=GeneDiversityConfig)
+    
+    # 21. 属性预算配置
+    trait_budget: TraitBudgetConfig = Field(default_factory=TraitBudgetConfig)
     
     # --- Legacy Fields (Keep for migration) ---
     ai_provider: str | None = None

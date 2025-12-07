@@ -1440,3 +1440,456 @@ def get_bonus_summary(habitat_type: str, organs: dict = None) -> dict:
         "organ_bonus": organ_bonus,
         "summary_text": summary_text,
     }
+
+
+# ==================== 核心预算计算系统 ====================
+# 基于设计文档第三章的公式：
+# 预算上限 = 基础值 × 时代因子 × 营养级因子 × 体型因子 × 器官因子
+
+# 基础预算值
+BASE_BUDGET = 15.0
+
+
+def get_era_factor(turn_index: int) -> float:
+    """计算时代因子，体现演化复杂度的累积
+    
+    设计理念（基于设计文档2.1的时间线）：
+    - 太古宙（0-15）: 缓慢起步，1.0→1.5
+    - 元古宙（15-54）: 稳定增长，1.5→4.0
+    - 古生代（54-343）: 寒武纪爆发后加速！4.0→25.0
+    - 中生代（343-715）: 持续增长，25.0→50.0
+    - 新生代（715-979）: 精细演化，50.0→70.0
+    - 未来（979+）: 无限可能
+    
+    Args:
+        turn_index: 当前回合数
+        
+    Returns:
+        时代因子（1.0-100+）
+    """
+    if turn_index <= 15:
+        # 太古宙：线性起步
+        return 1.0 + (turn_index / 15) * 0.5
+    
+    elif turn_index <= 54:
+        # 元古宙：加速准备
+        base = 1.5
+        progress = (turn_index - 15) / (54 - 15)
+        return base + progress * 2.5  # 1.5 → 4.0
+    
+    elif turn_index <= 343:
+        # 古生代：寒武纪大爆发！指数增长
+        base = 4.0
+        progress = (turn_index - 54) / (343 - 54)
+        # 使用幂函数加速：progress^1.3
+        return base + (progress ** 1.3) * 21.0  # 4.0 → 25.0
+    
+    elif turn_index <= 715:
+        # 中生代：稳定增长
+        base = 25.0
+        progress = (turn_index - 343) / (715 - 343)
+        return base + progress * 25.0  # 25.0 → 50.0
+    
+    elif turn_index <= 979:
+        # 新生代：精细演化
+        base = 50.0
+        progress = (turn_index - 715) / (979 - 715)
+        return base + progress * 20.0  # 50.0 → 70.0
+    
+    else:
+        # 未来：持续增长（对数减速）
+        base = 70.0
+        extra_turns = turn_index - 979
+        return base + 15.0 * math.log(1 + extra_turns / 200)
+
+
+def get_trophic_factor(trophic_level: float) -> float:
+    """计算营养级因子
+    
+    高营养级生物需要更多能力（感知、运动、捕食等）
+    
+    Args:
+        trophic_level: 营养级（1.0-5.5）
+        
+    Returns:
+        营养级因子（0.84-1.92）
+        - T1.0 (生产者): 0.84
+        - T2.0 (草食): 1.08
+        - T3.0 (小肉食): 1.32
+        - T4.0 (大肉食): 1.56
+        - T5.0 (顶级): 1.80
+    """
+    return 0.6 + trophic_level * 0.24
+
+
+def get_size_factor(body_weight_g: float) -> float:
+    """计算体型因子（基于克莱伯定律）
+    
+    大型生物可维持更高属性总和（代谢率 ∝ 体重^0.75）
+    
+    Args:
+        body_weight_g: 体重（克）
+        
+    Returns:
+        体型因子（0.5-1.8）
+        - 细菌 (10^-12g): 0.6
+        - 单细胞 (10^-6g): 0.75
+        - 1g 生物: 1.0
+        - 1kg 生物: 1.24
+        - 100kg 生物: 1.4
+        - 10000kg 生物: 1.56
+    """
+    if body_weight_g <= 0:
+        return 0.6
+    
+    log_weight = math.log10(body_weight_g)
+    # 参考点：1g = 1.0
+    factor = 1.0 + 0.08 * max(-5, min(5, log_weight))
+    return max(0.5, min(1.8, factor))
+
+
+def get_organ_factor(organ_count: int, mature_count: int = 0) -> float:
+    """计算器官因子
+    
+    复杂器官系统允许更高属性
+    
+    Args:
+        organ_count: 器官总数
+        mature_count: 成熟器官数量（阶段>=3）
+        
+    Returns:
+        器官因子（1.0-1.5）
+        - 0器官: 1.0
+        - 5器官: 1.1
+        - 10器官: 1.2
+        - 成熟器官额外 +0.02 每个
+    """
+    base = 1.0 + min(organ_count, 15) * 0.02
+    mature_bonus = min(mature_count, 10) * 0.02
+    return min(1.5, base + mature_bonus)
+
+
+def calculate_budget(
+    turn_index: int,
+    trophic_level: float = 2.0,
+    body_weight_g: float = 1.0,
+    organ_count: int = 0,
+    mature_organ_count: int = 0,
+) -> float:
+    """计算属性预算上限
+    
+    核心公式：预算 = 基础值 × 时代因子 × 营养级因子 × 体型因子 × 器官因子
+    
+    Args:
+        turn_index: 当前回合数
+        trophic_level: 营养级
+        body_weight_g: 体重（克）
+        organ_count: 器官总数
+        mature_organ_count: 成熟器官数量
+        
+    Returns:
+        属性预算上限
+    """
+    era = get_era_factor(turn_index)
+    trophic = get_trophic_factor(trophic_level)
+    size = get_size_factor(body_weight_g)
+    organ = get_organ_factor(organ_count, mature_organ_count)
+    
+    return BASE_BUDGET * era * trophic * size * organ
+
+
+def calculate_budget_from_species(species, turn_index: int) -> float:
+    """从物种对象计算预算
+    
+    Args:
+        species: 物种对象
+        turn_index: 当前回合数
+        
+    Returns:
+        属性预算上限
+    """
+    trophic_level = getattr(species, 'trophic_level', 2.0) or 2.0
+    
+    # 获取体重
+    morphology = getattr(species, 'morphology_stats', {}) or {}
+    body_weight = morphology.get('body_weight_g', 1.0) or 1.0
+    
+    # 获取器官信息
+    organs = getattr(species, 'organs', {}) or {}
+    organ_count = len(organs)
+    mature_count = sum(1 for o in organs.values() if o.get('stage', 0) >= 3)
+    
+    return calculate_budget(
+        turn_index=turn_index,
+        trophic_level=trophic_level,
+        body_weight_g=body_weight,
+        organ_count=organ_count,
+        mature_organ_count=mature_count,
+    )
+
+
+# ==================== 超预算处理 ====================
+
+def find_lowest_priority_trait(traits: dict[str, float]) -> str:
+    """找到优先级最低的属性（用于权衡削减）
+    
+    优先级规则：
+    - 社会性、繁殖速度优先削减
+    - 核心生存属性（耐寒/耐热/耐旱）尽量保留
+    
+    Args:
+        traits: 属性字典
+        
+    Returns:
+        最低优先级的属性名
+    """
+    # 属性优先级（数字越小优先级越低，越容易被削减）
+    priority_map = {
+        "社会性": 1,
+        "繁殖速度": 2,
+        "运动能力": 3,
+        "光照需求": 4,
+        "氧气需求": 4,
+        "攻击性": 5,
+        "防御性": 5,
+        "耐酸碱性": 6,
+        "耐盐性": 7,
+        "耐旱性": 8,
+        "耐热性": 9,
+        "耐寒性": 10,
+    }
+    
+    # 找到优先级最低且值最高的属性
+    candidates = []
+    for trait_name, value in traits.items():
+        priority = priority_map.get(trait_name, 5)
+        candidates.append((priority, -value, trait_name))
+    
+    if not candidates:
+        return list(traits.keys())[0] if traits else "社会性"
+    
+    # 按优先级升序，值降序排序
+    candidates.sort()
+    return candidates[0][2]
+
+
+def handle_budget_overflow(
+    traits: dict[str, float],
+    budget: float,
+    turn_index: int = 0,
+) -> tuple[dict[str, float], str, str]:
+    """处理属性总和超出预算的情况
+    
+    处理策略（基于设计文档第八章）：
+    - 超出≤15%: 警告但允许（物种特化）
+    - 超出15-40%: 自动权衡（削减低优先级属性）
+    - 超出>40%: 等比缩放
+    
+    Args:
+        traits: 属性字典
+        budget: 预算上限
+        turn_index: 当前回合数
+        
+    Returns:
+        (调整后的属性字典, 处理类型, 处理说明)
+        处理类型: "normal" | "warning" | "tradeoff" | "scaled"
+    """
+    current_total = sum(traits.values())
+    
+    if budget <= 0:
+        return traits, "normal", ""
+    
+    overflow_ratio = current_total / budget - 1.0
+    
+    if overflow_ratio <= 0:
+        return traits, "normal", ""
+    
+    elif overflow_ratio <= 0.15:
+        # 超出≤15%：警告但允许（物种特化）
+        return traits, "warning", f"属性略超预算 ({overflow_ratio:.0%})"
+    
+    elif overflow_ratio <= 0.40:
+        # 超出15-40%：自动权衡
+        adjusted = dict(traits)
+        sacrifice_amount = (current_total - budget) * 0.7
+        sacrifice_trait = find_lowest_priority_trait(adjusted)
+        
+        adjusted[sacrifice_trait] = max(
+            1.0,
+            adjusted[sacrifice_trait] - sacrifice_amount
+        )
+        return adjusted, "tradeoff", f"权衡: {sacrifice_trait} 削减 {sacrifice_amount:.1f}"
+    
+    else:
+        # 超出>40%：等比缩放
+        adjusted = {}
+        scale = (budget * 1.4) / current_total
+        for trait_name, value in traits.items():
+            adjusted[trait_name] = round(value * scale, 2)
+        return adjusted, "scaled", f"属性缩放至 {scale:.0%}"
+
+
+# ==================== 基因激活检查 ====================
+
+def can_activate_gene(
+    species,
+    trait_name: str,
+    gain_value: float,
+    turn_index: int,
+) -> tuple[bool, float, str | None]:
+    """检查是否可以激活基因
+    
+    考虑因素：
+    1. 边际递减：高属性增益会被削减
+    2. 单属性上限：考虑栖息地和器官加成
+    3. 总预算：超出过多需要权衡
+    
+    Args:
+        species: 物种对象
+        trait_name: 要增强的属性名
+        gain_value: 基因潜力值
+        turn_index: 当前回合数
+        
+    Returns:
+        (是否可激活, 实际增益, 警告信息)
+    """
+    traits = getattr(species, 'abstract_traits', {}) or {}
+    trophic_level = getattr(species, 'trophic_level', 2.0) or 2.0
+    habitat_type = getattr(species, 'habitat_type', 'terrestrial')
+    organs = getattr(species, 'organs', {}) or {}
+    
+    # 计算预算
+    budget = calculate_budget_from_species(species, turn_index)
+    current_total = sum(traits.values())
+    
+    # 应用边际递减
+    current_value = traits.get(trait_name, 0)
+    diminishing = get_diminishing_factor(current_value, turn_index, trophic_level)
+    effective_gain = gain_value * diminishing
+    
+    # 检查单属性上限（考虑加成）
+    single_cap = get_effective_trait_cap(
+        trait_name, turn_index, trophic_level,
+        habitat_type=habitat_type,
+        organs=organs
+    )
+    
+    if current_value + effective_gain > single_cap:
+        effective_gain = max(0, single_cap - current_value)
+    
+    # 检查总预算
+    new_total = current_total + effective_gain
+    overflow = new_total / budget - 1.0 if budget > 0 else 0
+    
+    warning = None
+    if overflow > 0.4:
+        warning = "需要权衡"
+    elif overflow > 0.15:
+        warning = "接近预算上限"
+    elif diminishing < 0.5:
+        warning = f"边际递减严重 ({diminishing:.0%}效率)"
+    
+    return True, effective_gain, warning
+
+
+def get_budget_prompt_context(species, turn_index: int) -> str:
+    """为 LLM 生成预算上下文
+    
+    Args:
+        species: 物种对象
+        turn_index: 当前回合数
+        
+    Returns:
+        格式化的预算上下文文本
+    """
+    traits = getattr(species, 'abstract_traits', {}) or {}
+    trophic_level = getattr(species, 'trophic_level', 2.0) or 2.0
+    
+    budget = calculate_budget_from_species(species, turn_index)
+    current_total = sum(traits.values())
+    single_cap = get_single_trait_cap(turn_index, trophic_level)
+    
+    remaining = max(0, budget - current_total)
+    usage_percent = current_total / budget if budget > 0 else 0
+    
+    return f"""
+【属性预算信息】
+- 当前属性总和: {current_total:.0f}
+- 预算上限: {budget:.0f}
+- 使用率: {usage_percent:.0%}
+- 剩余空间: {remaining:.0f}
+- 单属性上限: {single_cap:.0f}
+
+【生成基因建议】
+- 新基因潜力值范围: 3.0 - {min(8.0, single_cap * 0.3):.1f}
+- 建议生成 1-3 个休眠基因
+- 约 80% 有益/中性，20% 轻微有害
+"""
+
+
+# ==================== 预算系统综合上下文 ====================
+
+def get_full_budget_context(species, turn_index: int) -> dict:
+    """获取完整的预算系统上下文（供 prompt 使用）
+    
+    整合：预算计算、边际递减、突破机会、加成信息
+    
+    Args:
+        species: 物种对象
+        turn_index: 当前回合数
+        
+    Returns:
+        完整的预算上下文字典
+    """
+    traits = getattr(species, 'abstract_traits', {}) or {}
+    trophic_level = getattr(species, 'trophic_level', 2.0) or 2.0
+    habitat_type = getattr(species, 'habitat_type', 'terrestrial')
+    organs = getattr(species, 'organs', {}) or {}
+    
+    # 1. 基础预算信息
+    budget = calculate_budget_from_species(species, turn_index)
+    current_total = sum(traits.values())
+    single_cap = get_single_trait_cap(turn_index, trophic_level)
+    remaining = max(0, budget - current_total)
+    usage_percent = current_total / budget if budget > 0 else 0
+    
+    # 2. 时代因子分解
+    era_factor = get_era_factor(turn_index)
+    trophic_factor = get_trophic_factor(trophic_level)
+    
+    # 3. 边际递减摘要
+    diminishing = get_diminishing_summary(traits, turn_index, trophic_level)
+    
+    # 4. 突破摘要
+    breakthrough = get_breakthrough_summary(traits, turn_index, trophic_level)
+    
+    # 5. 加成摘要
+    bonus = get_bonus_summary(habitat_type, organs)
+    
+    # 6. 生成综合文本
+    budget_text = f"""【属性预算总览】
+- 当前属性总和: {current_total:.0f} / {budget:.0f} ({usage_percent:.0%})
+- 剩余空间: {remaining:.0f}
+- 单属性上限: {single_cap:.0f}
+- 时代因子: {era_factor:.1f} | 营养级因子: {trophic_factor:.2f}"""
+    
+    return {
+        # 数值
+        "budget": budget,
+        "current_total": current_total,
+        "remaining": remaining,
+        "usage_percent": usage_percent,
+        "single_cap": single_cap,
+        "era_factor": era_factor,
+        "trophic_factor": trophic_factor,
+        # 文本
+        "budget_text": budget_text,
+        "diminishing_text": diminishing["warning_text"],
+        "breakthrough_text": breakthrough["summary_text"],
+        "bonus_text": bonus["summary_text"],
+        "strategy_hint": diminishing["strategy_hint"],
+        # 原始数据
+        "_diminishing": diminishing,
+        "_breakthrough": breakthrough,
+        "_bonus": bonus,
+    }
