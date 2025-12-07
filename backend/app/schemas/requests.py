@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Literal, Sequence
 
@@ -149,3 +149,22 @@ class SetSymbiosisRequest(BaseModel):
     symbiosis_type: Literal["mutualism", "commensalism", "parasitism", "none"] = Field(
         default="mutualism", description="共生类型"
     )
+
+
+# ========== 基因编辑请求 ==========
+
+class AddDormantGeneRequest(BaseModel):
+    """添加休眠基因请求"""
+    gene_type: Literal["trait", "organ"] = Field(description="基因类型: trait(特质) 或 organ(器官)")
+    name: str = Field(min_length=1, max_length=50, description="基因名称")
+    # 特质参数
+    potential_value: float | None = Field(default=None, ge=0.0, le=15.0, description="特质潜力值(0-15)")
+    pressure_types: list[str] | None = Field(default=None, description="触发压力类型列表")
+    # 器官参数
+    organ_data: dict | None = Field(default=None, description="器官数据 {category, type, parameters}")
+
+
+class ActivateDormantGeneRequest(BaseModel):
+    """激活休眠基因请求"""
+    gene_type: Literal["trait", "organ"] = Field(description="基因类型: trait(特质) 或 organ(器官)")
+    name: str = Field(min_length=1, max_length=50, description="要激活的基因名称")

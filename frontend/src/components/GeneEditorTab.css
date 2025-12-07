@@ -1,0 +1,509 @@
+/**
+ * GeneEditorTab 样式
+ * 基因编辑标签页的样式定义
+ */
+
+.gene-editor-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 0;
+}
+
+/* ========== 基因多样性状态卡片 ========== */
+.get-diversity-status {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(59, 130, 246, 0.1));
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.get-diversity-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 12px;
+}
+
+.get-diversity-header svg {
+  color: #8b5cf6;
+}
+
+.get-diversity-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.get-diversity-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+}
+
+.get-diversity-label {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.get-diversity-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #8b5cf6;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ========== 错误提示 ========== */
+.get-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  color: #fca5a5;
+  font-size: 13px;
+}
+
+.get-error svg {
+  flex-shrink: 0;
+}
+
+.get-error button {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #fca5a5;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+}
+
+/* ========== 加载状态 ========== */
+.get-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.get-loading .spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ========== 添加基因按钮 ========== */
+.get-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.1));
+  border: 1px dashed rgba(34, 197, 94, 0.5);
+  border-radius: 10px;
+  color: #22c55e;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.get-add-btn:hover {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.3), rgba(34, 197, 94, 0.2));
+  border-color: rgba(34, 197, 94, 0.7);
+}
+
+/* ========== 添加表单 ========== */
+.get-add-form {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.get-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.get-form-row > label {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.get-form-row input[type="text"],
+.get-form-row select {
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: #e2e8f0;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.get-form-row input[type="text"]:focus,
+.get-form-row select:focus {
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.get-form-row input[type="range"] {
+  flex: 1;
+  accent-color: #8b5cf6;
+}
+
+.get-form-row .get-range-value {
+  min-width: 40px;
+  text-align: right;
+  font-size: 14px;
+  color: #8b5cf6;
+  font-weight: 600;
+}
+
+.get-form-row:has(input[type="range"]) {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.get-form-row:has(input[type="range"]) > label {
+  min-width: 100px;
+}
+
+/* 单选按钮组 */
+.get-radio-group {
+  display: flex;
+  gap: 8px;
+}
+
+.get-radio-group label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #94a3b8;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.get-radio-group label:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.get-radio-group label.active {
+  background: rgba(139, 92, 246, 0.2);
+  border-color: rgba(139, 92, 246, 0.5);
+  color: #c4b5fd;
+}
+
+.get-radio-group input {
+  display: none;
+}
+
+/* 压力类型选项 */
+.get-pressure-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.get-pressure-option {
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: #94a3b8;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.get-pressure-option:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.get-pressure-option.selected {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(59, 130, 246, 0.5);
+  color: #93c5fd;
+}
+
+/* 表单按钮 */
+.get-form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.get-form-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.get-form-btn.cancel {
+  background: rgba(100, 116, 139, 0.2);
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  color: #94a3b8;
+}
+
+.get-form-btn.cancel:hover {
+  background: rgba(100, 116, 139, 0.3);
+}
+
+.get-form-btn.confirm {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  border: none;
+  color: white;
+}
+
+.get-form-btn.confirm:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.get-form-btn.confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ========== 分区 ========== */
+.get-section {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.get-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: none;
+  color: #e2e8f0;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.get-section-header:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.get-section-header svg {
+  color: #64748b;
+}
+
+.get-section-title {
+  font-weight: 600;
+}
+
+.get-section-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+/* ========== 基因列表 ========== */
+.get-gene-list {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.get-empty {
+  padding: 24px;
+  text-align: center;
+  color: #64748b;
+  font-size: 13px;
+}
+
+/* ========== 基因项 ========== */
+.get-gene-item {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 12px;
+  transition: all 0.2s;
+}
+
+.get-gene-item:hover {
+  background: rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.get-gene-item.activated {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.get-gene-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.get-gene-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.get-gene-icon {
+  font-size: 16px;
+}
+
+/* 状态徽章 */
+.get-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.get-status-badge.activated {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
+
+.get-status-badge.dormant {
+  background: rgba(100, 116, 139, 0.2);
+  color: #94a3b8;
+}
+
+/* 基因详情 */
+.get-gene-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 10px;
+}
+
+.get-gene-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.get-gene-stat svg {
+  color: #64748b;
+}
+
+.get-stat-label {
+  color: #64748b;
+}
+
+.get-stat-value {
+  color: #cbd5e1;
+  font-weight: 500;
+}
+
+.get-pressure-tags {
+  display: flex;
+  gap: 4px;
+}
+
+.get-pressure-tag {
+  padding: 2px 6px;
+  background: rgba(59, 130, 246, 0.15);
+  border-radius: 4px;
+  color: #93c5fd;
+  font-size: 11px;
+}
+
+/* 基因操作按钮 */
+.get-gene-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.get-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.get-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.get-action-btn.activate {
+  background: linear-gradient(135deg, rgba(234, 179, 8, 0.2), rgba(234, 179, 8, 0.1));
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  color: #fcd34d;
+}
+
+.get-action-btn.activate:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(234, 179, 8, 0.3), rgba(234, 179, 8, 0.2));
+  border-color: rgba(234, 179, 8, 0.5);
+}
+
+.get-action-btn.delete {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  padding: 6px 8px;
+}
+
+.get-action-btn.delete:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.4);
+}

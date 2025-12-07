@@ -3306,6 +3306,11 @@ def _reset_game_services():
     achievement_service.reset()
     game_hints_service.clear_cooldown()
     energy_service.reset()
+    # 确保神力进阶/神迹状态也被重置，避免旧存档残留
+    try:
+        divine_progression_service.reset()
+    except Exception:
+        pass
 
 
 # ================== 能量点系统 API ==================

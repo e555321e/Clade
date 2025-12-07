@@ -19,6 +19,7 @@ import type { SpeciesDetail, SpeciesSnapshot, SpeciesFoodChain } from "@/service
 import { fetchSpeciesDetail, editSpecies, fetchSpeciesFoodChain } from "@/services/api";
 import { OrganismBlueprint } from "./OrganismBlueprint";
 import { SpeciesAITab } from "./SpeciesAITab";
+import { GeneEditorTab } from "./GeneEditorTab";
 import "./SpeciesDetailModal.css";
 
 // ============ 中英文字段映射表 ============
@@ -283,7 +284,7 @@ export function SpeciesDetailModal({
   const [species, setSpecies] = useState<SpeciesDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"overview" | "traits" | "organs" | "ecology" | "lineage" | "ai">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "traits" | "organs" | "ecology" | "lineage" | "genes" | "ai">("overview");
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({ description: "", morphology: "", traits: "" });
   const [isSaving, setIsSaving] = useState(false);
@@ -832,6 +833,7 @@ export function SpeciesDetailModal({
                       ...(species.hybrid_parent_codes?.length || species.parent_code
                         ? [{ key: "lineage", label: "族谱", icon: <GitBranch size={14} /> }]
                         : []),
+                      { key: "genes", label: "基因", icon: <Dna size={14} /> },
                       { key: "ai", label: "AI", icon: <Sparkles size={14} /> }
                     ].map(({ key, label, icon }) => (
                       <button
@@ -1150,6 +1152,15 @@ export function SpeciesDetailModal({
                             </div>
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {activeTab === "genes" && (
+                      <div className="sdm-genes">
+                        <GeneEditorTab
+                          species={species}
+                          onSpeciesUpdate={(updated) => setSpecies(updated)}
+                        />
                       </div>
                     )}
 

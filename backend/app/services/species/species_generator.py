@@ -482,7 +482,7 @@ class SpeciesGenerator:
             diet_type = "detritivore"
             trophic_level = 1.5
         
-        return Species(
+        species = Species(
             lineage_code=lineage_code,
             parent_code=None,
             latin_name=data["latin_name"],
@@ -499,6 +499,14 @@ class SpeciesGenerator:
             trophic_level=trophic_level,  # 【修复】设置营养级
             diet_type=diet_type,  # 【修复】设置食性类型
         )
+        
+        # 【新增】为备用物种也生成初始休眠基因
+        try:
+            self._generate_initial_dormant_genes(species)
+        except Exception as e:
+            logger.warning(f"[物种生成器] 备用物种生成休眠基因失败: {e}")
+        
+        return species
 
     def generate_advanced(
         self,

@@ -863,6 +863,26 @@ export interface PressureTemplate {
   narrative_template?: string; // Optional template for the description
   default_intensity?: number; // Optional default intensity
 }
+// 休眠基因数据结构
+export interface DormantGeneData {
+  potential_value?: number;         // 特质潜力值 (0-15)
+  organ_data?: {                    // 器官数据
+    category: string;
+    type: string;
+    parameters: Record<string, number>;
+  };
+  pressure_types?: string[];        // 触发压力类型
+  exposure_count?: number;          // 暴露次数
+  max_death_rate?: number;          // 最大死亡率
+  activated: boolean;               // 是否已激活
+  activated_turn?: number | null;   // 激活回合
+}
+
+export interface DormantGenes {
+  traits: Record<string, DormantGeneData>;
+  organs: Record<string, DormantGeneData>;
+}
+
 export interface SpeciesDetail {
   lineage_code: string;
   latin_name: string;
@@ -885,6 +905,9 @@ export interface SpeciesDetail {
   gene_diversity_radius?: number;
   gene_stability?: number;
   explored_directions?: number[];
+  // 休眠基因
+  dormant_genes?: DormantGenes;
+  stress_exposure?: Record<string, { count: number; max_death_rate: number }>;
 }
 
 export interface SpeciesListItem {

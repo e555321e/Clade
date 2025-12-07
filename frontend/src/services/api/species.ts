@@ -9,6 +9,7 @@ import type {
   LineageTree,
   LineageQueryParams,
   NicheCompareResult,
+  DormantGeneData,
 } from "../api.types";
 
 /**
@@ -142,6 +143,63 @@ export async function fetchWatchlist(): Promise<string[]> {
  */
 export async function updateWatchlist(lineageCodes: string[]): Promise<void> {
   await http.post("/api/watchlist", { lineage_codes: lineageCodes });
+}
+
+// ============ 基因编辑 API ============
+
+/**
+ * 添加休眠基因请求参数
+ */
+export interface AddDormantGeneParams {
+  gene_type: "trait" | "organ";
+  name: string;
+  potential_value?: number;           // 特质潜力值 (0-15)
+  pressure_types?: string[];          // 触发压力类型
+  organ_data?: {                      // 器官数据
+    category: string;
+    type: string;
+    parameters: Record<string, number>;
+  };
+}
+
+/**
+ * 添加休眠基因
+ */
+export async function addDormantGene(
+  lineageCode: string,
+  params: AddDormantGeneParams
+): Promise<SpeciesDetail> {
+  return http.post<SpeciesDetail>(
+    `/api/species/${encodeURIComponent(lineageCode)}/genes`,
+    params
+  );
+}
+
+/**
+ * 激活休眠基因
+ */
+export async function activateDormantGene(
+  lineageCode: string,
+  geneType: "trait" | "organ",
+  geneName: string
+): Promise<SpeciesDetail> {
+  return http.post<SpeciesDetail>(
+    `/api/species/${encodeURIComponent(lineageCode)}/genes/activate`,
+    { gene_type: geneType, name: geneName }
+  );
+}
+
+/**
+ * 删除休眠基因
+ */
+export async function removeDormantGene(
+  lineageCode: string,
+  geneType: "trait" | "organ",
+  geneName: string
+): Promise<SpeciesDetail> {
+  return http.delete<SpeciesDetail>(
+    `/api/species/${encodeURIComponent(lineageCode)}/genes/${geneType}/${encodeURIComponent(geneName)}`
+  );
 }
 
 

@@ -20,6 +20,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from ..schemas.requests import (
+    AddDormantGeneRequest,
+    ActivateDormantGeneRequest,
     GenerateSpeciesAdvancedRequest,
     GenerateSpeciesRequest,
     IntroduceSpeciesRequest,
@@ -803,4 +805,192 @@ def get_intervention_status(
         "suppressed": suppressed,
         "total_interventions": len(protected) + len(suppressed),
     }
+
+
+# ========== 基因编辑 ==========
+
+@router.post("/species/{lineage_code}/genes", response_model=SpeciesDetail, tags=["genes"])
+def add_dormant_gene(
+    lineage_code: str,
+    request: AddDormantGeneRequest,
+    species_repo = Depends(get_species_repository),
+    container: 'ServiceContainer' = Depends(get_container),
+    _: None = Depends(require_not_running),
+) -> SpeciesDetail:
+    """添加休眠基因到物种（模拟运行时禁止）
+    
+    手动添加休眠基因，可用于调试或玩家干预。
+    """
+    species = species_repo.get_by_lineage(lineage_code)
+    if not species:
+        raise HTTPException(status_code=404, detail=f"物种 {lineage_code} 不存在")
+    
+    # 初始化 dormant_genes 如果不存在
+    if not species.dormant_genes:
+        species.dormant_genes = {"traits": {}, "organs": {}}
+    species.dormant_genes.setdefault("traits", {})
+    species.dormant_genes.setdefault("organs", {})
+    
+    if request.gene_type == "trait":
+        # 添加休眠特质
+        if request.name in species.dormant_genes["traits"]:
+            raise HTTPException(status_code=400, detail=f"休眠特质 '{request.name}' 已存在")
+        
+        species.dormant_genes["traits"][request.name] = {
+            "potential_value": request.potential_value or 7.0,
+            "pressure_types": request.pressure_types or [],
+            "exposure_count": 0,
+            "max_death_rate": 0.0,
+            "activated": False,
+            "activated_turn": None,
+        }
+        logger.info(f"[基因编辑] 为 {species.common_name} 添加休眠特质: {request.name}")
+        
+    else:
+        # 添加休眠器官
+        if request.name in species.dormant_genes["organs"]:
+            raise HTTPException(status_code=400, detail=f"休眠器官 '{request.name}' 已存在")
+        
+        organ_data = request.organ_data or {
+            "category": "other",
+            "type": "custom",
+            "parameters": {},
+        }
+        
+        species.dormant_genes["organs"][request.name] = {
+            "organ_data": organ_data,
+            "pressure_types": request.pressure_types or [],
+            "exposure_count": 0,
+            "max_death_rate": 0.0,
+            "activated": False,
+            "activated_turn": None,
+        }
+        logger.info(f"[基因编辑] 为 {species.common_name} 添加休眠器官: {request.name}")
+    
+    species_repo.upsert(species)
+    _invalidate_lineage_cache()
+    
+    return _serialize_species_detail(species)
+
+
+@router.post("/species/{lineage_code}/genes/activate", response_model=SpeciesDetail, tags=["genes"])
+def activate_dormant_gene(
+    lineage_code: str,
+    request: ActivateDormantGeneRequest,
+    species_repo = Depends(get_species_repository),
+    container: 'ServiceContainer' = Depends(get_container),
+    _: None = Depends(require_not_running),
+) -> SpeciesDetail:
+    """手动激活休眠基因（模拟运行时禁止）
+    
+    强制激活指定的休眠基因，跳过正常的激活条件检查。
+    """
+    species = species_repo.get_by_lineage(lineage_code)
+    if not species:
+        raise HTTPException(status_code=404, detail=f"物种 {lineage_code} 不存在")
+    
+    if not species.dormant_genes:
+        raise HTTPException(status_code=400, detail="该物种没有休眠基因")
+    
+    engine = container.simulation_engine
+    current_turn = engine.turn_counter
+    
+    if request.gene_type == "trait":
+        traits = species.dormant_genes.get("traits", {})
+        if request.name not in traits:
+            raise HTTPException(status_code=404, detail=f"休眠特质 '{request.name}' 不存在")
+        
+        gene_data = traits[request.name]
+        if gene_data.get("activated", False):
+            raise HTTPException(status_code=400, detail=f"特质 '{request.name}' 已经激活")
+        
+        # 激活特质
+        gene_data["activated"] = True
+        gene_data["activated_turn"] = current_turn
+        
+        # 应用到物种特质
+        potential = gene_data.get("potential_value", 7.0)
+        if species.abstract_traits is None:
+            species.abstract_traits = {}
+        
+        current_val = species.abstract_traits.get(request.name, 0.0)
+        species.abstract_traits[request.name] = min(15.0, current_val + potential)
+        
+        logger.info(f"[基因编辑] 手动激活 {species.common_name} 的特质: {request.name} (+{potential})")
+        
+    else:
+        organs = species.dormant_genes.get("organs", {})
+        if request.name not in organs:
+            raise HTTPException(status_code=404, detail=f"休眠器官 '{request.name}' 不存在")
+        
+        gene_data = organs[request.name]
+        if gene_data.get("activated", False):
+            raise HTTPException(status_code=400, detail=f"器官 '{request.name}' 已经激活")
+        
+        # 激活器官
+        gene_data["activated"] = True
+        gene_data["activated_turn"] = current_turn
+        
+        # 应用到物种器官
+        organ_data = gene_data.get("organ_data", {})
+        if species.organs is None:
+            species.organs = {}
+        
+        species.organs[request.name] = organ_data
+        
+        logger.info(f"[基因编辑] 手动激活 {species.common_name} 的器官: {request.name}")
+    
+    species_repo.upsert(species)
+    _invalidate_lineage_cache()
+    
+    return _serialize_species_detail(species)
+
+
+@router.delete("/species/{lineage_code}/genes/{gene_type}/{gene_name}", response_model=SpeciesDetail, tags=["genes"])
+def remove_dormant_gene(
+    lineage_code: str,
+    gene_type: str,
+    gene_name: str,
+    species_repo = Depends(get_species_repository),
+    _: None = Depends(require_not_running),
+) -> SpeciesDetail:
+    """删除休眠基因（模拟运行时禁止）"""
+    species = species_repo.get_by_lineage(lineage_code)
+    if not species:
+        raise HTTPException(status_code=404, detail=f"物种 {lineage_code} 不存在")
+    
+    if not species.dormant_genes:
+        raise HTTPException(status_code=400, detail="该物种没有休眠基因")
+    
+    if gene_type == "trait":
+        traits = species.dormant_genes.get("traits", {})
+        if gene_name not in traits:
+            raise HTTPException(status_code=404, detail=f"休眠特质 '{gene_name}' 不存在")
+        
+        gene_data = traits[gene_name]
+        if gene_data.get("activated", False):
+            raise HTTPException(status_code=400, detail=f"已激活的特质 '{gene_name}' 不能删除")
+        
+        del species.dormant_genes["traits"][gene_name]
+        logger.info(f"[基因编辑] 删除 {species.common_name} 的休眠特质: {gene_name}")
+        
+    elif gene_type == "organ":
+        organs = species.dormant_genes.get("organs", {})
+        if gene_name not in organs:
+            raise HTTPException(status_code=404, detail=f"休眠器官 '{gene_name}' 不存在")
+        
+        gene_data = organs[gene_name]
+        if gene_data.get("activated", False):
+            raise HTTPException(status_code=400, detail=f"已激活的器官 '{gene_name}' 不能删除")
+        
+        del species.dormant_genes["organs"][gene_name]
+        logger.info(f"[基因编辑] 删除 {species.common_name} 的休眠器官: {gene_name}")
+        
+    else:
+        raise HTTPException(status_code=400, detail=f"无效的基因类型: {gene_type}")
+    
+    species_repo.upsert(species)
+    _invalidate_lineage_cache()
+    
+    return _serialize_species_detail(species)
 

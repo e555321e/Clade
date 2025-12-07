@@ -43,8 +43,12 @@ export {
   invalidateLineageCache,
   fetchWatchlist,
   updateWatchlist,
+  // 基因编辑
+  addDormantGene,
+  activateDormantGene,
+  removeDormantGene,
 } from "./species";
-export type { GenerateSpeciesAdvancedParams } from "./species";
+export type { GenerateSpeciesAdvancedParams, AddDormantGeneParams } from "./species";
 
 // 配置相关
 export {

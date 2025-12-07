@@ -188,10 +188,36 @@ class CoreServiceProvider:
     @cached_property
     def save_manager(self) -> 'SaveManager':
         from ...services.system.save_manager import SaveManager
+        # 复用全局能量服务实例，确保读档/存档能同步神力状态
+        try:
+            from ...services.system.divine_energy import energy_service as global_energy_service
+        except Exception:
+            global_energy_service = None
+        # 复用全局神力进阶服务实例，确保神迹/信仰状态同步
+        try:
+            from ...services.system.divine_progression import divine_progression_service as global_progression_service
+        except Exception:
+            global_progression_service = None
         return self._get_or_override(
             'save_manager',
-            lambda: SaveManager(self.settings.saves_dir, embedding_service=self.embedding_service)
+            lambda: self._init_save_manager(global_energy_service, global_progression_service)
         )
+
+    def _init_save_manager(self, energy_service=None, progression_service=None) -> 'SaveManager':
+        """初始化 SaveManager，并注入神力/神迹服务以持久化状态。"""
+        from ...services.system.save_manager import SaveManager
+        save_manager = SaveManager(self.settings.saves_dir, embedding_service=self.embedding_service)
+        if energy_service:
+            try:
+                save_manager.set_energy_service(energy_service)
+            except Exception as e:
+                logger.warning(f"[核心服务] SaveManager 注入能量服务失败: {e}")
+        if progression_service:
+            try:
+                save_manager.set_progression_service(progression_service)
+            except Exception as e:
+                logger.warning(f"[核心服务] SaveManager 注入神力进阶服务失败: {e}")
+        return save_manager
     
     @cached_property
     def semantic_anchor_service(self) -> 'SemanticAnchorService':

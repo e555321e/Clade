@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import random
 from datetime import datetime
 
 from ..models.genus import Genus
@@ -7,6 +9,8 @@ from ..models.species import Species
 from ..repositories.genus_repository import genus_repository
 from ..repositories.species_repository import species_repository
 from ..services.species.trophic import TrophicLevelCalculator
+
+logger = logging.getLogger(__name__)
 
 A_SCENARIO = [
     {
@@ -1208,6 +1212,101 @@ THRIVING_ECOSYSTEM_SCENARIO = [
 ]
 
 
+def _generate_initial_dormant_genes(species: Species) -> None:
+    """为物种生成初始休眠基因
+    
+    确保每个物种从创建时就携带潜在可激活的休眠基因，
+    增加基因系统的活跃度。
+    """
+    if species.dormant_genes is None:
+        species.dormant_genes = {"traits": {}, "organs": {}}
+    
+    species.dormant_genes.setdefault("traits", {})
+    species.dormant_genes.setdefault("organs", {})
+    
+    # 使用物种信息作为种子确保可重复性
+    seed = abs(hash(f"{species.lineage_code}-dormant")) % 1_000_000_007
+    rng = random.Random(seed)
+    
+    # 压力类型映射
+    pressure_mapping = {
+        "耐寒性": ["cold", "temperature"],
+        "耐热性": ["heat", "temperature"],
+        "耐旱性": ["drought", "humidity"],
+        "耐盐性": ["salinity", "osmotic"],
+        "免疫力": ["disease", "pathogen"],
+        "运动能力": ["predation", "competition"],
+        "繁殖速度": ["population", "adaptive"],
+        "社会性": ["group", "cooperation"],
+        "光合效率": ["light", "resource"],
+        "固碳能力": ["resource", "competition"],
+    }
+    
+    # 基于物种现有特质生成休眠变异版本
+    for trait_name, trait_value in (species.abstract_traits or {}).items():
+        # 60% 概率为每个特质生成一个增强版休眠基因
+        if rng.random() < 0.60:
+            enhanced_name = f"强化{trait_name}" if not trait_name.startswith("强化") else trait_name
+            if enhanced_name not in species.dormant_genes["traits"]:
+                pressure_types = pressure_mapping.get(trait_name, ["adaptive", "environment"])
+                species.dormant_genes["traits"][enhanced_name] = {
+                    "potential_value": min(15.0, float(trait_value) * 1.25),
+                    "activation_threshold": 0.20,
+                    "pressure_types": pressure_types,
+                    "exposure_count": 0,
+                    "activated": False,
+                    "inherited_from": "initial"
+                }
+    
+    # 为物种生成一些通用的休眠特质
+    universal_dormant_traits = [
+        ("适应性", ["adaptive", "environment"]),
+        ("恢复力", ["stress", "damage"]),
+        ("代谢效率", ["resource", "competition"]),
+    ]
+    for trait_name, pressure_types in universal_dormant_traits:
+        if trait_name not in (species.abstract_traits or {}) and trait_name not in species.dormant_genes["traits"]:
+            if rng.random() < 0.50:  # 50% 概率
+                species.dormant_genes["traits"][trait_name] = {
+                    "potential_value": rng.uniform(5.0, 8.0),
+                    "activation_threshold": 0.15,
+                    "pressure_types": pressure_types,
+                    "exposure_count": 0,
+                    "activated": False,
+                    "inherited_from": "initial"
+                }
+    
+    # 为物种生成一些休眠器官潜力
+    potential_organs = [
+        {"name": "感光点", "category": "sensory", "type": "photoreceptor", "parameters": {"sensitivity": 0.5}},
+        {"name": "化学感受器", "category": "sensory", "type": "chemoreceptor", "parameters": {"range": 0.3}},
+        {"name": "纤毛", "category": "locomotion", "type": "cilia", "parameters": {"efficiency": 0.4}},
+        {"name": "防护层", "category": "defense", "type": "protective_layer", "parameters": {"resistance": 0.3}},
+    ]
+    
+    for organ in potential_organs:
+        # 30% 概率生成每个休眠器官
+        if rng.random() < 0.30:
+            organ_name = organ["name"]
+            if organ_name not in species.dormant_genes["organs"]:
+                species.dormant_genes["organs"][organ_name] = {
+                    "organ_data": {
+                        "category": organ["category"],
+                        "type": organ["type"],
+                        "parameters": organ["parameters"]
+                    },
+                    "activation_threshold": 0.20,
+                    "pressure_types": ["adaptive", "competition", "predation"],
+                    "exposure_count": 0,
+                    "activated": False,
+                    "inherited_from": "initial"
+                }
+    
+    total_dormant = len(species.dormant_genes.get("traits", {})) + len(species.dormant_genes.get("organs", {}))
+    if total_dormant > 0:
+        logger.debug(f"[Seed] {species.lineage_code} 生成了 {total_dormant} 个初始休眠基因")
+
+
 def seed_defaults() -> None:
     """Ensure core starter species exist (原初大陆剧本)."""
 
@@ -1219,6 +1318,8 @@ def seed_defaults() -> None:
         if payload["lineage_code"] in existing:
             continue
         sp = Species(**payload)
+        # 【新增】为物种生成初始休眠基因
+        _generate_initial_dormant_genes(sp)
         created_species.append(sp)
     
     for sp in created_species:
@@ -1252,6 +1353,8 @@ def seed_thriving_ecosystem() -> None:
         if payload["lineage_code"] in existing:
             continue
         sp = Species(**payload)
+        # 【新增】为物种生成初始休眠基因
+        _generate_initial_dormant_genes(sp)
         created_species.append(sp)
         print(f"[Seed·繁荣生态] 创建物种: {sp.common_name} ({sp.lineage_code}) - T{sp.trophic_level:.1f}")
     
