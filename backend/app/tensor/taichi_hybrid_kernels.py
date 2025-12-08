@@ -441,6 +441,7 @@ def kernel_advanced_diffusion(
     """带适宜度引导的高级扩散 - Taichi 并行
     
     种群会优先向适宜度更高的地块扩散。
+    【修复】空地块也能接收来自邻居的种群扩散！
     
     Args:
         pop: 种群张量 (S, H, W)
@@ -452,11 +453,9 @@ def kernel_advanced_diffusion(
     
     for s, i, j in ti.ndrange(S, H, W):
         current = pop[s, i, j]
-        if current <= 0:
-            new_pop[s, i, j] = 0.0
-            continue
+        my_suit = suitability[s, i, j]
         
-        # 计算到邻居的扩散
+        # 计算流入和流出
         outflow = 0.0
         inflow = 0.0
         
@@ -468,24 +467,35 @@ def kernel_advanced_diffusion(
             nj = j + dj
             
             if 0 <= ni < H and 0 <= nj < W:
-                my_suit = suitability[s, i, j]
                 neighbor_suit = suitability[s, ni, nj]
+                neighbor_pop = pop[s, ni, nj]
                 
                 # 适宜度梯度决定扩散方向和强度
-                # 如果邻居适宜度更高，更多种群流向邻居
                 gradient = neighbor_suit - my_suit
                 
-                if gradient > 0:
-                    # 向高适宜度流出
-                    rate = base_rate * (1.0 + gradient)
+                # === 流出计算：当前地块有种群，且邻居更适宜 ===
+                if current > 0 and gradient > 0:
+                    # 向高适宜度流出（种群被吸引到更好的地方）
+                    rate = base_rate * (1.0 + gradient * 0.5)
                     outflow += current * rate * 0.25
-                elif gradient < 0:
-                    # 从低适宜度流入
-                    rate = base_rate * (1.0 - gradient)
-                    inflow += pop[s, ni, nj] * rate * 0.25
+                
+                # === 流入计算：邻居有种群，当前地块更适宜或有空间 ===
+                if neighbor_pop > 0:
+                    if gradient < 0:
+                        # 邻居适宜度低于我，邻居种群向我扩散
+                        rate = base_rate * (1.0 - gradient * 0.5)
+                        inflow += neighbor_pop * rate * 0.25
+                    elif my_suit > 0.1:
+                        # 即使适宜度相当，也有基础扩散（允许向空地扩展）
+                        # 【关键修复】这允许种群向"空地块"扩散
+                        base_spread = base_rate * 0.15  # 基础扩散率的15%
+                        inflow += neighbor_pop * base_spread * 0.25
         
-        # 限制最大流出
-        outflow = ti.min(outflow, current * 0.5)
+        # 限制最大流出（不能超过当前种群的50%）
+        if current > 0:
+            outflow = ti.min(outflow, current * 0.5)
+        else:
+            outflow = 0.0
         
         new_pop[s, i, j] = current - outflow + inflow
 

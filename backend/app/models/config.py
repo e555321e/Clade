@@ -406,9 +406,9 @@ class EcologyBalanceConfig(BaseModel):
     # 异属竞争系数（远缘物种之间的竞争强度倍数）
     non_kin_competition_multiplier: float = 0.4
     # 同属竞争中，强者的死亡率减免（最大值）
-    kin_winner_mortality_reduction: float = 0.15
-    # 同属竞争中，弱者的死亡率惩罚（最大值）
-    kin_loser_mortality_penalty: float = 0.25
+    kin_winner_mortality_reduction: float = 0.20
+    # 同属竞争中，弱者的死亡率惩罚（最大值）【加强】
+    kin_loser_mortality_penalty: float = 0.40
     # 适应度比较权重：种群数量
     fitness_weight_population: float = 0.35
     # 适应度比较权重：繁殖速度
@@ -417,8 +417,10 @@ class EcologyBalanceConfig(BaseModel):
     fitness_weight_resistance: float = 0.20
     # 适应度比较权重：生态位专化度
     fitness_weight_specialization: float = 0.20
-    # 同属竞争劣势阈值：适应度差距超过此值才触发淘汰机制
-    kin_disadvantage_threshold: float = 0.15
+    # 同属竞争劣势阈值：适应度差距超过此值才触发淘汰机制【降低阈值让更多竞争生效】
+    kin_disadvantage_threshold: float = 0.08
+    # 势均力敌时的竞争惩罚系数（同属近缘但差距不大时的共同压力）
+    kin_contested_penalty_coefficient: float = 0.12
     
     # ========== 营养传递效率 ==========
     # 能量传递效率（10%规则）：每升一个营养级，可用能量降至此比例

@@ -303,11 +303,18 @@ class KinCompetitionCalculator:
         # 只有差距超过阈值才触发优胜劣汰
         if abs(fitness_diff) < cfg.kin_disadvantage_threshold:
             # 势均力敌，双方都承受一定压力
-            penalty = overlap * cfg.kin_competition_multiplier * 0.05
+            # 【加强】使用可配置的惩罚系数，增加竞争压力
+            contested_coef = getattr(cfg, 'kin_contested_penalty_coefficient', 0.12)
+            penalty = overlap * cfg.kin_competition_multiplier * contested_coef
             results[code1].mortality_modifier -= penalty
             results[code2].mortality_modifier -= penalty
             results[code1].status = "contested"
             results[code2].status = "contested"
+            logger.debug(
+                f"[同属势均力敌] {code1} vs {code2}: "
+                f"适应度差={fitness_diff:.3f} < 阈值{cfg.kin_disadvantage_threshold}, "
+                f"双方惩罚={penalty:.3f}"
+            )
             return
         
         # 确定强者和弱者

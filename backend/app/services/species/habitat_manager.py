@@ -1547,30 +1547,47 @@ class HabitatManager:
         sea_level_change: float,
         turn_index: int,
     ) -> None:
-        """根据气候变化衰减/加权栖息地适宜度。"""
-        if abs(temp_change) < 0.1 and abs(sea_level_change) < 0.5:
+        """根据气候变化衰减/加权栖息地适宜度。
+        
+        【性能优化 v2】
+        1. 提高阈值，减少触发频率（与 FetchSpeciesStage 配合）
+        2. 添加性能计时日志
+        3. 只更新实际需要变化的记录
+        """
+        import time
+        
+        # 【优化】提高内部阈值，与 FetchSpeciesStage 保持一致
+        if abs(temp_change) < 0.5 and abs(sea_level_change) < 2.0:
             return
+        
+        t0 = time.perf_counter()
         
         habitats = self.repo.latest_habitats()
         if not habitats:
             return
         
-        species_map = {sp.id: sp for sp in species_list if sp.id}
-        updated: list[HabitatPopulation] = []
+        db_time = time.perf_counter() - t0
         
+        # 【优化】只构建存活物种的映射
+        species_map = {sp.id: sp for sp in species_list if sp.id and sp.status == "alive"}
+        updated: list[HabitatPopulation] = []
+        skipped = 0
+        
+        t1 = time.perf_counter()
         for habitat in habitats:
             species = species_map.get(habitat.species_id)
             if not species:
+                skipped += 1
                 continue
             
             modifier = 1.0
             env_sensitivity = species.hidden_traits.get("environment_sensitivity", 0.5)
             
-            if abs(temp_change) >= 0.1:
+            if abs(temp_change) >= 0.5:
                 temp_penalty = min(0.25, abs(temp_change) / 30.0)
                 modifier -= temp_penalty * (0.5 + env_sensitivity)
             
-            if abs(sea_level_change) >= 0.5:
+            if abs(sea_level_change) >= 2.0:
                 habitat_type = (species.habitat_type or "").lower()
                 if habitat_type in {"marine", "coastal", "deep_sea"}:
                     modifier += min(0.1, sea_level_change / 100.0) if sea_level_change > 0 else -min(0.2, abs(sea_level_change) / 40.0)
@@ -1579,7 +1596,9 @@ class HabitatManager:
             
             modifier = max(0.2, min(1.2, modifier))
             new_score = habitat.suitability * modifier
-            if abs(new_score - habitat.suitability) < 0.01:
+            
+            # 【优化】只更新变化足够大的记录
+            if abs(new_score - habitat.suitability) < 0.02:
                 continue
             
             updated.append(
@@ -1592,9 +1611,21 @@ class HabitatManager:
                 )
             )
         
+        calc_time = time.perf_counter() - t1
+        
         if updated:
+            t2 = time.perf_counter()
             self.repo.write_habitats(updated)
-            logger.info(f"[栖息地] 气候变化调整 {len(updated)} 条栖息地记录")
+            write_time = time.perf_counter() - t2
+            
+            total_time = time.perf_counter() - t0
+            logger.info(
+                f"[栖息地] 气候调整 {len(updated)}/{len(habitats)} 条记录 "
+                f"(跳过{skipped}, 总耗时{total_time*1000:.0f}ms: "
+                f"DB读{db_time*1000:.0f}ms, 计算{calc_time*1000:.0f}ms, 写入{write_time*1000:.0f}ms)"
+            )
+        else:
+            logger.debug(f"[栖息地] 气候变化较小，无需调整 (检查了{len(habitats)}条记录)")
 
 # 单例实例
 habitat_manager = HabitatManager()

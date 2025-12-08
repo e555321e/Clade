@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence
 
@@ -138,41 +139,68 @@ class EmbeddingIntegrationService:
 
     # ==================== 回合生命周期钩子 ====================
 
+    # 用于跟踪上一回合索引过的物种及其 updated_at
+    _last_indexed_timestamps: dict[str, datetime] = {}
+    
     def on_turn_start(self, turn_index: int, species_list: Sequence['Species']) -> None:
         """回合开始时调用
         
-        【优化】统一更新物种索引，避免重复调用：
+        【优化 v2】增量索引，只处理有变化的物种：
         1. 先更新统一的物种缓存
-        2. 再调用一次底层的物种索引更新
-        3. 各服务只更新自己的元数据缓存
+        2. 检测哪些物种自上次索引后有变化（基于 updated_at）
+        3. 只对有变化的物种调用索引更新
+        4. 各服务只更新自己的元数据缓存
         """
+        import time
+        from datetime import datetime
+        
         self._ensure_services()
+        t0 = time.perf_counter()
         
         # 【优化】更新统一的物种缓存
         from ..system.species_cache import get_species_cache
         species_cache = get_species_cache()
         species_cache.update(species_list, turn_index)
         
-        # 【优化】只调用一次底层索引更新（EmbeddingService内部有增量检测）
-        try:
-            count = self.embeddings.index_species(species_list)
-            if count > 0:
-                logger.debug(f"[EmbeddingIntegration] 更新物种向量索引: {count} 个")
-        except Exception as e:
-            logger.warning(f"[EmbeddingIntegration] 更新物种索引失败: {e}")
+        # 【优化 v2】只索引有变化的物种（基于 updated_at）
+        changed_species: list['Species'] = []
+        for sp in species_list:
+            last_ts = self._last_indexed_timestamps.get(sp.lineage_code)
+            sp_updated_at = getattr(sp, 'updated_at', None)
+            
+            if last_ts is None or (sp_updated_at and sp_updated_at > last_ts):
+                changed_species.append(sp)
+                if sp_updated_at:
+                    self._last_indexed_timestamps[sp.lineage_code] = sp_updated_at
         
-        # 【优化】各服务只更新自己的元数据缓存，不再重复调用index_species
-        if self.enable_encyclopedia_index:
+        # 只对有变化的物种调用索引（跳过哈希检查，因为已基于 updated_at 过滤）
+        if changed_species:
             try:
-                self._encyclopedia.update_species_cache(species_list)
+                count = self.embeddings.index_species(changed_species, skip_hash_check=True)
+                if count > 0:
+                    logger.debug(f"[EmbeddingIntegration] 更新物种向量索引: {count}/{len(species_list)} 个")
             except Exception as e:
-                logger.warning(f"[EmbeddingIntegration] 更新百科缓存失败: {e}")
+                logger.warning(f"[EmbeddingIntegration] 更新物种索引失败: {e}")
+        else:
+            logger.debug(f"[EmbeddingIntegration] 无物种变化，跳过索引 ({len(species_list)} 个)")
         
-        if self.enable_evolution_hints:
-            try:
-                self._predictor.update_species_cache(species_list)
-            except Exception as e:
-                logger.warning(f"[EmbeddingIntegration] 更新预测缓存失败: {e}")
+        # 【优化】各服务只更新元数据缓存（只处理有变化的物种）
+        if changed_species:
+            if self.enable_encyclopedia_index:
+                try:
+                    self._encyclopedia.update_species_cache(changed_species)
+                except Exception as e:
+                    logger.warning(f"[EmbeddingIntegration] 更新百科缓存失败: {e}")
+            
+            if self.enable_evolution_hints:
+                try:
+                    self._predictor.update_species_cache(changed_species)
+                except Exception as e:
+                    logger.warning(f"[EmbeddingIntegration] 更新预测缓存失败: {e}")
+        
+        elapsed = (time.perf_counter() - t0) * 1000
+        if elapsed > 100:  # 只在超过100ms时输出警告
+            logger.info(f"[EmbeddingIntegration] on_turn_start 耗时 {elapsed:.0f}ms (变化: {len(changed_species)}/{len(species_list)})")
 
     def on_pressure_applied(
         self, 
@@ -610,6 +638,10 @@ class EmbeddingIntegrationService:
         
         # EvolutionPredictor - 物种数据现在由全局 SpeciesCacheManager 管理
         # 已在上面通过 species_cache.clear() 清空，无需额外操作
+        
+        # 【新增】清空物种索引时间戳缓存
+        EmbeddingIntegrationService._last_indexed_timestamps.clear()
+        stats["indexed_timestamps_cleared"] = True
         
         logger.info(f"[EmbeddingIntegration] 所有缓存已清空: {stats}")
         return stats

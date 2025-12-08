@@ -459,19 +459,29 @@ class EmbeddingService:
     def index_species(
         self, 
         species_list: Sequence['Species'],
-        force_rebuild: bool = False
+        force_rebuild: bool = False,
+        skip_hash_check: bool = False
     ) -> int:
         """索引物种向量（支持增量更新）
         
         【扩展】同时索引植物和动物，植物使用专门的索引
+        【性能优化 v2】
+        1. 支持跳过哈希检查（当上层已经做过过滤时）
+        2. 添加性能计时日志
         
         Args:
             species_list: 物种列表
             force_rebuild: 是否强制完全重建
+            skip_hash_check: 是否跳过哈希检查（当上层已基于updated_at过滤时设为True）
             
         Returns:
             更新的物种数量
         """
+        if not species_list:
+            return 0
+        
+        t0 = time.perf_counter()
+        
         store = self._vector_stores.get_store("species")
         plant_store = self._vector_stores.get_store("plants")
         
@@ -486,19 +496,26 @@ class EmbeddingService:
         species_to_update = []
         plant_texts_to_embed = []
         plants_to_update = []
+        skipped = 0
         
+        t_text = time.perf_counter()
         for sp in species_list:
             search_text = self._build_species_search_text(sp)
-            text_hash = hashlib.md5(search_text.encode()).hexdigest()
             
-            # 检查是否需要更新
-            old_hash = self._species_text_hashes.get(sp.lineage_code)
-            if old_hash == text_hash and store.contains(sp.lineage_code):
-                continue
+            # 【优化】可选跳过哈希检查（当上层已经过滤过时）
+            if not skip_hash_check:
+                text_hash = hashlib.md5(search_text.encode()).hexdigest()
+                
+                # 检查是否需要更新
+                old_hash = self._species_text_hashes.get(sp.lineage_code)
+                if old_hash == text_hash and store.contains(sp.lineage_code):
+                    skipped += 1
+                    continue
+                
+                self._species_text_hashes[sp.lineage_code] = text_hash
             
             texts_to_embed.append(search_text)
             species_to_update.append(sp)
-            self._species_text_hashes[sp.lineage_code] = text_hash
             
             # 【扩展】如果是植物，同时加入植物索引
             if sp.trophic_level < 2.0:
@@ -506,13 +523,20 @@ class EmbeddingService:
                 plant_texts_to_embed.append(plant_text)
                 plants_to_update.append(sp)
         
+        text_time = time.perf_counter() - t_text
+        
         if not texts_to_embed:
+            if skipped > 0:
+                logger.debug(f"[Embedding] 跳过 {skipped} 个未变化的物种")
             return 0
         
         # 批量生成向量
+        t_embed = time.perf_counter()
         vectors = self.embed(texts_to_embed)
+        embed_time = time.perf_counter() - t_embed
         
         # 批量添加到索引
+        t_index = time.perf_counter()
         ids = [sp.lineage_code for sp in species_to_update]
         metadata_list = [
             {
@@ -542,13 +566,23 @@ class EmbeddingService:
                 for sp in plants_to_update
             ]
             plant_store.add_batch(plant_ids, plant_vectors, plant_metadata)
-            logger.debug(f"[Embedding] 植物索引更新: {len(plant_ids)} 个")
+        
+        index_time = time.perf_counter() - t_index
         
         # 更新统计
         self._stats["index_updates"] += 1
         self._stats["species_indexed"] = store.size
         
-        logger.info(f"[Embedding] 物种索引更新: {len(ids)} 个")
+        total_time = time.perf_counter() - t0
+        if total_time > 0.1:  # 只在超过100ms时输出详细日志
+            logger.info(
+                f"[Embedding] 物种索引: {len(ids)} 个 (跳过{skipped}, 植物{len(plants_to_update)}), "
+                f"耗时 {total_time*1000:.0f}ms (文本{text_time*1000:.0f}ms, "
+                f"向量{embed_time*1000:.0f}ms, 索引{index_time*1000:.0f}ms)"
+            )
+        else:
+            logger.debug(f"[Embedding] 物种索引更新: {len(ids)} 个")
+        
         return len(ids)
     
     def _build_plant_search_text(self, species: 'Species') -> str:

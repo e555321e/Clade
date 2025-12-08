@@ -649,19 +649,43 @@ class TectonicMovementStage(BaseStage):
 
 
 class FetchSpeciesStage(BaseStage):
-    """获取物种列表阶段"""
+    """获取物种列表阶段
+    
+    【性能优化 v2】
+    1. 分段计时日志，便于定位瓶颈
+    2. 优先使用缓存，减少 DB 查询
+    3. 提高气候调整阈值，减少触发频率
+    """
     
     def __init__(self):
         super().__init__(StageOrder.FETCH_SPECIES.value, "获取物种列表")
     
     async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
+        import time
         from ..repositories.species_repository import species_repository
         from ..services.species.habitat_manager import habitat_manager
+        from ..services.system.species_cache import get_species_cache
+        
+        stage_start = time.perf_counter()
+        timings: dict[str, float] = {}
         
         logger.info("获取物种列表...")
         ctx.emit_event("stage", "🧬 获取物种列表", "物种")
         
-        ctx.all_species = species_repository.list_species()
+        # 【优化】优先使用缓存，回合0或缓存为空时从DB加载
+        t0 = time.perf_counter()
+        species_cache = get_species_cache()
+        
+        if ctx.turn_index == 0 or species_cache.size == 0:
+            # 首回合或缓存为空，从数据库加载
+            ctx.all_species = species_repository.list_species()
+            species_cache.update(ctx.all_species, ctx.turn_index)
+            timings["db_fetch"] = time.perf_counter() - t0
+        else:
+            # 使用缓存（后续回合的新增/修改会在 upsert 时更新缓存）
+            ctx.all_species = species_cache.get_all()
+            timings["cache_read"] = time.perf_counter() - t0
+        
         ctx.species_batch = [sp for sp in ctx.all_species if sp.status == "alive"]
         ctx.extinct_codes = {sp.lineage_code for sp in ctx.all_species if sp.status == "extinct"}
         
@@ -670,6 +694,7 @@ class FetchSpeciesStage(BaseStage):
         
         # Embedding 集成
         if engine._use_embedding_integration and ctx.species_batch:
+            t0 = time.perf_counter()
             try:
                 engine.embedding_integration.on_turn_start(ctx.turn_index, ctx.species_batch)
                 engine.embedding_integration.on_pressure_applied(
@@ -677,23 +702,34 @@ class FetchSpeciesStage(BaseStage):
                 )
             except Exception as e:
                 logger.warning(f"[Embedding集成] 回合开始钩子失败: {e}")
+            timings["embedding_integration"] = time.perf_counter() - t0
         
-        # 气候调整
-        if ctx.species_batch and (abs(ctx.temp_delta) > 0.1 or abs(ctx.sea_delta) > 0.5):
+        # 气候调整【优化】提高阈值，减少触发频率
+        # 原阈值：温度 0.1, 海平面 0.5 -> 新阈值：温度 0.5, 海平面 2.0
+        if ctx.species_batch and (abs(ctx.temp_delta) > 0.5 or abs(ctx.sea_delta) > 2.0):
+            t0 = time.perf_counter()
             habitat_manager.adjust_habitats_for_climate(
                 ctx.species_batch,
                 ctx.temp_delta,
                 ctx.sea_delta,
                 ctx.turn_index,
             )
+            timings["habitat_adjust"] = time.perf_counter() - t0
         
         # 更新干预状态（使用 InterventionService）
+        t0 = time.perf_counter()
         from ..repositories.species_repository import species_repository
         intervention_service = InterventionService(
             species_repository=species_repository,
             event_callback=ctx.emit_event,
         )
         intervention_service.update_intervention_status(ctx.species_batch)
+        timings["intervention"] = time.perf_counter() - t0
+        
+        # 输出性能日志
+        total_time = time.perf_counter() - stage_start
+        timing_str = ", ".join(f"{k}={v*1000:.0f}ms" for k, v in timings.items())
+        logger.info(f"[FetchSpeciesStage] 总耗时 {total_time*1000:.0f}ms ({timing_str})")
 
 
 class ResourceCalcStage(BaseStage):
