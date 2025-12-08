@@ -1,4 +1,4 @@
-﻿# Clade Launcher with Chinese UI
+# Clade Launcher with Chinese UI
 $Host.UI.RawUI.WindowTitle = "Clade"
 
 # Load Chinese language file
@@ -230,7 +230,7 @@ if (-not $venvExists) {
 
 # 检查依赖是否完整安装（检查关键包）
 $needInstallBackend = $false
-$packagesToCheck = @("fastapi", "uvicorn", "sqlmodel", "numpy", "scipy")
+$packagesToCheck = @("fastapi", "uvicorn", "sqlmodel", "numpy", "scipy", "taichi")
 
 foreach ($pkg in $packagesToCheck) {
     & pip show $pkg 2>&1 | Out-Null
