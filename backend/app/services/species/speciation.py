@@ -27,6 +27,7 @@ from .plant_competition import plant_competition_calculator  # 【植物竞争�
 from .description_enhancer import DescriptionEnhancerService  # 【描述增强】
 from .gene_diversity import GeneDiversityService
 from .naming_hints import NamingHintGenerator
+from .organ_evolution_service import OrganEvolutionService, get_organ_evolution_service
 from ...tensor.tradeoff import TradeoffCalculator
 from ...core.config import get_settings
 from ...simulation.constants import get_time_config
@@ -61,6 +62,8 @@ class SpeciationService:
         self._gene_library_service: "GeneLibraryService | None" = None
         self.gene_diversity_service = GeneDiversityService()
         self.naming_hint_generator = NamingHintGenerator()  # 【命名提示】
+        # 【器官演化】自由器官演化系统 - embedding 服务将在首次使用时从 router 获取
+        self._organ_evolution_service: OrganEvolutionService | None = None
         self.rules = speciation_rules  # 【新增】规则引擎实例
         self.description_enhancer = DescriptionEnhancerService(router)  # 【描述增强】LLM增强规则生成的描述
         self.max_speciation_per_turn = 20
@@ -112,6 +115,17 @@ class SpeciationService:
             from .gene_library import GeneLibraryService
             self._gene_library_service = GeneLibraryService()
         return self._gene_library_service
+    
+    @property
+    def organ_evolution_service(self) -> OrganEvolutionService:
+        """惰性加载器官演化服务，自动注入 embedding 服务"""
+        if self._organ_evolution_service is None:
+            # 尝试从 router 获取 embedding 服务
+            embedding_service = None
+            if hasattr(self.router, 'embedding_service'):
+                embedding_service = self.router.embedding_service
+            self._organ_evolution_service = OrganEvolutionService(embedding_service)
+        return self._organ_evolution_service
     
     def reload_config(self, config: SpeciationConfig | None = None) -> None:
         """热更新配置
@@ -1227,6 +1241,8 @@ class SpeciationService:
                     "organ_key_catalog": "\n".join(
                         [f"- {c['organ_key']} ({c['category']})：{c['default_name']}" for c in self._organ_catalog]
                     ),
+                    # 【新增】成熟器官上下文（自由器官演化系统）
+                    "mature_organs_context": self.organ_evolution_service.build_mature_organs_context(species),
                     # 【命名提示】随机命名参考
                     "naming_hints": naming_hints,
                 }
@@ -3032,7 +3048,13 @@ class SpeciationService:
                     f"(保留率: {1.0-base_loss_rate:.0%})"
                 )
         
-        return Species(
+        # ========== 继承器官胚芽池和已成熟器官 ==========
+        import copy
+        inherited_organ_rudiments = copy.deepcopy(parent.organ_rudiments or {})
+        inherited_evolved_organs = copy.deepcopy(parent.evolved_organs or {})
+        
+        # 创建新物种
+        new_species = Species(
             lineage_code=new_code,
             latin_name=latin,
             common_name=common,
@@ -3064,7 +3086,42 @@ class SpeciationService:
             achieved_milestones=new_achieved_milestones,
             # 【修复】直接继承父代的休眠基因
             dormant_genes=inherited_dormant_genes,
+            # 【新增】自由器官演化系统
+            organ_rudiments=inherited_organ_rudiments,
+            evolved_organs=inherited_evolved_organs,
         )
+        
+        # ========== 处理器官演化（更新胚芽池）==========
+        organ_evolution = ai_payload.get("organ_evolution", [])
+        if organ_evolution and isinstance(organ_evolution, list):
+            try:
+                # 获取当前压力类型
+                current_pressures = getattr(self, '_current_pressure_types', ['competition']) or ['competition']
+                
+                # 调用器官演化服务处理
+                organ_result = self.organ_evolution_service.process_organ_evolution(
+                    species=new_species,
+                    llm_organs=organ_evolution,
+                    turn=turn_index,
+                    current_pressures=current_pressures
+                )
+                
+                if organ_result.get("upgraded"):
+                    logger.info(
+                        f"[器官演化] {new_code} 升级器官: {organ_result['upgraded']}"
+                    )
+                if organ_result.get("matured"):
+                    logger.info(
+                        f"[器官演化] {new_code} 器官胚芽成熟: {organ_result['matured']}"
+                    )
+                if organ_result.get("created"):
+                    logger.debug(
+                        f"[器官演化] {new_code} 新建器官胚芽: {organ_result['created']}"
+                    )
+            except Exception as e:
+                logger.warning(f"[器官演化] 处理失败: {e}")
+        
+        return new_species
     
     def _inherit_habitat_distribution(
         self, 

@@ -293,52 +293,23 @@ SPECIES_PROMPTS = {
 优先在 activated_genes 和 trait_changes 中体现这些基因的激活
 activated_genes 示例：["强化耐寒性", "原始眼点"] - 从上方推荐列表选择
 
-=== 🧬 新休眠基因生成（重要！）===
-分化时你需要为子代**创造1-3个全新的休眠基因**，这些基因将成为子代未来演化的潜力。
-
-【新基因生成规则】
-1. **符合生态位**：基因必须符合该物种的栖息地、食性、生活方式
-2. **有益为主**：约85%应为有益/中性基因，约15%可为轻微有害（遗传负荷）
-3. **多样化**：基因类型包括特质强化、器官原基、行为模式、代谢路径等
-4. **合理潜力**：潜力值4.0-8.0之间，符合物种当前能力范围
-5. **压力响应**：基因应与可能面临的环境压力相关
-
-【基因类型参考】
-- 特质基因：强化XX、XX效率、XX抗性、XX适应（如：强化耐寒性、代谢效率优化）
-- 器官基因：XX原基、XX雏形、XX前体（如：眼点原基、鳍状突起雏形）
-- 行为基因：XX本能、XX行为模式（如：群居本能、迁徙行为模式）
-- 代谢基因：XX代谢路径、XX合成能力（如：抗冻蛋白合成、色素代谢路径）
-
-【显隐性分配】
-- dominant（显性）：约25%，容易表达的基因
-- codominant（共显性）：约40%，中间表达
-- recessive（隐性）：约30%，需要纯合才表达
-- overdominant（超显性）：约5%，杂合优势
-
-【有害基因示例】（约15%概率生成1个）
-- 代谢缺陷、温度敏感、渗透失调、感知迟钝等
-- 有害基因必须为隐性（recessive），mutation_effect设为"mildly_harmful"或"harmful"
+=== 🧬 新休眠基因生成 ===
+必须为子代创造**1-3个新休眠基因**：
+- 85%有益/中性 + 15%轻微有害（隐性）
+- 潜力值4.0-8.0，符合物种能力
+- 显隐性比例：dominant 25% / codominant 40% / recessive 30% / overdominant 5%
 
 === 可用器官枚举（organ_key，用于 organ_evolution）===
 {organ_key_catalog}
 输出 organ_evolution 时必须包含 organ_key（从上表选择），并提供 structure_name 作为中文展示名。
 
-=== ⚠️ 极端环境警告 ===
-【压力等级判定】
-- 压力≤3: 🟢 温和环境 - 常规适应
-- 压力4-6: 🟡 中等压力 - 需要显著适应
-- 压力7-8: 🔴 高压环境 - 必须强化核心生存特质
-- 压力≥9: ⛔ 极端危机 - 生存优先，分化需牺牲非必要特质
+{mature_organs_context}
 
-【当前压力响应要求】（根据上方压力强度）
-- 如果压力≥7：必须优先增强与压力直接相关的特质（如冰河期→耐寒性）
-- 如果压力≥9：trait_changes中增强项必须≥1.5，且必须有≥1.0的减弱项作为代价
-- 极端环境下"保守演化"会被惩罚 - 系统会降低分化成功率
-
-【分化失败成本】
-- 如果新物种特质不匹配环境，将在下回合遭受额外30%死亡率
-- 描述中必须明确说明如何应对当前环境压力
-- 如果压力>8且未增强相关特质，该分化将被视为"不适应"并可能被自然选择淘汰
+=== ⚠️ 压力响应 ===
+压力≤3 常规适应 | 压力4-6 显著适应 | 压力7-8 必须强化核心特质 | 压力≥9 生存优先
+- 压力≥7：trait_changes 必须增强与压力相关的特质
+- 压力≥9：增强项≥1.5，减弱项≥1.0
+- 不适应会导致30%额外死亡率
 
 === ⚠️ 硬性约束（必须遵守，否则会被系统强制修正）===
 
@@ -374,33 +345,10 @@ activated_genes 示例：["强化耐寒性", "原始眼点"] - 从上方推荐�
 - 建议减弱：{suggested_decreases}
 - 可选栖息地：{habitat_options}
 
-=== 🌱 植物演化专用规则（仅对营养级<2.0的物种生效）===
-【植物阶段升级】
-- 阶段0（原核）→1（真核）：多细胞程度 >= 1.5
-- 阶段1→2（群体化）：多细胞程度 >= 3.0
-- 阶段2→3（登陆）⚠️关键：保水能力 >= 5.0 且 耐旱性 >= 4.0
-- 阶段3→4（真根）：根系发达度 >= 5.0
-- 阶段4→5（种子）：种子化程度 >= 5.0
-- 阶段5→6（开花）：种子化程度 >= 8.0 且 散布能力 >= 7.0
-- 成为树木：木质化程度 >= 7.0 且 阶段 >= 5
-
-【植物专用字段】（植物物种必须返回）
-- "life_form_stage": 当前阶段或+1（不可跳级）
-- "growth_form": "aquatic/moss/herb/shrub/tree"（必须符合阶段）
-- "milestone_triggered": 里程碑ID或null
-
-【植物器官类别】（使用这些替代动物器官）
-- photosynthetic: 光合器官（叶绿体→类囊体膜→真叶→阔叶）
-- root_system: 根系（假根→原始根→须根系→直根系）
-- stem: 茎（匍匐茎→草本茎→木质茎→乔木干）
-- reproductive: 繁殖（孢子囊→胚珠→球果→花→果实）
-- protection: 保护（粘液层→角质层→蜡质表皮→树皮）
-- vascular: 维管（原始维管束→维管束→次生木质部）
-
-【植物权衡代价】
-- 增强光合效率 → 降低耐旱性（需更多水）
-- 增加木质化 → 降低繁殖速度
-- 发展根系 → 降低散布能力
+=== 🌱 植物专用（营养级<2.0）===
+阶段升级条件：0→1 多细胞≥1.5 | 1→2 多细胞≥3 | 2→3⚠️ 保水≥5+耐旱≥4 | 3→4 根系≥5 | 4→5 种子化≥5 | 5→6 种子化≥8+散布≥7
+植物字段：life_form_stage(0-6整数) + growth_form(aquatic/moss/herb/shrub/tree) + milestone_triggered
+器官类别：photosynthetic, root_system, stem, reproductive, protection, vascular
 
 === 命名规则（重要！）===
 名字应像真实生物那样"有依据"，给人"可能真实存在"的感觉。
@@ -420,188 +368,39 @@ activated_genes 示例：["强化耐寒性", "原始眼点"] - 从上方推荐�
 4. 关键演化特征
 5. 分化事件摘要和原因
 
-=== 输出格式 ===
+=== 输出JSON格式 ===
 {{
     "latin_name": "Genus species",
-    "common_name": "中文俗名",
+    "common_name": "中文俗名（4-8字）",
     "description": "120-180字，含食性、栖息环境、演化变化",
-    "habitat_type": "从可选栖息地中选择",
-    "trophic_level": 必须在{trophic_range}范围内,
-    "diet_type": "继承或调整食性类型",
-    "prey_species": ["继承或调整猎物列表"],
-    "prey_preferences": {{"物种代码": 偏好比例}},
-    "key_innovations": ["1-3个演化特征（器官/能力/形态）"],
-    "activated_genes": ["从休眠基因库中选择激活的基因名，如有"],
-    "trait_changes": {{"增强属性": "+数值", "减弱属性": "-数值"}},
-    "morphology_changes": {{"body_length_cm": 0.8-1.3倍}},
-    "event_description": "30-50字分化摘要",
+    "habitat_type": "marine/coastal/freshwater/terrestrial/aerial",
+    "trophic_level": {trophic_range}范围内,
+    "diet_type": "autotroph/herbivore/carnivore/omnivore/detritivore",
+    "prey_species": ["继承或调整"],
+    "prey_preferences": {{"物种代码": 比例}},
+    "key_innovations": ["1-3个特征"],
+    "activated_genes": ["从休眠基因库选择"],
+    "trait_changes": {{"增强": "+数值", "减弱": "-数值"}},
+    "morphology_changes": {{"body_length_cm": 0.8-1.3}},
+    "event_description": "30-50字",
     "speciation_type": "{speciation_type}",
-    "reason": "生态学/地质学解释",
+    "reason": "生态学解释",
     "organ_evolution": [
-        {{
-            "category": "从标准分类列表中选择",
-            "action": "enhance/initiate",
-            "current_stage": 与上方父系阶段一致,
-            "target_stage": current_stage+1或+2,
-            "structure_name": "具体的器官中文名称（如：眼点、鞭毛、外骨骼）",
-            "description": "变化描述"
-        }}
+        {{"category": "类别", "action": "enhance/initiate", "current_stage": 父系阶段, "target_stage": +1或+2, "structure_name": "中文器官名", "description": "描述"}},
+        {{"action": "upgrade", "source_rudiment": "胚芽名", "new_organ_name": "新名", "new_description": "50-80字", "parameters": {{}}, "functional_category": "分类", "evolution_rationale": "机制"}}
     ],
     "new_dormant_genes": {{
-        "traits": [
-            {{
-                "name": "基因名称（如：强化耐寒性、代谢效率优化）",
-                "potential_value": 4.0-8.0之间的潜力值,
-                "pressure_types": ["触发该基因激活的压力类型，如cold/heat/drought/competition"],
-                "dominance": "dominant/codominant/recessive/overdominant",
-                "mutation_effect": "beneficial/neutral/mildly_harmful",
-                "description": "该基因的生物学描述（20-40字）"
-            }}
-        ],
-        "organs": [
-            {{
-                "name": "器官原基名称（如：眼点原基、鳍状突起雏形）",
-                "organ_data": {{
-                    "category": "器官类别（sensory/locomotion/defense等）",
-                    "type": "具体类型",
-                    "parameters": {{"效率/敏感度等参数": 0.3-0.6}}
-                }},
-                "pressure_types": ["触发该器官发育的压力类型"],
-                "dominance": "显隐性",
-                "description": "该器官的功能描述"
-            }}
-        ]
+        "traits": [{{"name": "基因名", "potential_value": 4-8, "pressure_types": ["压力"], "dominance": "显隐性", "mutation_effect": "beneficial/neutral/mildly_harmful", "description": "20-40字"}}],
+        "organs": [{{"name": "原基名", "organ_data": {{"category": "类别", "type": "类型", "parameters": {{"参数": 0.3-0.6}}}}, "pressure_types": ["压力"], "dominance": "隐性", "description": "描述"}}]
     }},
-    "life_form_stage": "🌱植物专用：当前阶段或+1（0-6整数）",
-    "growth_form": "🌱植物专用：aquatic/moss/herb/shrub/tree",
-    "milestone_triggered": "🌱植物专用：里程碑ID或null"
+    "life_form_stage": "🌱植物：0-6整数",
+    "growth_form": "🌱植物：aquatic/moss/herb/shrub/tree",
+    "milestone_triggered": "🌱植物：ID或null"
 }}
 
-【捕食关系规则】
-- 通常继承父系的食性类型和猎物，但可以因环境压力调整
-- 如果分化导致营养级变化，需要相应调整猎物范围
-- 新猎物必须是当前生态系统中存在的物种
-- 如果灭绝事件导致原猎物消失，需要寻找替代食物源
-
-=== 示例1：动物分化（父系器官sensory当前阶段=1，草食性，猎物为A1）===
-{{
-    "latin_name": "Protoflagella oculocava",
-    "common_name": "碧潭凹眼虫",
-    "description": "浅海环境促使感光点内陷形成眼凹结构，提高光线方向感知能力。繁殖速度下降以维持复杂感觉结构。主要滤食蓝藻A1，栖息于阳光充足的浅海礁区。",
-    "habitat_type": "marine",
-    "trophic_level": 2.0,
-    "diet_type": "herbivore",
-    "prey_species": ["A1"],
-    "prey_preferences": {{"A1": 1.0}},
-    "key_innovations": ["眼凹结构"],
-    "trait_changes": {{"光照需求": "+1.5", "繁殖速度": "-1.0", "运动能力": "-0.5"}},
-    "morphology_changes": {{"body_length_cm": 1.05}},
-    "event_description": "浅海光照促进感光器官发展",
-    "speciation_type": "生态隔离",
-    "reason": "光感知优势带来生存收益，代价是维护成本增加。",
-    "organ_evolution": [
-        {{"category": "sensory", "action": "enhance", "current_stage": 1, "target_stage": 2, "structure_name": "眼凹", "description": "感光点内陷"}}
-    ],
-    "new_dormant_genes": {{
-        "traits": [
-            {{
-                "name": "视网膜色素强化",
-                "potential_value": 6.5,
-                "pressure_types": ["light_limitation", "predation"],
-                "dominance": "codominant",
-                "mutation_effect": "beneficial",
-                "description": "增强视网膜色素密度，提高弱光环境下的感知能力"
-            }},
-            {{
-                "name": "滤食效率优化",
-                "potential_value": 5.5,
-                "pressure_types": ["starvation", "competition"],
-                "dominance": "dominant",
-                "mutation_effect": "beneficial",
-                "description": "优化纤毛滤食结构，提高藻类过滤效率"
-            }}
-        ],
-        "organs": [
-            {{
-                "name": "晶状体原基",
-                "organ_data": {{
-                    "category": "sensory",
-                    "type": "proto_lens",
-                    "parameters": {{"focus_ability": 0.3}}
-                }},
-                "pressure_types": ["predation", "hunting"],
-                "dominance": "recessive",
-                "description": "眼凹进一步发育的潜力，可形成原始晶状体聚焦光线"
-            }}
-        ]
-    }}
-}}
-
-=== 示例2：🌱植物分化（阶段2群体藻类，保水能力=5.2，耐旱性=4.5，准备登陆）===
-{{
-    "latin_name": "Bryophytella littoricola",
-    "common_name": "潮岩先锋苔",
-    "description": "首批登陆的植物先驱，从潮间带向内陆扩展。发展出原始角质层减少水分散失，假根固着于岩石缝隙。作为自养生产者，光合效率略降，但获得了陆地生存的关键能力。",
-    "habitat_type": "coastal",
-    "trophic_level": 1.0,
-    "diet_type": "autotroph",
-    "prey_species": [],
-    "prey_preferences": {{}},
-    "key_innovations": ["首次登陆陆地", "角质层保水"],
-    "trait_changes": {{"保水能力": "+1.0", "耐旱性": "+0.8", "光合效率": "-0.5", "繁殖速度": "-0.3"}},
-    "morphology_changes": {{"body_length_cm": 1.2}},
-    "event_description": "群体藻类成功登陆，成为苔藓类先驱",
-    "speciation_type": "生态隔离",
-    "reason": "潮间带干湿交替环境促进保水结构演化",
-    "organ_evolution": [
-        {{"category": "protection", "action": "initiate", "current_stage": 0, "target_stage": 1, "structure_name": "角质层", "description": "发展原始角质层防止水分散失"}},
-        {{"category": "root_system", "action": "initiate", "current_stage": 0, "target_stage": 1, "structure_name": "假根", "description": "简单假根固着岩石"}}
-    ],
-    "new_dormant_genes": {{
-        "traits": [
-            {{
-                "name": "木质素合成前体",
-                "potential_value": 5.0,
-                "pressure_types": ["drought", "competition"],
-                "dominance": "recessive",
-                "mutation_effect": "beneficial",
-                "description": "木质素合成的基础代谢路径，为未来维管组织发展奠定基础"
-            }},
-            {{
-                "name": "气孔调节基因",
-                "potential_value": 6.0,
-                "pressure_types": ["drought", "temperature_fluctuation"],
-                "dominance": "codominant",
-                "mutation_effect": "beneficial",
-                "description": "控制气孔开闭的基因，平衡光合作用与水分散失"
-            }},
-            {{
-                "name": "UV敏感",
-                "potential_value": 0,
-                "pressure_types": ["uv_radiation"],
-                "dominance": "recessive",
-                "mutation_effect": "mildly_harmful",
-                "description": "缺乏完善的UV防护机制，高紫外环境下易受损"
-            }}
-        ],
-        "organs": [
-            {{
-                "name": "原始维管束雏形",
-                "organ_data": {{
-                    "category": "vascular",
-                    "type": "proto_vascular",
-                    "parameters": {{"transport_efficiency": 0.2}}
-                }},
-                "pressure_types": ["drought", "competition"],
-                "dominance": "recessive",
-                "description": "最早的水分运输结构原基，为未来真正的维管束发展提供可能"
-            }}
-        ]
-    }},
-    "life_form_stage": 3,
-    "growth_form": "moss",
-    "milestone_triggered": "first_land_plant"
-}}
+⚠️ trait_changes 必须有增有减，净变化接近0！
+⚠️ new_dormant_genes 必须生成1-3个新基因！
+⚠️ 植物（营养级<2）必须填写 life_form_stage 和 growth_form！
 
 只返回JSON。
 """,

@@ -78,6 +78,19 @@ from .hybridization_tensor import (
     reset_hybridization_tensor_compute,
 )
 
+# 统一张量生态计算引擎（整合死亡率、扩散、迁徙）
+from .ecology import (
+    TensorEcologyEngine,
+    EcologyConfig,
+    EcologyMetrics,
+    EcologyResult,
+    get_ecology_engine,
+    reset_ecology_engine,
+    extract_species_params,
+    extract_species_prefs,
+    extract_trophic_levels,
+)
+
 __all__ = [
     # 核心数据结构
     "TensorState",
@@ -128,4 +141,14 @@ __all__ = [
     "HybridCandidate",
     "get_hybridization_tensor_compute",
     "reset_hybridization_tensor_compute",
+    # 统一张量生态计算引擎
+    "TensorEcologyEngine",
+    "EcologyConfig",
+    "EcologyMetrics",
+    "EcologyResult",
+    "get_ecology_engine",
+    "reset_ecology_engine",
+    "extract_species_params",
+    "extract_species_prefs",
+    "extract_trophic_levels",
 ]

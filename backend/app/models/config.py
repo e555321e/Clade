@@ -1267,6 +1267,112 @@ class GeneDiversityConfig(BaseModel):
     )
 
 
+class OrganEvolutionConfig(BaseModel):
+    """器官演化配置 - 控制自由器官演化系统
+    
+    核心理念：
+    - LLM 生成的器官概念通过 Embedding 语义聚合到胚芽池
+    - 相似器官概念累积能量，达到阈值后成熟
+    - 成熟器官在下次分化时由 LLM 自由升级
+    - 同一胚芽可根据环境演化成不同器官（多路径演化）
+    
+    【v2.0 更新】
+    - 所有判断均基于 Embedding 语义相似度，无硬编码关键词
+    - 移除胚芽数量硬限制，改用自然衰减清理机制
+    - 新增功能整合和复杂度约束开关
+    """
+    model_config = ConfigDict(extra="ignore")
+    
+    # ========== 语义聚合参数 ==========
+    # 语义相似度阈值：高于此值时合并到现有胚芽
+    merge_threshold: float = Field(
+        default=0.82,
+        description="语义合并阈值 (余弦相似度)"
+    )
+    
+    # ========== 能量系统参数 ==========
+    # 基础能量贡献值
+    base_energy: float = Field(
+        default=1.0,
+        description="每次贡献的基础能量"
+    )
+    # 相似度加成系数
+    similarity_bonus: float = Field(
+        default=0.5,
+        description="相似度越高能量越多 (×similarity)"
+    )
+    # 压力匹配加成倍率
+    pressure_match_bonus: float = Field(
+        default=1.3,
+        description="压力匹配时能量加成 (×1.3)"
+    )
+    # 每回合自然衰减率
+    decay_per_turn: float = Field(
+        default=0.03,
+        description="每回合能量衰减 (3%)"
+    )
+    
+    # ========== 成熟阈值参数 ==========
+    # 默认成熟阈值
+    default_maturity_threshold: float = Field(
+        default=5.0,
+        description="默认成熟能量阈值"
+    )
+    # 每级升级阈值倍数
+    tier_threshold_multiplier: float = Field(
+        default=1.5,
+        description="每升一级阈值倍数 (×1.5)"
+    )
+    
+    # ========== 贡献记录参数 ==========
+    # 每个胚芽保留的贡献记录数
+    max_contributions_stored: int = Field(
+        default=5,
+        description="每个胚芽保留的贡献记录数"
+    )
+    
+    # ========== 功能整合参数（发育约束）==========
+    # 启用功能类别整合
+    enable_functional_integration: bool = Field(
+        default=True,
+        description="启用同功能器官整合机制"
+    )
+    # 功能整合的相似度阈值
+    functional_integration_threshold: float = Field(
+        default=0.5,
+        description="功能整合相似度阈值 (检测同功能类别)"
+    )
+    
+    # ========== 复杂度约束参数 ==========
+    # 启用复杂度约束
+    enable_complexity_constraints: bool = Field(
+        default=True,
+        description="启用器官复杂度约束"
+    )
+    # 复杂度升级时的能量加成
+    complexity_upgrade_bonus: float = Field(
+        default=0.5,
+        description="复杂度升级能量加成"
+    )
+    
+    # ========== 自然衰减清理参数 ==========
+    # 开始衰减的未更新回合数
+    decay_start_turns: int = Field(
+        default=5,
+        description="开始衰减的未更新回合数"
+    )
+    # 清理胚芽的能量阈值
+    cleanup_energy_threshold: float = Field(
+        default=0.1,
+        description="清理胚芽的能量阈值"
+    )
+    # 清理胚芽的最小存活回合数
+    cleanup_age_threshold: int = Field(
+        default=10,
+        description="清理胚芽的最小存活回合数"
+    )
+
+
 class TraitBudgetConfig(BaseModel):
     """属性预算系统配置 - 控制属性上限、边际递减和突破系统
     
@@ -1508,6 +1614,9 @@ class UIConfig(BaseModel):
     
     # 21. 属性预算配置
     trait_budget: TraitBudgetConfig = Field(default_factory=TraitBudgetConfig)
+    
+    # 22. 器官演化配置
+    organ_evolution: OrganEvolutionConfig = Field(default_factory=OrganEvolutionConfig)
     
     # --- Legacy Fields (Keep for migration) ---
     ai_provider: str | None = None

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
@@ -114,6 +114,16 @@ class Species(SQLModel, table=True):
     growth_form: str = Field(default="aquatic")
     # 已达成的演化里程碑
     achieved_milestones: list[str] = Field(default=[], sa_column=Column(JSON))
+    
+    # ========== 自由器官演化系统 ==========
+    # 器官胚芽池：存储 LLM 生成的器官概念，通过语义聚合累积能量
+    # 格式: {rudiment_id: {name, description, embedding, accumulated_energy, maturity_threshold, 
+    #        recent_contributions, associated_pressures, is_mature, created_turn, last_updated_turn}}
+    organ_rudiments: dict[str, dict] = Field(default={}, sa_column=Column(JSON))
+    # 已成熟器官：通过升级流程从胚芽池毕业的功能性器官
+    # 格式: {organ_id: {name, description, embedding, parameters, tier, evolution_path, 
+    #        upgrade_energy, upgrade_threshold, source_rudiment_id}}
+    evolved_organs: dict[str, dict] = Field(default={}, sa_column=Column(JSON))
 
 class PopulationSnapshot(SQLModel, table=True):
     __tablename__ = "population_snapshots"

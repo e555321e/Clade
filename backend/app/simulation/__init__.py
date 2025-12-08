@@ -1,4 +1,4 @@
-﻿"""
+"""
 Simulation Package - 模拟引擎核心模块
 
 该包包含模拟引擎的核心组件：
@@ -66,10 +66,6 @@ from .stages import (
     FoodWebStage,
     TieringAndNicheStage,
     PreliminaryMortalityStage,
-    PreyDistributionStage,
-    MigrationStage,
-    DispersalStage,
-    HungerMigrationStage,
     PostMigrationNicheStage,
     FinalMortalityStage,
     PopulationUpdateStage,
@@ -127,10 +123,8 @@ from . import plugin_stages
 
 # 张量计算阶段
 from .tensor_stages import (
-    TensorMortalityStage,
-    TensorDiffusionStage,
-    TensorReproductionStage,
-    TensorCompetitionStage,
+    PressureTensorStage,
+    TensorEcologyStage,
     TensorStateSyncStage,
     TensorMetricsStage,
     get_tensor_stages,
@@ -198,10 +192,8 @@ __all__ = [
     "enable_debug_logging",
     "disable_debug_logging",
     # 张量阶段
-    "TensorMortalityStage",
-    "TensorDiffusionStage",
-    "TensorReproductionStage",
-    "TensorCompetitionStage",
+    "PressureTensorStage",
+    "TensorEcologyStage",
     "TensorStateSyncStage",
     "TensorMetricsStage",
     "get_tensor_stages",

@@ -782,10 +782,6 @@ def _register_default_stages() -> None:
         FoodWebStage,
         TieringAndNicheStage,
         PreliminaryMortalityStage,
-        PreyDistributionStage,
-        MigrationStage,
-        DispersalStage,
-        HungerMigrationStage,
         PostMigrationNicheStage,
         FinalMortalityStage,
         PopulationUpdateStage,
@@ -810,6 +806,7 @@ def _register_default_stages() -> None:
         SaveHistoryStage,
         ExportDataStage,
         FinalizeStage,
+        DatabaseMaintenanceStage,
     )
     
     # 导入生态拟真阶段
@@ -825,10 +822,7 @@ def _register_default_stages() -> None:
     stage_registry.register("tiering_and_niche", TieringAndNicheStage)
     stage_registry.register("ecological_realism", EcologicalRealismStage)  # 生态拟真
     stage_registry.register("preliminary_mortality", PreliminaryMortalityStage)
-    stage_registry.register("prey_distribution", PreyDistributionStage)
-    stage_registry.register("migration", MigrationStage)
-    stage_registry.register("dispersal", DispersalStage)
-    stage_registry.register("hunger_migration", HungerMigrationStage)
+    # prey_distribution, migration, dispersal, hunger_migration 已被 TensorEcologyStage 替代
     stage_registry.register("post_migration_niche", PostMigrationNicheStage)
     stage_registry.register("final_mortality", FinalMortalityStage)
     # ecological_intelligence 已被张量系统替代，不再注册
@@ -857,6 +851,7 @@ def _register_default_stages() -> None:
     stage_registry.register("save_history", SaveHistoryStage)
     stage_registry.register("export_data", ExportDataStage)
     stage_registry.register("finalize", FinalizeStage)
+    stage_registry.register("database_maintenance", DatabaseMaintenanceStage)
     
     logger.debug(f"[StageRegistry] 注册了 {len(stage_registry.list_stages())} 个阶段")
 

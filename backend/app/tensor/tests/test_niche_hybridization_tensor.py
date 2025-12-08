@@ -501,3 +501,4 @@ class TestIntegration:
         assert niche_overlap[0, 2] == 0.1  # 最小重叠因子
         assert shared[0, 2] == 0
 
+

@@ -260,6 +260,7 @@ class StageOrder(Enum):
     SAVE_HISTORY = 170
     EXPORT_DATA = 175
     FINALIZE = 180
+    DATABASE_MAINTENANCE = 185  # 数据库自动维护
 
 
 @runtime_checkable
@@ -1010,120 +1011,7 @@ class PreliminaryMortalityStage(BaseStage):
             logger.debug(f"[数据传递] 向迁徙服务传递了 {len(tile_mortality_data)} 个物种的地块死亡率数据")
 
 
-class MigrationStage(BaseStage):
-    """迁徙执行阶段
-    
-    使用 ModifierApplicator 应用迁徙偏向修正：
-    - migration_bias > 0: 增加迁徙倾向
-    - migration_bias < 0: 减少迁徙倾向
-    """
-    
-    def __init__(self):
-        super().__init__(StageOrder.MIGRATION.value, "迁徙执行")
-    
-    def get_dependency(self) -> StageDependency:
-        return StageDependency(
-            requires_stages={"初步死亡率评估"},
-            optional_stages={"生态智能体评估"},  # 使用 ModifierApplicator
-            requires_fields={"preliminary_mortality", "species_batch"},
-            writes_fields={"migration_events", "migration_count"},
-        )
-    
-    async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
-        from ..repositories.environment_repository import environment_repository
-        from ..services.species.habitat_manager import habitat_manager
-        
-        # 【张量化重构】检查是否已由 TensorMigrationStage 执行
-        if getattr(ctx, "_tensor_migration_executed", False):
-            logger.debug("[迁徙] 已由张量迁徙阶段处理，跳过旧系统")
-            return
-        
-        logger.info("【阶段2】迁徙建议与执行...")
-        ctx.emit_event("stage", "🦅 【阶段2】迁徙建议与执行", "生态")
-        
-        # 更新猎物分布缓存
-        ctx.all_habitats = environment_repository.latest_habitats()
-        habitat_manager.update_prey_distribution_cache(ctx.species_batch, ctx.all_habitats)
-        
-        # 为消费者设置猎物密度数据
-        for sp in ctx.species_batch:
-            if sp.status != "alive" or not sp.id:
-                continue
-            trophic_level = getattr(sp, 'trophic_level', 1.0)
-            if trophic_level >= 2.0:
-                prey_tiles = habitat_manager.get_prey_tiles_for_consumer(trophic_level)
-                species_habitats = [h for h in ctx.all_habitats if h.species_id == sp.id]
-                current_prey_density = 0.0
-                if species_habitats and prey_tiles:
-                    for hab in species_habitats:
-                        tile_prey = prey_tiles.get(hab.tile_id, 0.0)
-                        current_prey_density += tile_prey * hab.suitability
-                    total_suitability = sum(h.suitability for h in species_habitats)
-                    if total_suitability > 0:
-                        current_prey_density /= total_suitability
-                engine.migration_advisor.set_prey_density_data(sp.lineage_code, current_prey_density)
-        
-        logger.debug("[猎物追踪] 已更新消费者猎物密度数据")
-        
-        # 获取冷却期物种
-        ctx.cooldown_species = {
-            sp.lineage_code for sp in ctx.species_batch
-            if sp.status == "alive" and habitat_manager.is_migration_on_cooldown(
-                sp.lineage_code, ctx.turn_index, cooldown_turns=2
-            )
-        }
-        if ctx.cooldown_species:
-            logger.debug(f"[迁徙冷却] {len(ctx.cooldown_species)} 个物种处于冷却期，跳过")
-        
-        # 规划迁徙
-        ctx.migration_events = engine.migration_advisor.plan(
-            ctx.preliminary_mortality,
-            ctx.modifiers, ctx.major_events, ctx.map_changes,
-            current_turn=ctx.turn_index,
-            cooldown_species=ctx.cooldown_species,
-        )
-        
-        # 执行迁徙
-        if ctx.migration_events and engine.migration_advisor.enable_actual_migration:
-            logger.info(f"[迁徙] 执行 {len(ctx.migration_events)} 个迁徙事件...")
-            tiles = environment_repository.list_tiles()
-            
-            for event in ctx.migration_events:
-                migrating_species = next(
-                    (sp for sp in ctx.species_batch if sp.lineage_code == event.lineage_code),
-                    None
-                )
-                if migrating_species:
-                    success = habitat_manager.execute_migration(
-                        migrating_species, event, tiles, ctx.turn_index
-                    )
-                    if success:
-                        ctx.migration_count += 1
-                        logger.info(f"[迁徙成功] {migrating_species.common_name}: {event.origin} → {event.destination}")
-                        ctx.emit_event("migration", f"🗺️ 迁徙: {migrating_species.common_name} 从 {event.origin} 迁往 {event.destination}", "迁徙")
-                        
-                        # 处理共生物种追随
-                        followers = habitat_manager.get_symbiotic_followers(migrating_species, ctx.species_batch)
-                        if followers:
-                            new_habitats = environment_repository.latest_habitats()
-                            new_tile_ids = [
-                                h.tile_id for h in new_habitats
-                                if h.species_id == migrating_species.id
-                            ]
-                            for follower in followers:
-                                follow_success = habitat_manager.execute_symbiotic_following(
-                                    migrating_species, follower, new_tile_ids, tiles, ctx.turn_index
-                                )
-                                if follow_success:
-                                    ctx.symbiotic_follow_count += 1
-            
-            log_msg = f"【阶段2】迁徙执行完成: {ctx.migration_count}/{len(ctx.migration_events)} 个物种成功迁徙"
-            if ctx.symbiotic_follow_count > 0:
-                log_msg += f", {ctx.symbiotic_follow_count} 个共生物种追随"
-            logger.info(log_msg)
-            ctx.emit_event("info", f"{ctx.migration_count} 个物种完成迁徙", "生态")
-        else:
-            logger.debug(f"[迁徙] 生成了 {len(ctx.migration_events)} 个迁徙建议（未执行或无迁徙）")
+## 【已删除】MigrationStage - 已被 TensorEcologyStage 替代
 
 
 class FinalMortalityStage(BaseStage):
@@ -1473,117 +1361,7 @@ class PopulationUpdateStage(BaseStage):
 # 遗传与演化阶段
 # ============================================================================
 
-class PreyDistributionStage(BaseStage):
-    """猎物分布更新阶段"""
-    
-    def __init__(self):
-        super().__init__(StageOrder.PREY_DISTRIBUTION.value, "猎物分布更新")
-    
-    def get_dependency(self) -> StageDependency:
-        return StageDependency(
-            requires_stages={"初步死亡率评估"},
-            requires_fields={"species_batch", "all_habitats"},
-            writes_fields=set(),
-        )
-    
-    async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
-        from ..repositories.environment_repository import environment_repository
-        from ..services.species.habitat_manager import habitat_manager
-        
-        logger.debug("更新猎物分布缓存...")
-        ctx.all_habitats = environment_repository.latest_habitats()
-        habitat_manager.update_prey_distribution_cache(ctx.species_batch, ctx.all_habitats)
-
-
-class DispersalStage(BaseStage):
-    """被动扩散阶段"""
-    
-    def __init__(self):
-        super().__init__(StageOrder.DISPERSAL.value, "被动扩散")
-    
-    def get_dependency(self) -> StageDependency:
-        return StageDependency(
-            requires_stages={"迁徙执行"},
-            requires_fields={"species_batch", "all_tiles"},
-            writes_fields={"dispersal_results"},
-        )
-    
-    async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
-        from ..repositories.environment_repository import environment_repository
-        from ..services.species.dispersal_engine import process_batch_dispersal
-        
-        logger.info("执行被动扩散...")
-        ctx.emit_event("stage", "🌱 被动扩散", "生态")
-        
-        try:
-            tiles = ctx.all_tiles or environment_repository.list_tiles()
-            habitats = ctx.all_habitats or environment_repository.latest_habitats()
-            
-            # 构建死亡率数据
-            mortality_data = {}
-            for result in ctx.combined_results:
-                mortality_data[result.species.lineage_code] = result.death_rate
-            
-            if tiles and ctx.species_batch:
-                ctx.dispersal_results = process_batch_dispersal(
-                    ctx.species_batch,
-                    tiles,
-                    habitats,
-                    mortality_data,
-                    ctx.turn_index,
-                    engine.embedding_integration if hasattr(engine, 'embedding_integration') else None,
-                )
-                if ctx.dispersal_results:
-                    logger.info(f"[扩散] {len(ctx.dispersal_results)} 个物种发生扩散")
-        except Exception as e:
-            logger.warning(f"[扩散] 执行失败: {e}")
-
-
-class HungerMigrationStage(BaseStage):
-    """饥饿驱动迁徙阶段"""
-    
-    def __init__(self):
-        super().__init__(StageOrder.HUNGER_MIGRATION.value, "饥饿迁徙")
-    
-    def get_dependency(self) -> StageDependency:
-        return StageDependency(
-            requires_stages={"被动扩散"},
-            requires_fields={"species_batch", "preliminary_mortality"},
-            writes_fields={"hunger_migrations_count"},
-        )
-    
-    async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
-        from ..repositories.environment_repository import environment_repository
-        from ..services.species.habitat_manager import habitat_manager
-        
-        logger.debug("检查饥饿驱动迁徙...")
-        
-        ctx.hunger_migrations_count = 0
-        
-        # 消费者追踪猎物
-        for sp in ctx.species_batch:
-            if sp.status != "alive":
-                continue
-            
-            trophic_level = getattr(sp, 'trophic_level', 1.0)
-            if trophic_level < 2.0:
-                continue
-            
-            # 检查是否需要追踪猎物
-            result = next(
-                (r for r in ctx.preliminary_mortality if r.species.lineage_code == sp.lineage_code),
-                None
-            )
-            
-            if result and result.death_rate > 0.3:
-                # 高死亡率消费者可能需要追踪猎物
-                prey_tiles = habitat_manager.get_prey_tiles_for_consumer(trophic_level)
-                if prey_tiles:
-                    # 实际迁徙逻辑由 habitat_manager 处理
-                    ctx.hunger_migrations_count += 1
-        
-        if ctx.hunger_migrations_count > 0:
-            logger.info(f"[饥饿迁徙] {ctx.hunger_migrations_count} 个消费者追踪猎物")
+## 【已删除】PreyDistributionStage, DispersalStage, HungerMigrationStage - 已被 TensorEcologyStage 替代
 
 
 class PostMigrationNicheStage(BaseStage):
@@ -1594,8 +1372,9 @@ class PostMigrationNicheStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"饥饿迁徙"},
-            requires_fields={"species_batch", "migration_count"},
+            requires_stages={"初步死亡率评估"},  # 张量系统已处理迁徙
+            optional_stages={"统一张量生态计算"},
+            requires_fields={"species_batch"},
             writes_fields={"niche_metrics"},
         )
     
@@ -3155,6 +2934,104 @@ class FinalizeStage(BaseStage):
         logger.info(f"回合 {ctx.turn_index} 完成")
 
 
+class DatabaseMaintenanceStage(BaseStage):
+    """数据库自动维护阶段
+    
+    【性能优化】定期执行数据库维护任务：
+    1. 清理历史栖息地数据（控制数据库膨胀）
+    2. 执行 VACUUM（回收空间）
+    3. 确保索引存在（加速查询）
+    
+    配置参数：
+    - maintenance_interval: 维护间隔（每 N 回合执行一次）
+    - keep_habitat_turns: 保留最近多少回合的栖息地数据
+    - enable_vacuum: 是否执行 VACUUM（较慢但可回收空间）
+    """
+    
+    # 默认配置
+    DEFAULT_MAINTENANCE_INTERVAL = 10  # 每 10 回合执行一次
+    DEFAULT_KEEP_HABITAT_TURNS = 5     # 保留最近 5 回合的栖息地数据
+    DEFAULT_ENABLE_VACUUM = False      # 默认不执行 VACUUM（较慢）
+    
+    def __init__(
+        self,
+        maintenance_interval: int | None = None,
+        keep_habitat_turns: int | None = None,
+        enable_vacuum: bool | None = None,
+    ):
+        super().__init__(StageOrder.DATABASE_MAINTENANCE.value, "数据库维护")
+        self.maintenance_interval = maintenance_interval or self.DEFAULT_MAINTENANCE_INTERVAL
+        self.keep_habitat_turns = keep_habitat_turns or self.DEFAULT_KEEP_HABITAT_TURNS
+        self.enable_vacuum = enable_vacuum if enable_vacuum is not None else self.DEFAULT_ENABLE_VACUUM
+    
+    def get_dependency(self) -> StageDependency:
+        return StageDependency(
+            requires_stages={"最终化"},
+            requires_fields=set(),
+            writes_fields=set(),
+        )
+    
+    async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
+        from ..repositories.environment_repository import environment_repository
+        
+        turn = ctx.turn_index
+        
+        # 检查是否需要执行维护
+        if turn == 0 or turn % self.maintenance_interval != 0:
+            return
+        
+        logger.info(f"[数据库维护] 开始自动维护 (回合 {turn})...")
+        
+        maintenance_results = {
+            "turn": turn,
+            "cleanup_deleted": 0,
+            "indexes_created": 0,
+            "vacuum_executed": False,
+        }
+        
+        try:
+            # 1. 清理历史栖息地数据
+            if hasattr(environment_repository, 'cleanup_old_habitats'):
+                deleted = environment_repository.cleanup_old_habitats(self.keep_habitat_turns)
+                maintenance_results["cleanup_deleted"] = deleted
+                if deleted > 0:
+                    logger.info(f"[数据库维护] 清理历史栖息地: 删除 {deleted} 条 (保留最近 {self.keep_habitat_turns} 回合)")
+            
+            # 2. 确保索引存在
+            if hasattr(environment_repository, 'ensure_indexes'):
+                results = environment_repository.ensure_indexes()
+                created = sum(1 for v in results.values() if v)
+                maintenance_results["indexes_created"] = created
+                if created > 0:
+                    logger.info(f"[数据库维护] 创建索引: {created} 个")
+            
+            # 3. 可选：执行 VACUUM（每 50 回合执行一次，因为较慢）
+            if self.enable_vacuum and turn % 50 == 0:
+                if hasattr(environment_repository, 'optimize_database'):
+                    opt_result = environment_repository.optimize_database()
+                    maintenance_results["vacuum_executed"] = opt_result.get("vacuum", False)
+                    if opt_result.get("vacuum"):
+                        logger.info("[数据库维护] VACUUM 完成")
+            
+            # 记录维护完成
+            total_actions = (
+                (1 if maintenance_results["cleanup_deleted"] > 0 else 0) +
+                (1 if maintenance_results["indexes_created"] > 0 else 0) +
+                (1 if maintenance_results["vacuum_executed"] else 0)
+            )
+            
+            if total_actions > 0:
+                ctx.emit_event(
+                    "maintenance", 
+                    f"🔧 数据库维护完成 (清理 {maintenance_results['cleanup_deleted']} 条记录)",
+                    "系统"
+                )
+            
+        except Exception as e:
+            logger.warning(f"[数据库维护] 自动维护失败: {e}")
+            # 维护失败不应影响游戏进程，只记录警告
+
+
 # ============================================================================
 # 阶段注册表
 # ============================================================================
@@ -3193,6 +3070,7 @@ def get_default_stages(include_tensor: bool = True) -> list[BaseStage]:
         SaveHistoryStage(),
         ExportDataStage(),
         FinalizeStage(),
+        DatabaseMaintenanceStage(),  # 【性能优化】自动数据库维护
     ]
     
     # 【张量化重构】添加张量计算阶段

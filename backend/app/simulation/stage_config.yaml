@@ -37,18 +37,7 @@ modes:
       - name: preliminary_mortality
         enabled: true
         order: 50
-      - name: prey_distribution
-        enabled: false
-        order: 55
-      - name: migration
-        enabled: true
-        order: 60
-      - name: dispersal
-        enabled: false
-        order: 65
-      - name: hunger_migration
-        enabled: false
-        order: 66
+      # prey_distribution, migration, dispersal, hunger_migration 已被 TensorEcologyStage (order=51) 替代
       - name: post_migration_niche
         enabled: true
         order: 70
@@ -109,6 +98,13 @@ modes:
       - name: finalize
         enabled: true
         order: 180
+      - name: database_maintenance
+        enabled: true
+        order: 185
+        params:
+          maintenance_interval: 10  # 每 10 回合执行一次
+          keep_habitat_turns: 5     # 保留最近 5 回合数据
+          enable_vacuum: false      # 默认不执行 VACUUM
 
   # 标准模式 - 推荐设置
   standard:
@@ -141,27 +137,13 @@ modes:
       - name: preliminary_mortality
         enabled: true
         order: 50
-      - name: prey_distribution
-        enabled: true
-        order: 55
-      - name: migration
-        enabled: true
-        order: 60
-      - name: dispersal
-        enabled: true
-        order: 65
-      - name: hunger_migration
-        enabled: true
-        order: 66
+      # prey_distribution, migration, dispersal, hunger_migration 已被 TensorEcologyStage (order=51) 替代
       - name: post_migration_niche
         enabled: true
         order: 70
       - name: final_mortality
         enabled: true
         order: 80
-      - name: ecological_intelligence
-        enabled: false  # 【已废弃】张量系统已替代，LLM评估默认禁用
-        order: 52
       - name: speciation_data_transfer
         enabled: true
         order: 86
@@ -232,6 +214,13 @@ modes:
       - name: finalize
         enabled: true
         order: 180
+      - name: database_maintenance
+        enabled: true
+        order: 185
+        params:
+          maintenance_interval: 10
+          keep_habitat_turns: 5
+          enable_vacuum: false
 
   # 全功能模式 - 使用新生态智能体架构
   full:
@@ -264,27 +253,13 @@ modes:
       - name: preliminary_mortality
         enabled: true
         order: 50
-      - name: prey_distribution
-        enabled: true
-        order: 55
-      - name: migration
-        enabled: true
-        order: 60
-      - name: dispersal
-        enabled: true
-        order: 65
-      - name: hunger_migration
-        enabled: true
-        order: 66
+      # prey_distribution, migration, dispersal, hunger_migration 已被 TensorEcologyStage (order=51) 替代
       - name: post_migration_niche
         enabled: true
         order: 70
       - name: final_mortality
         enabled: true
         order: 80
-      - name: ecological_intelligence
-        enabled: false  # 【已废弃】张量系统已替代，LLM评估默认禁用
-        order: 52
       - name: speciation_data_transfer
         enabled: true
         order: 86
@@ -366,6 +341,13 @@ modes:
       - name: finalize
         enabled: true
         order: 180
+      - name: database_maintenance
+        enabled: true
+        order: 185
+        params:
+          maintenance_interval: 10
+          keep_habitat_turns: 5
+          enable_vacuum: false
 
   # 调试模式 - 包含性能分析
   debug:
@@ -403,27 +385,13 @@ modes:
       - name: preliminary_mortality
         enabled: true
         order: 50
-      - name: prey_distribution
-        enabled: true
-        order: 55
-      - name: migration
-        enabled: true
-        order: 60
-      - name: dispersal
-        enabled: true
-        order: 65
-      - name: hunger_migration
-        enabled: true
-        order: 66
+      # prey_distribution, migration, dispersal, hunger_migration 已被 TensorEcologyStage (order=51) 替代
       - name: post_migration_niche
         enabled: true
         order: 70
       - name: final_mortality
         enabled: true
         order: 80
-      - name: ecological_intelligence
-        enabled: false  # 【已废弃】张量系统已替代，LLM评估默认禁用
-        order: 52
       - name: speciation_data_transfer
         enabled: true
         order: 86
@@ -502,4 +470,10 @@ modes:
       - name: finalize
         enabled: true
         order: 180
-
+      - name: database_maintenance
+        enabled: true
+        order: 185
+        params:
+          maintenance_interval: 10
+          keep_habitat_turns: 5
+          enable_vacuum: false

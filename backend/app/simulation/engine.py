@@ -1,4 +1,4 @@
-﻿"""
+"""
 Simulation Engine - 模拟引擎（瘦中枢）
 
 SimulationEngine 是模拟系统的核心调度器，负责：
@@ -178,6 +178,7 @@ class SimulationEngine:
         self._use_embedding_integration = True
         self._use_tectonic_system = True
         # 【张量系统开关】
+        self._use_tensor_ecology = self.tensor_config.use_tensor_ecology  # 【新】统一张量生态计算
         self._use_tensor_mortality = self.tensor_config.use_tensor_mortality
         self._use_tensor_speciation = self.tensor_config.use_tensor_speciation
         

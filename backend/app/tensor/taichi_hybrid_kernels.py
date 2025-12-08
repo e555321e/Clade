@@ -402,6 +402,138 @@ def kernel_advanced_diffusion(
         new_pop[s, i, j] = current - outflow + inflow
 
 
+# ============================================================================
+# 多因子死亡率内核 - GPU 加速完整生态死亡率计算
+# ============================================================================
+
+@ti.kernel
+def kernel_multifactor_mortality(
+    pop: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    env: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    species_prefs: ti.types.ndarray(dtype=ti.f32, ndim=2),
+    species_params: ti.types.ndarray(dtype=ti.f32, ndim=2),
+    trophic_levels: ti.types.ndarray(dtype=ti.f32, ndim=1),
+    pressure_overlay: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    result: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    base_mortality: ti.f32,
+    temp_weight: ti.f32,
+    competition_weight: ti.f32,
+    resource_weight: ti.f32,
+    capacity_multiplier: ti.f32,
+    era_scaling: ti.f32,
+):
+    """多因子死亡率计算 - Taichi 全并行
+    
+    综合以下因子：
+    1. 温度压力
+    2. 湿度压力
+    3. 竞争压力（同地块物种竞争）
+    4. 资源压力（承载力）
+    5. 营养级压力（捕食/被捕食）
+    6. 外部压力（灾害等）
+    
+    Args:
+        pop: 种群张量 (S, H, W)
+        env: 环境张量 (C, H, W) - [temp, humidity, altitude, resource, land, sea, coast]
+        species_prefs: 物种偏好 (S, 7)
+        species_params: 物种参数 (S, F) - 包含耐受性等
+        trophic_levels: 营养级 (S,)
+        pressure_overlay: 外部压力叠加 (C_pressure, H, W)
+        result: 死亡率输出 (S, H, W)
+        base_mortality: 基础死亡率
+        temp_weight: 温度死亡率权重
+        competition_weight: 竞争死亡率权重
+        resource_weight: 资源死亡率权重
+        capacity_multiplier: 承载力乘数
+        era_scaling: 时代缩放因子
+    """
+    S, H, W = pop.shape[0], pop.shape[1], pop.shape[2]
+    C_env = env.shape[0]
+    C_pressure = pressure_overlay.shape[0]
+    
+    for s, i, j in ti.ndrange(S, H, W):
+        if pop[s, i, j] <= 0:
+            result[s, i, j] = 0.0
+            continue
+        
+        # === 1. 温度死亡率 ===
+        temp_channel = 1 if C_env > 1 else 0
+        temp = env[temp_channel, i, j]
+        temp_pref = species_prefs[s, 0] * 50.0  # 偏好范围 -50~50
+        temp_deviation = ti.abs(temp - temp_pref)
+        
+        # 温度耐受性
+        temp_tolerance = 15.0
+        if species_params.shape[1] >= 2:
+            temp_tolerance = ti.max(5.0, species_params[s, 1])
+        
+        temp_mortality = 1.0 - ti.exp(-temp_deviation / temp_tolerance)
+        temp_mortality = ti.max(0.01, ti.min(0.8, temp_mortality))
+        
+        # === 2. 湿度死亡率 ===
+        humidity = env[1, i, j] if C_env > 2 else env[0, i, j] * 0.5
+        humidity_pref = species_prefs[s, 1]
+        humidity_deviation = ti.abs(humidity - humidity_pref)
+        humidity_mortality = ti.min(0.4, humidity_deviation * 0.5)
+        
+        # === 3. 竞争死亡率 ===
+        total_pop_tile = 0.0
+        for sp in range(S):
+            total_pop_tile += pop[sp, i, j]
+        
+        my_pop = ti.max(pop[s, i, j], 1e-6)
+        competitor_pop = total_pop_tile - pop[s, i, j]
+        competition_ratio = competitor_pop / (my_pop + 100.0)
+        competition_mortality = ti.min(0.3, competition_ratio * 0.1)
+        
+        # === 4. 资源死亡率 ===
+        resources = env[3, i, j] if C_env > 3 else 100.0
+        capacity = resources * capacity_multiplier
+        saturation = total_pop_tile / (capacity + 1e-6)
+        resource_mortality = ti.max(0.0, ti.min(0.4, (saturation - 0.5) * 0.4))
+        
+        # === 5. 营养级死亡率 ===
+        # 消费者（T>=2）在缺乏猎物时死亡率上升
+        my_trophic = trophic_levels[s]
+        prey_scarcity_mortality = 0.0
+        
+        if my_trophic >= 2.0:
+            # 计算猎物密度
+            prey_density = 0.0
+            for sp in range(S):
+                prey_trophic = trophic_levels[sp]
+                if prey_trophic < my_trophic and prey_trophic >= my_trophic - 1.5:
+                    prey_density += pop[sp, i, j]
+            
+            # 归一化
+            prey_density_norm = prey_density / (total_pop_tile + 1e-6)
+            prey_scarcity_mortality = (1.0 - prey_density_norm) * 0.2
+        
+        # === 6. 外部压力死亡率 ===
+        external_pressure = 0.0
+        for c in range(C_pressure):
+            external_pressure += pressure_overlay[c, i, j]
+        external_mortality = ti.min(0.5, external_pressure * 0.1)
+        
+        # === 综合死亡率 ===
+        total_mortality = (
+            temp_mortality * temp_weight +
+            humidity_mortality * 0.1 +
+            competition_mortality * competition_weight +
+            resource_mortality * resource_weight +
+            prey_scarcity_mortality +
+            external_mortality +
+            base_mortality
+        )
+        
+        # 时代缩放：早期时代死亡率略低
+        if era_scaling > 1.5:
+            scale_factor = ti.max(0.7, 1.0 / ti.pow(era_scaling, 0.2))
+            total_mortality *= scale_factor
+        
+        result[s, i, j] = ti.max(0.01, ti.min(0.95, total_mortality))
+
+
 
 
 
