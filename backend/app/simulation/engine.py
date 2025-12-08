@@ -22,6 +22,8 @@ import logging
 import sys
 from typing import TYPE_CHECKING
 
+import taichi as ti
+
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="ignore")
@@ -117,6 +119,13 @@ class SimulationEngine:
         # Config injection (must be provided by caller, no internal container access)
         configs: dict | None = None,
     ) -> None:
+        # 强制 GPU Taichi 初始化（使用统一初始化函数）
+        from ..tensor.taichi_hybrid_kernels import _ensure_taichi_init
+        try:
+            _ensure_taichi_init()
+        except Exception as e:
+            raise RuntimeError("Taichi GPU 初始化失败，要求GPU/驱动/taichi-gpu安装") from e
+        
         # === 注入的服务 ===
         self.environment = environment
         self.mortality = mortality
@@ -219,6 +228,9 @@ class SimulationEngine:
             loader = StageLoader()
             stages = loader.load_stages_for_mode(mode, validate=True)
             
+            if not stages:
+                raise RuntimeError(f"模式 '{mode}' 没有可用的阶段")
+            
             stage_timeout = self.configs.get("stage_timeout", 120)
             config = PipelineConfig(
                 continue_on_error=True,
@@ -238,6 +250,7 @@ class SimulationEngine:
             logger.error(f"[Pipeline] 初始化失败: {e}")
             self._pipeline = None
             self._pipeline_mode = None
+            raise RuntimeError(f"Pipeline 初始化失败: {e}") from e
     
     def set_mode(self, mode: str) -> None:
         """切换运行模式"""

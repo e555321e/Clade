@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Python-3.12-blue?logo=python" />
   <img src="https://img.shields.io/badge/Node.js-18+-green?logo=nodedotjs" />
   <img src="https://img.shields.io/badge/AI-DeepSeek%20%7C%20GPT%20%7C%20Claude-purple" />
-  <img src="https://img.shields.io/badge/Tensor-NumPy%20%2B%20SciPy-orange" />
+  <img src="https://img.shields.io/badge/GPU-Taichi%20CUDA%2FVulkan-red?logo=nvidia" />
 </p>
 
 ---
@@ -31,14 +31,35 @@
 
 ### 第一步：安装必备软件
 
-> ⚠️ **重要提示**：本游戏需要同时安装 **Python** 和 **Node.js**，两者缺一不可！
+> ⚠️ **重要提示**：本游戏需要同时安装 **Python**、**Node.js** 和 **GPU 驱动**！
 
-如果你还没有安装，请先下载安装：
+#### 🎮 GPU 要求（必须）
+
+本游戏使用 **Taichi GPU 加速**进行生态模拟计算，**必须有支持 CUDA 或 Vulkan 的 GPU**：
+
+| GPU 类型 | 支持情况 | 后端 | 驱动要求 |
+|----------|----------|------|----------|
+| **NVIDIA** | ✅ 推荐 | CUDA | [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) 或 [GeForce 驱动](https://www.nvidia.com/drivers) |
+| **AMD** | ✅ 支持 | Vulkan | [AMD Software](https://www.amd.com/en/support) (自带 Vulkan) |
+| **Intel Arc** | ✅ 支持 | Vulkan | [Intel Arc 驱动](https://www.intel.com/content/www/us/en/download/785597/intel-arc-iris-xe-graphics-windows.html) |
+| **Intel 集显** | ⚠️ 实验性 | Vulkan | 11代酷睿及以上，需最新驱动 |
+| **Apple M1/M2** | ⚠️ 实验性 | Metal | macOS 自带，未经充分测试 |
+| **无 GPU** | ❌ 不支持 | - | 游戏无法启动 |
+
+> 💡 **提示**：启动时如果看到 `Taichi GPU 初始化失败` 错误，请检查：
+> 1. GPU 驱动是否为最新版本
+> 2. 对于 AMD/Intel，确保 Vulkan 运行时已安装（驱动通常自带）
+> 3. 运行 `vulkaninfo` 命令检查 Vulkan 是否可用
+
+#### 软件要求
+
 注意！！目前只支持python3.12，请下载对应版本的python安装
+
 | 软件 | 版本要求 | 下载链接 |
 |------|---------|----------|
 | **Python** | 3.12 | [👉 点击下载](https://www.python.org/downloads/) |
 | **Node.js** | 18 或更高 | [👉 点击下载](https://nodejs.org/zh-cn) |
+| **GPU 驱动** | 最新版 | [NVIDIA](https://www.nvidia.com/drivers) / [AMD](https://www.amd.com/en/support) / [Intel](https://www.intel.com/content/www/us/en/download/785597/intel-arc-iris-xe-graphics-windows.html) |
 
 <details>
 <summary>📖 安装小贴士（点击展开）</summary>
@@ -314,13 +335,24 @@ npm run dev
 
 
 
+### GPU 加速架构
+
+本项目使用 **Taichi GPU** 进行所有生态计算，包括：
+
+| 计算模块 | 说明 | 加速比 |
+|----------|------|--------|
+| **死亡率计算** | 多因子死亡率（温度/竞争/资源/营养级） |
+| **种群扩散** | 带适宜度引导的空间扩散 |
+| **迁徙计算** | 压力驱动+猎物追踪迁徙 |
+| **繁殖计算** | 承载力约束的繁殖 |
+| **种间竞争** | 基于适应度的竞争 |
+
+> ⚠️ **注意**：本项目为 **GPU-only** 架构，无 CPU fallback。没有支持的 GPU 将无法运行。
+
 ### 可配置参数
 
 | 分类 | 参数 | 说明 |
 |------|------|------|
-| **开关** | `use_tensor_mortality` | 张量死亡率计算 |
-| | `use_tensor_speciation` | 张量分化检测 |
-| | `use_auto_tradeoff` | 自动代价权衡 |
 | **温度** | `temp_optimal` | 最适温度 |
 | | `temp_tolerance` | 温度容忍度 |
 | **种群** | `diffusion_rate` | 扩散率 |

@@ -5,9 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "egame-sim"
 version = "0.1.0"
-description = "AI-driven evolutionary sandbox backend"
+description = "AI-driven evolutionary sandbox backend (GPU-only)"
 authors = [{ name = "Codex" }]
 requires-python = ">=3.11"
+# NOTE: 本项目为 GPU-only 架构，需要支持 CUDA/Vulkan 的 GPU
+# taichi 会自动使用 GPU，如果没有 GPU 将无法启动
 dependencies = [
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.30.0",
@@ -20,7 +22,7 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "scikit-learn>=1.3.0",
     "faiss-cpu>=1.7.4",
-    "taichi>=1.7.0",
+    "taichi>=1.7.0",  # GPU-only: 需要 CUDA/Vulkan 支持
 ]
 
 [project.optional-dependencies]

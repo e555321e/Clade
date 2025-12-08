@@ -60,8 +60,8 @@ class PressureTensorStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"解析环境压力"},
-            requires_fields={"modifiers", "pressures"},
+            requires_stages=set(),
+            requires_fields=set(),
             writes_fields={"pressure_overlay"},
         )
     
@@ -110,6 +110,130 @@ class PressureTensorStage(BaseStage):
 
 
 # ============================================================================
+# 张量状态构建阶段
+# ============================================================================
+
+class TensorStateInitStage(BaseStage):
+    """构建张量状态，供后续统一生态计算使用"""
+    
+    def __init__(self):
+        super().__init__(
+            StageOrder.TENSOR_STATE_INIT.value,  # order=49
+            "张量状态构建"
+        )
+    
+    def get_dependency(self) -> StageDependency:
+        return StageDependency(
+            requires_stages=set(),
+            optional_stages={"压力张量化"},
+            requires_fields={"species_batch"},
+            writes_fields={"tensor_state"},
+        )
+    
+    async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
+        import numpy as np
+        species_batch = getattr(ctx, "species_batch", []) or []
+        if not species_batch:
+            logger.warning("[张量状态构建] 无物种，跳过")
+            return
+        
+        # 获取地图尺寸
+        map_state = getattr(ctx, "current_map_state", None)
+        all_tiles = getattr(ctx, "all_tiles", []) or []
+        
+        # 计算地图尺寸
+        if map_state:
+            H = getattr(map_state, "height", 64)
+            W = getattr(map_state, "width", 128)
+        elif all_tiles:
+            # 从地块推断尺寸（MapTile 使用 x, y 坐标）
+            max_y = max((t.y for t in all_tiles), default=40)
+            max_x = max((t.x for t in all_tiles), default=128)
+            H, W = max_y + 1, max_x + 1
+        else:
+            H, W = 40, 128  # 默认尺寸
+        
+        S = len(species_batch)
+        
+        # 构建环境张量 (7, H, W): [temp, humidity, altitude, resource, land, sea, coast]
+        env = np.zeros((7, H, W), dtype=np.float32)
+        if all_tiles:
+            for tile in all_tiles:
+                # MapTile 使用 x, y 坐标（y 对应行，x 对应列）
+                r, c = tile.y, tile.x
+                if 0 <= r < H and 0 <= c < W:
+                    env[0, r, c] = getattr(tile, 'temperature', 20.0) / 50.0  # 归一化
+                    env[1, r, c] = getattr(tile, 'humidity', 0.5)
+                    env[2, r, c] = getattr(tile, 'elevation', 0.0) / 1000.0  # 使用 elevation
+                    env[3, r, c] = getattr(tile, 'resources', 100.0) / 100.0  # 使用 resources
+                    # 地形类型（根据 biome 判断）
+                    biome = getattr(tile, 'biome', 'land')
+                    env[4, r, c] = 1.0 if biome not in ('ocean', 'sea', 'deep_ocean') else 0.0
+                    env[5, r, c] = 1.0 if biome in ('ocean', 'sea', 'deep_ocean') else 0.0
+                    env[6, r, c] = 1.0 if biome in ('coast', 'coastal', 'shore') else 0.0
+        else:
+            # 默认环境：温带陆地
+            env[0, :, :] = 0.4  # 温度
+            env[1, :, :] = 0.5  # 湿度
+            env[3, :, :] = 0.8  # 资源
+            env[4, :, :] = 1.0  # 陆地
+        
+        # 构建种群张量 (S, H, W)
+        pop = np.zeros((S, H, W), dtype=np.float32)
+        species_map = {}
+        
+        # 构建 tile_id -> (y, x) 映射
+        tile_coords = {tile.id: (tile.y, tile.x) for tile in all_tiles} if all_tiles else {}
+        
+        for idx, sp in enumerate(species_batch):
+            species_map[sp.lineage_code] = idx
+            # 分配种群到地图（从 morphology_stats 获取）
+            total_pop = sp.morphology_stats.get("population", 0)
+            if total_pop > 0:
+                # 获取物种栖息地分布
+                habitats = getattr(sp, 'habitats', []) or []
+                if habitats and tile_coords:
+                    # 按栖息地分配
+                    pop_per_habitat = total_pop / len(habitats)
+                    for hab in habitats:
+                        tile_id = getattr(hab, 'tile_id', None)
+                        if tile_id is not None and tile_id in tile_coords:
+                            r, c = tile_coords[tile_id]
+                            if 0 <= r < H and 0 <= c < W:
+                                pop[idx, r, c] += pop_per_habitat
+                else:
+                    # 均匀分布到所有陆地
+                    land_mask = env[4] > 0.5
+                    land_count = land_mask.sum()
+                    if land_count > 0:
+                        pop[idx, land_mask] = total_pop / land_count
+                    else:
+                        # 分布到整个地图
+                        pop[idx, :, :] = total_pop / (H * W)
+        
+        # 构建物种参数 (S, F)
+        species_params = np.zeros((S, 4), dtype=np.float32)
+        for idx, sp in enumerate(species_batch):
+            species_params[idx, 0] = getattr(sp, 'temp_optimal', 20.0)
+            species_params[idx, 1] = getattr(sp, 'temp_tolerance', 15.0)
+            species_params[idx, 2] = getattr(sp, 'mobility', 1.0)
+            species_params[idx, 3] = getattr(sp, 'reproduction_rate', 0.1)
+        
+        from ..tensor.state import TensorState
+        tensor_state = TensorState(
+            env=env,
+            pop=pop,
+            species_params=species_params,
+            masks={},
+            species_map=species_map,
+        )
+        
+        ctx.tensor_state = tensor_state
+        total_pop = pop.sum()
+        logger.info(f"[张量状态构建] 已构建张量状态：物种数={S}, 维度={H}x{W}, 总种群={total_pop:.0f}")
+
+
+# ============================================================================
 # 统一张量生态计算阶段
 # ============================================================================
 
@@ -129,7 +253,7 @@ class TensorEcologyStage(BaseStage):
     """
     
     def __init__(self):
-        # 在初步死亡率之后执行（order=51）
+        # 在张量状态构建之后执行（order=51）
         super().__init__(
             StageOrder.PRELIMINARY_MORTALITY.value + 1,  # order=51
             "统一张量生态计算"
@@ -137,9 +261,9 @@ class TensorEcologyStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"初步死亡率评估"},
+            requires_stages={"张量状态构建"},
             requires_fields={"tensor_state", "species_batch"},
-            optional_fields={"pressure_overlay", "preliminary_mortality"},
+            optional_stages={"压力张量化"},  # 可选的前置阶段
             writes_fields={"tensor_state", "tensor_metrics", "combined_results", 
                           "migration_events", "migration_count"},
         )
@@ -200,7 +324,8 @@ class TensorEcologyStage(BaseStage):
                 if is_on_cooldown:
                     cooldown_mask[idx] = False
         
-        # 【核心】一次调用完成全部生态计算
+        # 【核心】直接执行 Taichi 计算（CUDA 上下文不能跨线程）
+        # 注意：Taichi/CUDA 上下文是线程绑定的，不能用 asyncio.to_thread()
         result = ecology_engine.process_ecology(
             pop=pop,
             env=env,
@@ -210,6 +335,10 @@ class TensorEcologyStage(BaseStage):
             trophic_levels=trophic_levels,
             pressure_overlay=pressure_overlay,
             cooldown_mask=cooldown_mask,
+        )
+        logger.info(
+            f"[统一张量生态] 后端={result.metrics.backend}, "
+            f"耗时={result.metrics.total_time_ms:.1f}ms"
         )
         
         # 更新张量状态
@@ -259,9 +388,35 @@ class TensorEcologyStage(BaseStage):
         result,
         species_map: dict,
     ) -> None:
-        """将张量死亡率同步到 combined_results"""
-        combined_results = getattr(ctx, "combined_results", None) or []
+        """将张量死亡率同步到 combined_results
         
+        如果 combined_results 不存在或为空，从 species_batch 创建。
+        """
+        from ..simulation.tile_based_mortality import AggregatedMortalityResult
+        
+        combined_results = getattr(ctx, "combined_results", None) or []
+        species_batch = getattr(ctx, "species_batch", []) or []
+        
+        # 如果 combined_results 为空，从 species_batch 创建
+        if len(combined_results) == 0 and species_batch:
+            combined_results = []
+            for sp in species_batch:
+                pop = sp.morphology_stats.get("population", 0)
+                combined_results.append(AggregatedMortalityResult(
+                    species=sp,
+                    initial_population=pop,
+                    deaths=0,
+                    survivors=pop,
+                    death_rate=0.0,
+                ))
+            ctx.combined_results = combined_results
+            logger.info(f"[张量生态] 创建 combined_results: {len(combined_results)} 个物种")
+        
+        if not combined_results:
+            logger.warning("[张量生态] combined_results 为空，跳过死亡率同步")
+            return
+        
+        sync_count = 0
         for res in combined_results:
             lineage = res.species.lineage_code
             idx = species_map.get(lineage)
@@ -274,6 +429,10 @@ class TensorEcologyStage(BaseStage):
                     res.death_rate = avg_mortality
                     res.deaths = int(result.death_counts[idx])
                     res.survivors = int(result.survivor_counts[idx])
+                    res.final_population = res.survivors
+                    sync_count += 1
+        
+        logger.info(f"[张量生态] 死亡率同步完成: {sync_count}/{len(combined_results)} 个物种")
 
 
 # ============================================================================
@@ -345,6 +504,8 @@ class TensorStateSyncStage(BaseStage):
     1. 从 ctx.tensor_state 获取最终种群数据
     2. 更新 ctx.species_batch 中各物种的 population
     3. 更新 ctx.new_populations
+    4. 【新增】同步到数据库仓库
+    5. 【新增】检查灭绝状态
     """
     
     def __init__(self):
@@ -356,48 +517,90 @@ class TensorStateSyncStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            optional_stages={"统一张量生态计算"},
-            requires_fields={"tensor_state", "species_batch"},
+            optional_stages={"统一张量生态计算", "种群更新"},
+            requires_fields={"species_batch"},
             writes_fields={"new_populations"},
         )
     
     async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
         from ..tensor import get_compute
+        from ..repositories.species_repository import species_repository
         
         tensor_state = getattr(ctx, "tensor_state", None)
-        if tensor_state is None:
+        species_batch = getattr(ctx, "species_batch", []) or []
+        
+        if not species_batch:
+            logger.debug("[张量同步] 无物种，跳过")
             return
         
-        compute = get_compute()
+        # 构建 lineage -> species 映射
+        species_by_lineage = {sp.lineage_code: sp for sp in species_batch}
         
-        try:
-            pop = tensor_state.pop
-            species_map = tensor_state.species_map
-            
-            # 计算每个物种的总种群
-            totals = compute.sum_population(pop)
-            
-            sync_count = 0
-            for lineage, idx in species_map.items():
-                if idx < len(totals):
-                    new_population = max(0, int(totals[idx]))
-                    
-                    # 更新 new_populations
-                    if lineage in ctx.new_populations:
-                        # 与现有值混合（避免突变）
-                        old_val = ctx.new_populations[lineage]
-                        ctx.new_populations[lineage] = int(
-                            0.5 * old_val + 0.5 * new_population
-                        )
-                    else:
+        sync_count = 0
+        extinct_count = 0
+        
+        # 优先从 tensor_state 获取种群数据
+        if tensor_state is not None:
+            try:
+                compute = get_compute()
+                pop = tensor_state.pop
+                species_map = tensor_state.species_map
+                
+                # 计算每个物种的总种群
+                totals = compute.sum_population(pop)
+                
+                for lineage, idx in species_map.items():
+                    if idx < len(totals):
+                        new_population = max(0, int(totals[idx]))
+                        
+                        # 更新 new_populations
                         ctx.new_populations[lineage] = new_population
+                        
+                        # 更新 species_batch 中的物种对象（使用 morphology_stats）
+                        if lineage in species_by_lineage:
+                            sp = species_by_lineage[lineage]
+                            old_pop = sp.morphology_stats.get("population", 0)
+                            sp.morphology_stats["population"] = new_population
+                            
+                            # 检查灭绝
+                            if new_population <= 0 and old_pop > 0:
+                                sp.status = "extinct"
+                                sp.morphology_stats["extinction_turn"] = ctx.turn_index
+                                extinct_count += 1
+                                logger.info(f"[张量同步] 物种 {lineage} 灭绝")
+                        
+                        sync_count += 1
+                
+            except Exception as e:
+                logger.warning(f"[张量同步] 从 tensor_state 同步失败: {e}")
+        
+        # 如果有 new_populations 数据（来自 PopulationUpdateStage），也要同步
+        if ctx.new_populations:
+            for lineage, new_pop in ctx.new_populations.items():
+                if lineage in species_by_lineage:
+                    sp = species_by_lineage[lineage]
+                    old_pop = sp.morphology_stats.get("population", 0)
+                    sp.morphology_stats["population"] = new_pop
                     
-                    sync_count += 1
-            
-            logger.debug(f"[张量同步] 已同步 {sync_count} 个物种的种群数据")
-            
-        except Exception as e:
-            logger.warning(f"[张量同步] 同步失败: {e}")
+                    # 检查灭绝
+                    if new_pop <= 0 and old_pop > 0:
+                        if sp.status != "extinct":
+                            sp.status = "extinct"
+                            sp.morphology_stats["extinction_turn"] = ctx.turn_index
+                            extinct_count += 1
+        
+        # 持久化到数据库（使用 upsert 方法）
+        persisted_count = 0
+        for sp in species_batch:
+            try:
+                species_repository.upsert(sp)
+                persisted_count += 1
+            except Exception as e:
+                logger.warning(f"[张量同步] 持久化物种 {sp.lineage_code} 失败: {e}")
+        
+        logger.info(
+            f"[张量同步] 完成: 同步={sync_count}, 持久化={persisted_count}, 灭绝={extinct_count}"
+        )
 
 
 # ============================================================================
@@ -421,6 +624,7 @@ def get_tensor_stages() -> list[BaseStage]:
     """
     return [
         PressureTensorStage(),     # 压力张量化（在压力解析后立即执行）
+        TensorStateInitStage(),    # 张量状态构建
         TensorEcologyStage(),      # 统一生态计算
         TensorStateSyncStage(),    # 状态同步
         TensorMetricsStage(),      # 监控指标

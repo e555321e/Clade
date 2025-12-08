@@ -37,15 +37,10 @@ except ImportError:
 
 
 def init_taichi(arch: str = "auto") -> bool:
-    """初始化 Taichi 运行时
+    """初始化 Taichi 运行时（使用统一初始化函数）
     
     Args:
-        arch: 目标架构
-            - "auto": 自动选择最佳后端
-            - "gpu": 优先 GPU (CUDA > Vulkan > Metal)
-            - "cpu": 仅使用 CPU
-            - "cuda": 仅使用 CUDA
-            - "vulkan": 仅使用 Vulkan
+        arch: 目标架构（已废弃，始终使用 GPU）
     
     Returns:
         是否成功初始化
@@ -59,22 +54,15 @@ def init_taichi(arch: str = "auto") -> bool:
         return True
     
     try:
-        arch_map = {
-            "auto": ti.gpu,  # 自动选择 GPU，失败则回退 CPU
-            "gpu": ti.gpu,
-            "cpu": ti.cpu,
-            "cuda": ti.cuda,
-            "vulkan": ti.vulkan,
-        }
-        target_arch = arch_map.get(arch, ti.gpu)
-        
-        ti.init(arch=target_arch, default_fp=ti.f32, offline_cache=True)
+        # 使用统一的初始化函数
+        from .taichi_hybrid_kernels import _ensure_taichi_init
+        _ensure_taichi_init()
         _taichi_initialized = True
         
         # 定义内核
         _define_taichi_kernels()
         
-        logger.info(f"[Taichi] 初始化成功，后端: {arch}")
+        logger.info(f"[Taichi] 初始化成功")
         return True
         
     except Exception as e:

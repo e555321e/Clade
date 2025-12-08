@@ -497,10 +497,15 @@ export interface PressureIntensityConfig {
   tier2_multiplier?: number;  // 二阶压力（气候变迁）倍率，默认 0.7
   tier3_multiplier?: number;  // 三阶压力（天灾降临）倍率，默认 1.5
   
-  // 强度滑块倍率 (Intensity Multipliers)
-  intensity_low_multiplier?: number;   // 强度 1-3（轻微）倍率，默认 0.3
-  intensity_mid_multiplier?: number;   // 强度 4-7（显著）倍率，默认 0.6
-  intensity_high_multiplier?: number;  // 强度 8-10（毁灭性）倍率，默认 1.2
+  // 强度滑块效果倍率 (Intensity Effect Multipliers)
+  intensity_low_multiplier?: number;   // 强度 1-3（轻微）效果倍率，默认 0.3
+  intensity_mid_multiplier?: number;   // 强度 4-7（显著）效果倍率，默认 0.6
+  intensity_high_multiplier?: number;  // 强度 8-10（毁灭性）效果倍率，默认 1.2
+  
+  // 神力消耗倍率 (Cost Multipliers) - 与后端扣费一致
+  cost_low_multiplier?: number;        // 强度 1-3 消耗倍率，默认 1.0
+  cost_mid_multiplier?: number;        // 强度 4-7 消耗倍率，默认 2.0
+  cost_high_multiplier?: number;       // 强度 8-10 消耗倍率，默认 5.0
   
   // 温度修饰系数
   temperature_effect_per_unit?: number;  // 每单位温度修饰的效果（°C），默认 0.8

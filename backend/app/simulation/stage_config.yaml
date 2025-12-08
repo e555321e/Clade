@@ -1,14 +1,13 @@
 # Simulation Pipeline Stage Configuration
-# 模拟流水线阶段配置
+# GPU 张量流水线 + 核心数据阶段
 
 # 当前使用的模式
 mode: standard
 
 # 模式定义
 modes:
-  # 极简模式 - 仅核心功能
   minimal:
-    description: "极简模式：仅保留压力、简单死亡率、繁殖"
+    description: "极简模式：核心数据 + GPU张量计算"
     stages:
       - name: init
         enabled: true
@@ -16,99 +15,39 @@ modes:
       - name: parse_pressures
         enabled: true
         order: 10
-      - name: map_evolution
+      - name: pressure_tensor
         enabled: true
-        order: 20
-      - name: tectonic_movement
-        enabled: false
-        order: 25
+        order: 11
       - name: fetch_species
         enabled: true
         order: 30
-      - name: food_web
-        enabled: false
-        order: 35
       - name: tiering_and_niche
         enabled: true
         order: 40
-      - name: ecological_realism
-        enabled: true  # 生态拟真：Allee效应、疾病、共生等
-        order: 45
-      - name: preliminary_mortality
+      - name: tensor_state_init
         enabled: true
-        order: 50
-      # prey_distribution, migration, dispersal, hunger_migration 已被 TensorEcologyStage (order=51) 替代
-      - name: post_migration_niche
+        order: 49
+      - name: tensor_ecology
         enabled: true
-        order: 70
-      - name: final_mortality
-        enabled: true
-        order: 80
-      - name: ecological_intelligence
-        enabled: false  # 极简模式禁用
-        order: 52  # 在初步死亡率(50)后、迁徙(60)前，使AI能影响迁徙决策
-      - name: speciation_data_transfer
-        enabled: false
-        order: 86
+        order: 51
       - name: population_update
         enabled: true
         order: 90
-      - name: gene_activation
-        enabled: false
-        order: 95
-      - name: gene_flow
-        enabled: false
-        order: 100
-      - name: genetic_drift
-        enabled: false
-        order: 105
-      - name: auto_hybridization
-        enabled: false
-        order: 110
-      - name: subspecies_promotion
-        enabled: false
-        order: 115
-      - name: background_management
-        enabled: false
-        order: 130
+      - name: tensor_metrics
+        enabled: true
+        order: 139
       - name: build_report
         enabled: true
         order: 140
-      - name: save_map_snapshot
+      - name: tensor_state_sync
         enabled: true
-        order: 150
-      - name: vegetation_cover
-        enabled: false
-        order: 155
-      - name: save_population_snapshot
-        enabled: true
-        order: 160
-      - name: embedding_hooks
-        enabled: false
-        order: 165
-      - name: embedding_plugins
-        enabled: false  # 极简模式禁用
-        order: 166
-      - name: save_history
-        enabled: true
-        order: 170
-      - name: export_data
-        enabled: true
-        order: 175
+        order: 159
       - name: finalize
         enabled: true
         order: 180
-      - name: database_maintenance
-        enabled: true
-        order: 185
-        params:
-          maintenance_interval: 10  # 每 10 回合执行一次
-          keep_habitat_turns: 5     # 保留最近 5 回合数据
-          enable_vacuum: false      # 默认不执行 VACUUM
 
-  # 标准模式 - 推荐设置
   standard:
-    description: "标准模式：保留主流程，禁用最重的AI阶段"
+    description: "标准模式：完整数据流 + GPU张量计算"
     stages:
       - name: init
         enabled: true
@@ -116,12 +55,12 @@ modes:
       - name: parse_pressures
         enabled: true
         order: 10
+      - name: pressure_tensor
+        enabled: true
+        order: 11
       - name: map_evolution
-        enabled: true  # 海平面、气候变化
+        enabled: true
         order: 20
-      - name: tectonic_movement
-        enabled: false  # 禁用板块运动（地形不变）
-        order: 25
       - name: fetch_species
         enabled: true
         order: 30
@@ -131,100 +70,51 @@ modes:
       - name: tiering_and_niche
         enabled: true
         order: 40
-      - name: ecological_realism
-        enabled: true  # 生态拟真：Allee效应、疾病、共生等
-        order: 45
-      - name: preliminary_mortality
+      - name: tensor_state_init
         enabled: true
-        order: 50
-      # prey_distribution, migration, dispersal, hunger_migration 已被 TensorEcologyStage (order=51) 替代
-      - name: post_migration_niche
+        order: 49
+      - name: tensor_ecology
         enabled: true
-        order: 70
-      - name: final_mortality
-        enabled: true
-        order: 80
-      - name: speciation_data_transfer
-        enabled: true
-        order: 86
+        order: 51
       - name: population_update
         enabled: true
         order: 90
+      - name: gene_diversity
+        enabled: true
+        order: 93
       - name: gene_activation
         enabled: true
         order: 95
-      - name: gene_flow
-        enabled: true
-        order: 100
-      - name: genetic_drift
-        enabled: true
-        order: 105
-      - name: auto_hybridization
-        enabled: true  # 【启用】自动杂交
-        order: 110
-      - name: subspecies_promotion
-        enabled: true
-        order: 115
       - name: speciation
-        enabled: true  # 【关键修复】启用物种分化
-        order: 122
+        enabled: true
+        order: 120
       - name: background_management
         enabled: true
         order: 130
+      - name: tensor_metrics
+        enabled: true
+        order: 139
       - name: build_report
         enabled: true
         order: 140
       - name: save_map_snapshot
         enabled: true
         order: 150
-      - name: vegetation_cover
+      - name: tensor_state_sync
         enabled: true
-        order: 155
+        order: 159
       - name: save_population_snapshot
         enabled: true
         order: 160
-      - name: embedding_hooks
-        enabled: true  # 标准模式启用 Embedding
-        order: 165
-      - name: embedding_plugins
-        enabled: true  # 标准模式启用插件
-        order: 166
-        plugins:
-          behavior_strategy:
-            enabled: true
-            update_frequency: 2
-          food_web:
-            enabled: true
-            update_frequency: 1
-          tile_biome:
-            enabled: true
-            update_frequency: 3
-          prompt_optimizer:
-            enabled: false  # 标准模式禁用，减少开销
-          evolution_space:
-            enabled: false
-          ancestry:
-            enabled: false
       - name: save_history
         enabled: true
         order: 170
-      - name: export_data
-        enabled: true
-        order: 175
       - name: finalize
         enabled: true
         order: 180
-      - name: database_maintenance
-        enabled: true
-        order: 185
-        params:
-          maintenance_interval: 10
-          keep_habitat_turns: 5
-          enable_vacuum: false
 
-  # 全功能模式 - 使用新生态智能体架构
   full:
-    description: "全功能模式：使用生态智能体统一修正，禁用旧AI数值Stage"
+    description: "全功能模式：所有阶段 + GPU张量计算"
     stages:
       - name: init
         enabled: true
@@ -232,6 +122,9 @@ modes:
       - name: parse_pressures
         enabled: true
         order: 10
+      - name: pressure_tensor
+        enabled: true
+        order: 11
       - name: map_evolution
         enabled: true
         order: 20
@@ -247,25 +140,18 @@ modes:
       - name: tiering_and_niche
         enabled: true
         order: 40
-      - name: ecological_realism
-        enabled: true  # 生态拟真：Allee效应、疾病、共生等
-        order: 45
-      - name: preliminary_mortality
+      - name: tensor_state_init
         enabled: true
-        order: 50
-      # prey_distribution, migration, dispersal, hunger_migration 已被 TensorEcologyStage (order=51) 替代
-      - name: post_migration_niche
+        order: 49
+      - name: tensor_ecology
         enabled: true
-        order: 70
-      - name: final_mortality
-        enabled: true
-        order: 80
-      - name: speciation_data_transfer
-        enabled: true
-        order: 86
+        order: 51
       - name: population_update
         enabled: true
         order: 90
+      - name: gene_diversity
+        enabled: true
+        order: 93
       - name: gene_activation
         enabled: true
         order: 95
@@ -283,10 +169,13 @@ modes:
         order: 115
       - name: speciation
         enabled: true
-        order: 122
+        order: 120
       - name: background_management
         enabled: true
         order: 130
+      - name: tensor_metrics
+        enabled: true
+        order: 139
       - name: build_report
         enabled: true
         order: 140
@@ -296,42 +185,18 @@ modes:
       - name: vegetation_cover
         enabled: true
         order: 155
+      - name: tensor_state_sync
+        enabled: true
+        order: 159
       - name: save_population_snapshot
         enabled: true
         order: 160
+      - name: embedding_integration
+        enabled: true
+        order: 164
       - name: embedding_hooks
         enabled: true
         order: 165
-      - name: embedding_plugins
-        enabled: true  # 全功能模式启用插件
-        order: 166
-        plugins:
-          behavior_strategy:
-            enabled: true
-            update_frequency: 1
-            params:
-              similarity_threshold: 0.7
-          food_web:
-            enabled: true
-            update_frequency: 1
-            params:
-              stability_threshold: 0.4
-          tile_biome:
-            enabled: true
-            update_frequency: 2
-          prompt_optimizer:
-            enabled: true
-            update_frequency: 1
-            params:
-              max_tokens: 1000
-          evolution_space:
-            enabled: true
-            update_frequency: 5
-            params:
-              cluster_interval: 5
-          ancestry:
-            enabled: true
-            update_frequency: 2
       - name: save_history
         enabled: true
         order: 170
@@ -341,139 +206,46 @@ modes:
       - name: finalize
         enabled: true
         order: 180
-      - name: database_maintenance
-        enabled: true
-        order: 185
-        params:
-          maintenance_interval: 10
-          keep_habitat_turns: 5
-          enable_vacuum: false
 
-  # 调试模式 - 包含性能分析
   debug:
-    description: "调试模式：专用调试Stage，打印更多日志"
+    description: "调试模式：核心阶段 + GPU张量计算 + 详细日志"
     stages:
       - name: init
         enabled: true
         order: 0
-      - name: stage_profiling_start
-        enabled: true
-        order: 1
-        params:
-          log_level: DEBUG
       - name: parse_pressures
         enabled: true
         order: 10
-      - name: map_evolution
+      - name: pressure_tensor
         enabled: true
-        order: 20
-      - name: tectonic_movement
-        enabled: true
-        order: 25
+        order: 11
       - name: fetch_species
         enabled: true
         order: 30
-      - name: food_web
-        enabled: true
-        order: 35
       - name: tiering_and_niche
         enabled: true
         order: 40
-      - name: ecological_realism
-        enabled: true  # 生态拟真：Allee效应、疾病、共生等
-        order: 45
-      - name: preliminary_mortality
+      - name: tensor_state_init
         enabled: true
-        order: 50
-      # prey_distribution, migration, dispersal, hunger_migration 已被 TensorEcologyStage (order=51) 替代
-      - name: post_migration_niche
+        order: 49
+      - name: tensor_ecology
         enabled: true
-        order: 70
-      - name: final_mortality
-        enabled: true
-        order: 80
-      - name: speciation_data_transfer
-        enabled: true
-        order: 86
+        order: 51
       - name: population_update
         enabled: true
         order: 90
-      - name: gene_activation
+      - name: tensor_metrics
         enabled: true
-        order: 95
-      - name: gene_flow
-        enabled: true
-        order: 100
-      - name: genetic_drift
-        enabled: true
-        order: 105
-      - name: auto_hybridization
-        enabled: true
-        order: 110
-      - name: subspecies_promotion
-        enabled: true
-        order: 115
-      - name: speciation
-        enabled: true
-        order: 122
-      - name: background_management
-        enabled: true
-        order: 130
+        order: 139
       - name: build_report
         enabled: true
         order: 140
-      - name: save_map_snapshot
+      - name: tensor_state_sync
         enabled: true
-        order: 150
-      - name: vegetation_cover
-        enabled: true
-        order: 155
+        order: 159
       - name: save_population_snapshot
         enabled: true
         order: 160
-      - name: embedding_hooks
-        enabled: true
-        order: 165
-      - name: embedding_plugins
-        enabled: true  # 调试模式启用全部插件
-        order: 166
-        plugins:
-          behavior_strategy:
-            enabled: true
-            update_frequency: 1
-          food_web:
-            enabled: true
-            update_frequency: 1
-          tile_biome:
-            enabled: true
-            update_frequency: 1
-          prompt_optimizer:
-            enabled: true
-            update_frequency: 1
-          evolution_space:
-            enabled: true
-            update_frequency: 1
-          ancestry:
-            enabled: true
-            update_frequency: 1
-      - name: save_history
-        enabled: true
-        order: 170
-      - name: export_data
-        enabled: true
-        order: 175
-      - name: stage_profiling_end
-        enabled: true
-        order: 179
-        params:
-          output_format: table
       - name: finalize
         enabled: true
         order: 180
-      - name: database_maintenance
-        enabled: true
-        order: 185
-        params:
-          maintenance_interval: 10
-          keep_habitat_turns: 5
-          enable_vacuum: false

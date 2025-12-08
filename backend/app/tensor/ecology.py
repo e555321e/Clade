@@ -1,27 +1,30 @@
 """
-统一张量生态计算引擎 - 整合死亡率、扩散、迁徙
+GPU-only 统一张量生态计算引擎
+
+【GPU-only 模式】
+本模块强制使用 Taichi GPU 后端，无 NumPy fallback。
+如果 GPU/Taichi 不可用，会直接抛出 RuntimeError。
 
 【核心优化】
 将原本分散在多个模块中的循环计算统一为张量并行计算：
-1. 死亡率：替代 TileBasedMortalityEngine 中的逐物种循环
-2. 扩散：替代 DispersalEngine 中的逐物种循环
-3. 迁徙：整合 TensorMigrationEngine
+1. 死亡率：Taichi GPU 并行计算多因子死亡率
+2. 扩散：Taichi GPU 并行计算带适宜度引导的扩散
+3. 迁徙：Taichi GPU 并行计算压力驱动+猎物追踪迁徙
 
 【性能提升】
 - 原方案：逐物种串行计算，50物种 × 64×64地图 ≈ 2000ms
-- 新方案：全物种张量并行，50物种 × 64×64地图 ≈ 50ms
+- 新方案：Taichi GPU 张量并行，50物种 × 64×64地图 ≈ 50ms
 - 加速比：10-50x
 
 【设计原则】
-1. 零循环：所有计算使用向量化/张量化操作
-2. GPU友好：支持 Taichi GPU 加速
+1. GPU-only：所有计算通过 Taichi 内核执行
+2. 零循环：Python 层无显式循环
 3. 一次调用：process_ecology() 完成全部生态计算
-4. 向后兼容：可导出与旧系统兼容的结果格式
 
 使用方式：
     from app.tensor.ecology import get_ecology_engine
     
-    engine = get_ecology_engine()
+    engine = get_ecology_engine()  # 无 GPU 时抛错
     result = engine.process_ecology(
         pop=tensor_state.pop,
         env=tensor_state.env,
@@ -52,7 +55,7 @@ _taichi_available = False
 
 
 def _load_ecology_kernels():
-    """延迟加载生态计算的 Taichi 内核"""
+    """加载 Taichi 内核 - GPU-only 模式，无 fallback"""
     global _taichi_kernels, _taichi_available
     
     if _taichi_kernels is not None:
@@ -62,16 +65,18 @@ def _load_ecology_kernels():
         from . import taichi_hybrid_kernels as kernels
         _taichi_kernels = kernels
         _taichi_available = True
-        logger.info("[TensorEcology] Taichi 内核已加载")
+        logger.info("[TensorEcology] Taichi GPU 内核已加载")
         return True
     except ImportError as e:
-        logger.info(f"[TensorEcology] Taichi 不可用，使用 NumPy 回退: {e}")
-        _taichi_available = False
-        return False
+        raise RuntimeError(
+            f"[GPU-only] Taichi 导入失败: {e}\n"
+            "请确保已安装 taichi-gpu 并且有可用的 GPU 设备"
+        ) from e
     except Exception as e:
-        logger.warning(f"[TensorEcology] Taichi 初始化失败: {e}")
-        _taichi_available = False
-        return False
+        raise RuntimeError(
+            f"[GPU-only] Taichi GPU 初始化失败: {e}\n"
+            "请检查 GPU 驱动是否正确安装"
+        ) from e
 
 
 @dataclass
@@ -174,15 +179,15 @@ class TensorEcologyEngine:
         self._suitability_cache: np.ndarray | None = None
         self._last_metrics: EcologyMetrics | None = None
         
-        if self._taichi_ready:
-            logger.info("[TensorEcology] 使用 Taichi GPU 加速")
-        else:
-            logger.info("[TensorEcology] 使用 NumPy 向量化")
+        if not self._taichi_ready:
+            raise RuntimeError("[GPU-only] Taichi GPU 初始化失败，无 NumPy fallback")
+        
+        logger.info("[TensorEcology] 使用 Taichi GPU 加速")
     
     @property
     def backend(self) -> str:
-        """当前计算后端"""
-        return "taichi" if self._taichi_ready else "numpy"
+        """当前计算后端 - GPU-only 模式始终为 taichi"""
+        return "taichi"
     
     @property
     def last_metrics(self) -> EcologyMetrics | None:
@@ -223,6 +228,10 @@ class TensorEcologyEngine:
         """
         start_time = time.perf_counter()
         S, H, W = pop.shape
+        
+        # 同步 Taichi 运行时（确保与主线程编译的内核兼容）
+        import taichi as ti
+        ti.sync()
         
         metrics = EcologyMetrics(
             species_count=S,
@@ -307,6 +316,9 @@ class TensorEcologyEngine:
         metrics.total_time_ms = (time.perf_counter() - start_time) * 1000
         self._last_metrics = metrics
         
+        # 同步 Taichi 确保所有 GPU 操作完成
+        ti.sync()
+        
         logger.info(
             f"[TensorEcology] 完成: {S}物种, {H}x{W}地图, "
             f"耗时={metrics.total_time_ms:.1f}ms, 后端={metrics.backend}, "
@@ -353,113 +365,35 @@ class TensorEcologyEngine:
         if pressure_overlay is None:
             pressure_overlay = np.zeros((1, H, W), dtype=np.float32)
         
-        # === GPU 加速路径 ===
-        if self._taichi_ready and _taichi_kernels is not None:
-            result = np.zeros((S, H, W), dtype=np.float32)
-            
-            # 确保环境张量有足够的通道
-            C = env.shape[0]
-            if C < 7:
-                padded_env = np.zeros((7, H, W), dtype=np.float32)
-                padded_env[:C] = env
-                if C <= 4:
-                    padded_env[4] = 1.0  # 默认陆地
-                env = padded_env
-            
-            _taichi_kernels.kernel_multifactor_mortality(
-                pop.astype(np.float32),
-                env.astype(np.float32),
-                species_prefs.astype(np.float32),
-                species_params.astype(np.float32),
-                trophic_levels.astype(np.float32),
-                pressure_overlay.astype(np.float32),
-                result,
-                float(cfg.base_mortality),
-                float(cfg.temp_mortality_weight),
-                float(cfg.competition_weight),
-                float(cfg.resource_weight),
-                float(cfg.capacity_multiplier),
-                float(era_scaling),
-            )
-            return result
+        # === Taichi GPU 计算 ===
+        result = np.zeros((S, H, W), dtype=np.float32)
         
-        # === NumPy 向量化回退 ===
-        # 1. 温度死亡率 (S, H, W)
-        temp_channel = min(1, env.shape[0] - 1)
-        temp = env[temp_channel]  # (H, W)
-        temp_pref = species_prefs[:, 0:1, np.newaxis]  # (S, 1, 1)
-        temp_deviation = np.abs(temp[np.newaxis, :, :] - temp_pref * 50)
+        # 确保环境张量有足够的通道
+        C = env.shape[0]
+        if C < 7:
+            padded_env = np.zeros((7, H, W), dtype=np.float32)
+            padded_env[:C] = env
+            if C <= 4:
+                padded_env[4] = 1.0  # 默认陆地
+            env = padded_env
         
-        if species_params.shape[1] >= 2:
-            temp_tolerance = species_params[:, 1:2, np.newaxis]
-            temp_tolerance = np.maximum(temp_tolerance, 5.0)
-        else:
-            temp_tolerance = np.full((S, 1, 1), 15.0, dtype=np.float32)
-        
-        temp_mortality = 1.0 - np.exp(-temp_deviation / temp_tolerance)
-        temp_mortality = np.clip(temp_mortality, 0.01, 0.8)
-        
-        # 2. 湿度死亡率 (S, H, W)
-        if env.shape[0] > 1:
-            humidity = env[1] if env.shape[0] > 2 else env[0] * 0.5
-        else:
-            humidity = np.full((H, W), 0.5, dtype=np.float32)
-        
-        humidity_pref = species_prefs[:, 1:2, np.newaxis]
-        humidity_deviation = np.abs(humidity[np.newaxis, :, :] - humidity_pref)
-        humidity_mortality = np.clip(humidity_deviation * 0.5, 0.0, 0.4)
-        
-        # 3. 竞争死亡率 (S, H, W)
-        total_pop_per_tile = pop.sum(axis=0, keepdims=True)
-        my_pop = np.maximum(pop, 1e-6)
-        competitor_pop = total_pop_per_tile - pop
-        competition_ratio = competitor_pop / (my_pop + 100)
-        competition_mortality = np.clip(competition_ratio * 0.1, 0.0, 0.3)
-        
-        # 4. 资源死亡率 (S, H, W)
-        if env.shape[0] > 3:
-            resources = env[3]
-        else:
-            resources = np.full((H, W), 100.0, dtype=np.float32)
-        
-        capacity = resources * cfg.capacity_multiplier
-        saturation = total_pop_per_tile / (capacity[np.newaxis, :, :] + 1e-6)
-        resource_mortality = np.clip((saturation - 0.5) * 0.4, 0.0, 0.4)
-        
-        # 5. 营养级死亡率 (S, H, W)
-        prey_mask = (trophic_levels < 2.0)[:, np.newaxis, np.newaxis]
-        prey_density = (pop * prey_mask).sum(axis=0, keepdims=True)
-        prey_density_norm = prey_density / (prey_density.max() + 1e-6)
-        
-        consumer_mask = (trophic_levels >= 2.0)[:, np.newaxis, np.newaxis]
-        prey_scarcity_mortality = consumer_mask * (1.0 - prey_density_norm) * 0.2
-        
-        # 6. 外部压力 (S, H, W)
-        if pressure_overlay is not None and pressure_overlay.sum() > 0:
-            external_pressure = pressure_overlay.sum(axis=0)
-            external_mortality = np.clip(external_pressure * 0.1, 0.0, 0.5)
-            external_mortality = np.broadcast_to(
-                external_mortality[np.newaxis, :, :], (S, H, W)
-            ).copy()
-        else:
-            external_mortality = np.zeros((S, H, W), dtype=np.float32)
-        
-        # 综合死亡率
-        total_mortality = (
-            temp_mortality * cfg.temp_mortality_weight +
-            humidity_mortality * 0.1 +
-            competition_mortality * cfg.competition_weight +
-            resource_mortality * cfg.resource_weight +
-            prey_scarcity_mortality +
-            external_mortality +
-            cfg.base_mortality
+        _taichi_kernels.kernel_multifactor_mortality(
+            pop.astype(np.float32),
+            env.astype(np.float32),
+            species_prefs.astype(np.float32),
+            species_params.astype(np.float32),
+            trophic_levels.astype(np.float32),
+            pressure_overlay.astype(np.float32),
+            result,
+            float(cfg.base_mortality),
+            float(cfg.temp_mortality_weight),
+            float(cfg.competition_weight),
+            float(cfg.resource_weight),
+            float(cfg.capacity_multiplier),
+            float(era_scaling),
         )
         
-        # 时代缩放
-        if era_scaling > 1.5:
-            total_mortality *= max(0.7, 1.0 / (era_scaling ** 0.2))
-        
-        total_mortality = np.where(pop > 0, total_mortality, 0.0)
+        total_mortality = result
         
         return np.clip(total_mortality, 0.01, 0.95).astype(np.float32)
     
@@ -468,17 +402,14 @@ class TensorEcologyEngine:
         pop: np.ndarray,
         mortality: np.ndarray,
     ) -> np.ndarray:
-        """应用死亡率 - 无循环"""
-        if self._taichi_ready and _taichi_kernels is not None:
-            result = np.zeros_like(pop, dtype=np.float32)
-            _taichi_kernels.kernel_apply_mortality(
-                pop.astype(np.float32),
-                mortality.astype(np.float32),
-                result,
-            )
-            return result
-        else:
-            return (pop * (1.0 - mortality)).astype(np.float32)
+        """应用死亡率 [Taichi GPU]"""
+        result = np.zeros_like(pop, dtype=np.float32)
+        _taichi_kernels.kernel_apply_mortality(
+            pop.astype(np.float32),
+            mortality.astype(np.float32),
+            result,
+        )
+        return result
     
     # ========================================================================
     # 张量化扩散计算
@@ -489,7 +420,7 @@ class TensorEcologyEngine:
         env: np.ndarray,
         species_prefs: np.ndarray,
     ) -> np.ndarray:
-        """计算适宜度矩阵 - 无循环"""
+        """计算适宜度矩阵 [Taichi GPU]"""
         S = species_prefs.shape[0]
         C, H, W = env.shape
         
@@ -501,44 +432,15 @@ class TensorEcologyEngine:
                 padded_env[4] = 1.0  # 默认陆地
             env = padded_env
         
-        if self._taichi_ready and _taichi_kernels is not None:
-            habitat_mask = np.ones((S, H, W), dtype=np.float32)
-            result = np.zeros((S, H, W), dtype=np.float32)
-            _taichi_kernels.kernel_compute_suitability(
-                env.astype(np.float32),
-                species_prefs.astype(np.float32),
-                habitat_mask,
-                result,
-            )
-            return result
-        else:
-            # NumPy 向量化
-            # 温度匹配
-            temp_diff = np.abs(env[0:1] - species_prefs[:, 0:1, np.newaxis])
-            temp_diff = temp_diff.reshape(S, H, W)
-            temp_match = np.maximum(0.0, 1.0 - temp_diff * 2.0)
-            
-            # 湿度匹配
-            humidity_diff = np.abs(env[1:2] - species_prefs[:, 1:2, np.newaxis])
-            humidity_diff = humidity_diff.reshape(S, H, W)
-            humidity_match = np.maximum(0.0, 1.0 - humidity_diff * 2.0)
-            
-            # 资源匹配
-            resource_match = np.broadcast_to(env[3:4], (S, H, W))
-            
-            # 栖息地匹配
-            habitat_match = (
-                env[4:5] * species_prefs[:, 4:5, np.newaxis] +
-                env[5:6] * species_prefs[:, 5:6, np.newaxis] +
-                env[6:7] * species_prefs[:, 6:7, np.newaxis]
-            ).reshape(S, H, W)
-            
-            base_score = (
-                temp_match * 0.3 + humidity_match * 0.2 +
-                resource_match * 0.2 + habitat_match * 0.3
-            )
-            
-            return np.clip(base_score, 0.0, 1.0).astype(np.float32)
+        habitat_mask = np.ones((S, H, W), dtype=np.float32)
+        result = np.zeros((S, H, W), dtype=np.float32)
+        _taichi_kernels.kernel_compute_suitability(
+            env.astype(np.float32),
+            species_prefs.astype(np.float32),
+            habitat_mask,
+            result,
+        )
+        return result
     
     def _compute_dispersal_tensor(
         self,
@@ -546,7 +448,7 @@ class TensorEcologyEngine:
         suitability: np.ndarray,
         era_scaling: float,
     ) -> np.ndarray:
-        """张量化扩散计算 - 无循环
+        """张量化扩散计算 [Taichi GPU]
         
         使用带适宜度引导的扩散。
         """
@@ -556,55 +458,14 @@ class TensorEcologyEngine:
         effective_scaling = max(1.0, era_scaling ** 0.5)
         diffusion_rate = min(cfg.max_diffusion_rate, cfg.base_diffusion_rate * effective_scaling)
         
-        if self._taichi_ready and _taichi_kernels is not None:
-            result = np.zeros_like(pop, dtype=np.float32)
-            _taichi_kernels.kernel_advanced_diffusion(
-                pop.astype(np.float32),
-                suitability.astype(np.float32),
-                result,
-                float(diffusion_rate),
-            )
-            return result
-        else:
-            # NumPy 向量化扩散 - 使用矩阵操作模拟卷积
-            S, H, W = pop.shape
-            
-            # 4邻居扩散：每个格子向4个邻居扩散 rate/4 的种群
-            # center_weight = 1 - rate, neighbor_weight = rate/4
-            center_weight = 1.0 - diffusion_rate
-            neighbor_weight = diffusion_rate / 4.0
-            
-            # 创建邻居贡献张量 - 向量化
-            # 上邻居贡献
-            up = np.zeros_like(pop)
-            up[:, 1:, :] = pop[:, :-1, :] * neighbor_weight
-            
-            # 下邻居贡献
-            down = np.zeros_like(pop)
-            down[:, :-1, :] = pop[:, 1:, :] * neighbor_weight
-            
-            # 左邻居贡献
-            left = np.zeros_like(pop)
-            left[:, :, 1:] = pop[:, :, :-1] * neighbor_weight
-            
-            # 右邻居贡献
-            right = np.zeros_like(pop)
-            right[:, :, :-1] = pop[:, :, 1:] * neighbor_weight
-            
-            # 扩散结果
-            diffused = pop * center_weight + up + down + left + right
-            
-            # 适宜度引导 - 向量化
-            suit_weight = suitability + 0.1
-            result = diffused * suit_weight
-            
-            # 归一化保持总量 - 向量化
-            total_before = pop.sum(axis=(1, 2), keepdims=True)
-            total_after = result.sum(axis=(1, 2), keepdims=True)
-            total_after = np.maximum(total_after, 1e-8)
-            result = result * (total_before / total_after)
-            
-            return result.astype(np.float32)
+        result = np.zeros_like(pop, dtype=np.float32)
+        _taichi_kernels.kernel_advanced_diffusion(
+            pop.astype(np.float32),
+            suitability.astype(np.float32),
+            result,
+            float(diffusion_rate),
+        )
+        return result
     
     # ========================================================================
     # 张量化迁徙计算
@@ -658,20 +519,15 @@ class TensorEcologyEngine:
         if era_scaling > 1.5:
             migration_rates *= min(2.0, era_scaling ** 0.3)
         
-        # 6. 执行迁徙
-        if self._taichi_ready and _taichi_kernels is not None:
-            new_pop = np.zeros_like(pop, dtype=np.float32)
-            _taichi_kernels.kernel_execute_migration(
-                pop.astype(np.float32),
-                migration_scores.astype(np.float32),
-                new_pop,
-                migration_rates.astype(np.float32),
-                float(cfg.score_threshold),
-            )
-        else:
-            new_pop = self._numpy_execute_migration(
-                pop, migration_scores, migration_rates
-            )
+        # 6. 执行迁徙 [Taichi GPU]
+        new_pop = np.zeros_like(pop, dtype=np.float32)
+        _taichi_kernels.kernel_execute_migration(
+            pop.astype(np.float32),
+            migration_scores.astype(np.float32),
+            new_pop,
+            migration_rates.astype(np.float32),
+            float(cfg.score_threshold),
+        )
         
         # 识别已迁徙的物种 - 向量化
         change_per_species = np.abs(new_pop - pop).sum(axis=(1, 2))
@@ -686,42 +542,15 @@ class TensorEcologyEngine:
         pop: np.ndarray,
         max_distance: float,
     ) -> np.ndarray:
-        """计算距离权重 - 向量化"""
+        """计算距离权重 [Taichi GPU]"""
         S, H, W = pop.shape
-        
-        if self._taichi_ready and _taichi_kernels is not None:
-            result = np.zeros((S, H, W), dtype=np.float32)
-            _taichi_kernels.kernel_compute_distance_weights(
-                pop.astype(np.float32),
-                result,
-                float(max_distance),
-            )
-            return result
-        else:
-            # NumPy 向量化
-            i_coords, j_coords = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
-            i_coords = i_coords.astype(np.float32)
-            j_coords = j_coords.astype(np.float32)
-            
-            # 计算每个物种的质心 (S,)
-            total_pop = pop.sum(axis=(1, 2))
-            total_pop = np.maximum(total_pop, 1e-8)
-            
-            center_i = (pop * i_coords[np.newaxis, :, :]).sum(axis=(1, 2)) / total_pop
-            center_j = (pop * j_coords[np.newaxis, :, :]).sum(axis=(1, 2)) / total_pop
-            
-            # 计算距离 (S, H, W)
-            center_i_3d = center_i[:, np.newaxis, np.newaxis]
-            center_j_3d = center_j[:, np.newaxis, np.newaxis]
-            
-            dist = np.abs(i_coords - center_i_3d) + np.abs(j_coords - center_j_3d)
-            weights = np.maximum(0.0, 1.0 - dist / max_distance)
-            
-            # 无种群的物种设为全 1
-            no_pop = total_pop < 1e-6
-            weights[no_pop] = 1.0
-            
-            return weights.astype(np.float32)
+        result = np.zeros((S, H, W), dtype=np.float32)
+        _taichi_kernels.kernel_compute_distance_weights(
+            pop.astype(np.float32),
+            result,
+            float(max_distance),
+        )
+        return result
     
     def _compute_prey_density_tensor(
         self,
@@ -762,94 +591,28 @@ class TensorEcologyEngine:
         prey_density: np.ndarray,
         trophic_levels: np.ndarray,
     ) -> np.ndarray:
-        """计算迁徙分数 - 向量化"""
+        """计算迁徙分数 [Taichi GPU]"""
         cfg = self.config
-        S = pop.shape[0]
         
-        if self._taichi_ready and _taichi_kernels is not None:
-            result = np.zeros_like(pop, dtype=np.float32)
-            _taichi_kernels.kernel_migration_decision(
-                pop.astype(np.float32),
-                suitability.astype(np.float32),
-                distance_weights.astype(np.float32),
-                death_rates.astype(np.float32),
-                result,
-                float(cfg.pressure_threshold),
-                float(cfg.saturation_threshold),
-            )
-            # 融合猎物追踪
-            consumer_mask = (trophic_levels >= 2.0)[:, np.newaxis, np.newaxis]
-            result = np.where(
-                consumer_mask,
-                result * 0.7 + prey_density * suitability * 0.3,
-                result
-            )
-            return result
-        else:
-            # NumPy 向量化
-            base_score = suitability * 0.5 + distance_weights * 0.5
-            
-            # 高压力时调整
-            pressure_mask = (death_rates > cfg.pressure_threshold)[:, np.newaxis, np.newaxis]
-            pressure_boost = np.clip((death_rates - cfg.pressure_threshold) * 2.0, 0, 0.5)
-            pressure_boost_3d = pressure_boost[:, np.newaxis, np.newaxis]
-            
-            pressure_score = (
-                suitability * (0.6 + pressure_boost_3d * 0.2) +
-                distance_weights * (0.4 - pressure_boost_3d * 0.2)
-            )
-            
-            base_score = np.where(pressure_mask, pressure_score, base_score)
-            
-            # 猎物追踪
-            consumer_mask = (trophic_levels >= 2.0)[:, np.newaxis, np.newaxis]
-            base_score = np.where(
-                consumer_mask,
-                base_score * 0.7 + prey_density * suitability * 0.3,
-                base_score
-            )
-            
-            # 已有种群的地块不迁入
-            has_pop = pop > 0
-            base_score = np.where(has_pop, 0.0, base_score)
-            
-            # 随机扰动
-            noise = np.random.uniform(0.85, 1.15, base_score.shape).astype(np.float32)
-            return (base_score * noise).astype(np.float32)
+        result = np.zeros_like(pop, dtype=np.float32)
+        _taichi_kernels.kernel_migration_decision(
+            pop.astype(np.float32),
+            suitability.astype(np.float32),
+            distance_weights.astype(np.float32),
+            death_rates.astype(np.float32),
+            result,
+            float(cfg.pressure_threshold),
+            float(cfg.saturation_threshold),
+        )
+        # 融合猎物追踪（简单混合，这是数据后处理）
+        consumer_mask = (trophic_levels >= 2.0)[:, np.newaxis, np.newaxis]
+        result = np.where(
+            consumer_mask,
+            result * 0.7 + prey_density * suitability * 0.3,
+            result
+        )
+        return result
     
-    def _numpy_execute_migration(
-        self,
-        pop: np.ndarray,
-        migration_scores: np.ndarray,
-        migration_rates: np.ndarray,
-    ) -> np.ndarray:
-        """NumPy 迁徙执行 - 向量化"""
-        S, H, W = pop.shape
-        cfg = self.config
-        
-        # 1. 计算每个物种的总种群
-        total_pop = pop.sum(axis=(1, 2))
-        
-        # 2. 有效迁徙分数掩码
-        valid_mask = migration_scores > cfg.score_threshold
-        masked_scores = np.where(valid_mask, migration_scores, 0.0)
-        total_scores = masked_scores.sum(axis=(1, 2))
-        total_scores = np.maximum(total_scores, 1e-8)
-        
-        # 3. 迁徙量
-        migrate_amounts = total_pop * migration_rates
-        
-        # 4. 保留原有种群
-        rates_3d = migration_rates[:, np.newaxis, np.newaxis]
-        new_pop = pop * (1.0 - rates_3d)
-        
-        # 5. 按分数比例分配
-        total_scores_3d = total_scores[:, np.newaxis, np.newaxis]
-        score_ratio = masked_scores / total_scores_3d
-        migrate_3d = migrate_amounts[:, np.newaxis, np.newaxis]
-        new_pop += migrate_3d * score_ratio
-        
-        return new_pop.astype(np.float32)
     
     # ========================================================================
     # 张量化繁殖计算
@@ -886,22 +649,15 @@ class TensorEcologyEngine:
         total_pop = pop.sum(axis=0)
         crowding = np.minimum(1.0, total_pop / (capacity + 1e-6))
         
-        if self._taichi_ready and _taichi_kernels is not None:
-            result = np.zeros_like(pop, dtype=np.float32)
-            _taichi_kernels.kernel_reproduction(
-                pop.astype(np.float32),
-                suitability.astype(np.float32),
-                capacity.astype(np.float32),
-                float(birth_rate),
-                result,
-            )
-            return result
-        else:
-            # NumPy 向量化
-            effective_rate = birth_rate * suitability * (1.0 - crowding[np.newaxis, :, :])
-            new_pop = pop * (1.0 + effective_rate)
-            new_pop = np.where(pop > 0, new_pop, 0.0)
-            return new_pop.astype(np.float32)
+        result = np.zeros_like(pop, dtype=np.float32)
+        _taichi_kernels.kernel_reproduction(
+            pop.astype(np.float32),
+            suitability.astype(np.float32),
+            capacity.astype(np.float32),
+            float(birth_rate),
+            result,
+        )
+        return result
     
     # ========================================================================
     # 张量化竞争计算
@@ -913,35 +669,20 @@ class TensorEcologyEngine:
         suitability: np.ndarray,
         era_scaling: float,
     ) -> np.ndarray:
-        """张量化种间竞争 - 无循环"""
-        S = pop.shape[0]
-        
+        """张量化种间竞争 [Taichi GPU]"""
         # 竞争强度（随时间降低）
         base_strength = 0.05
         if era_scaling > 1.5:
             base_strength *= max(0.5, 1.0 / (era_scaling ** 0.2))
         
-        if self._taichi_ready and _taichi_kernels is not None:
-            result = np.zeros_like(pop, dtype=np.float32)
-            _taichi_kernels.kernel_competition(
-                pop.astype(np.float32),
-                suitability.astype(np.float32),
-                result,
-                float(base_strength),
-            )
-            return result
-        else:
-            # NumPy 向量化
-            total_pop = pop.sum(axis=0)
-            
-            competitor = total_pop[np.newaxis, :, :] - pop
-            my_fitness = suitability + 0.1
-            pressure = competitor * base_strength / my_fitness
-            loss = np.minimum(0.5, pressure / (pop + 1.0))
-            new_pop = pop * (1.0 - loss)
-            new_pop = np.where(pop > 0, new_pop, 0.0)
-            
-            return new_pop.astype(np.float32)
+        result = np.zeros_like(pop, dtype=np.float32)
+        _taichi_kernels.kernel_competition(
+            pop.astype(np.float32),
+            suitability.astype(np.float32),
+            result,
+            float(base_strength),
+        )
+        return result
     
     # ========================================================================
     # 辅助方法

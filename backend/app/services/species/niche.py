@@ -379,8 +379,8 @@ class NicheAnalyzer:
                 same_habitat_bonus=0.10,
                 compatible_bonus=0.05,
             )
-        except ImportError:
-            # 后备方法：使用循环
+        except Exception:
+            # 后备方法：使用循环（捕获所有异常，包括 Taichi 初始化失败）
             habitat_bonus = np.zeros((n, n))
             for i in range(n):
                 for j in range(i + 1, n):

@@ -293,10 +293,15 @@ export const DEFAULT_PRESSURE_INTENSITY_CONFIG: PressureIntensityConfig = {
   tier2_multiplier: 0.7,   // 二阶：气候变迁，可控
   tier3_multiplier: 1.5,   // 三阶：天灾降临，大浪淘沙
   
-  // 强度滑块倍率
+  // 强度滑块效果倍率（影响生态系统效果）
   intensity_low_multiplier: 0.3,   // 强度 1-3：轻微
   intensity_mid_multiplier: 0.6,   // 强度 4-7：显著
   intensity_high_multiplier: 1.2,  // 强度 8-10：毁灭性
+  
+  // 神力消耗倍率（与后端扣费一致）
+  cost_low_multiplier: 1.0,        // 强度 1-3：基础消耗
+  cost_mid_multiplier: 2.0,        // 强度 4-7：双倍消耗
+  cost_high_multiplier: 5.0,       // 强度 8-10：五倍消耗
   
   // 温度修饰系数
   temperature_effect_per_unit: 0.8,  // 每单位 = 0.8°C

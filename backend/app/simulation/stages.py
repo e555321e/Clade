@@ -228,6 +228,7 @@ class StageOrder(Enum):
     """阶段执行顺序枚举"""
     INIT = 0
     PARSE_PRESSURES = 10
+    TENSOR_STATE_INIT = 49  # 张量状态构建
     MAP_EVOLUTION = 20
     TECTONIC_MOVEMENT = 25
     FETCH_SPECIES = 30
@@ -255,7 +256,8 @@ class StageOrder(Enum):
     SAVE_MAP_SNAPSHOT = 150
     VEGETATION_COVER = 155
     SAVE_POPULATION_SNAPSHOT = 160
-    EMBEDDING_HOOKS = 165
+    EMBEDDING_INTEGRATION = 164  # Embedding 集成阶段
+    EMBEDDING_HOOKS = 165        # 兼容别名
     EMBEDDING_PLUGINS = 166
     SAVE_HISTORY = 170
     EXPORT_DATA = 175
@@ -793,8 +795,8 @@ class ResourceCalcStage(BaseStage):
             # 估算代谢需求（异速生长：需求 ∝ 体重^0.75）
             individual_demand = 0.01 * (body_weight ** 0.75)  # 简化的代谢模型
             
-            # 按栖息地分配消耗
-            population = species.population or 0
+            # 按栖息地分配消耗（从 morphology_stats 获取）
+            population = species.morphology_stats.get("population", 0)
             tiles_count = len(habitats)
             pop_per_tile = population / tiles_count if tiles_count > 0 else 0
             
@@ -1101,9 +1103,9 @@ class PopulationUpdateStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"最终死亡率评估"},
-            optional_stages={"生态智能体评估"},  # 使用 ModifierApplicator
-            requires_fields={"combined_results", "species_batch"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"统一张量生态计算"},  # 张量计算可选
+            requires_fields={"species_batch"},
             writes_fields={"new_populations", "reproduction_results"},
         )
     
@@ -1138,6 +1140,11 @@ class PopulationUpdateStage(BaseStage):
         
         # 计算死亡率映射，用于构建存活率
         death_rates = {}
+        if not ctx.combined_results:
+            logger.warning("[种群更新] combined_results 为空，无法计算繁殖")
+        else:
+            logger.info(f"[种群更新] 处理 {len(ctx.combined_results)} 个物种的繁殖")
+        
         for item in ctx.combined_results:
             code = item.species.lineage_code
             # 确保死亡率在有效范围内
@@ -1215,38 +1222,36 @@ class PopulationUpdateStage(BaseStage):
             item.adjusted_death_rate = death_rate
             item.adjusted_k = carrying_capacity
             
-            if abs(final_pop - initial) > initial * 0.3:
+            # 记录显著的种群变化
+            if abs(final_pop - initial) > initial * 0.1 or effective_gain > 0:
                 logger.debug(
                     f"[种群变化] {item.species.common_name}: "
                     f"{initial:,} → {final_pop:,} "
                     f"(死亡{death_rate:.1%}, 存活{survivors:,}, 繁殖+{effective_gain:,})"
                 )
         
-        # ===== 张量影子状态回写（线性地块分布）=====
+        # 总结日志
+        total_births = sum(item.births for item in ctx.combined_results)
+        total_deaths = sum(item.deaths for item in ctx.combined_results)
+        logger.info(f"[种群更新] 完成: 总出生={total_births:,}, 总死亡={total_deaths:,}")
+        
+        # ===== 张量影子状态回写（使用 Taichi/Numpy 混合）=====
         t_state = getattr(ctx, "tensor_state", None)
         if t_state and hasattr(t_state, "pop") and hasattr(t_state, "species_map"):
             try:
-                # 【张量化重构】使用 HybridCompute 进行种群计算
                 from ..tensor import get_compute
                 compute = get_compute()
                 
-                tile_count = t_state.pop.shape[-1]
+                species_map = t_state.species_map
+                # 以当前张量总数为基准，按新的 final_population 重分配
+                final_totals = t_state.pop.sum(axis=(1, 2), dtype=np.float32)
                 for item in ctx.combined_results:
-                    code = item.species.lineage_code
-                    idx = t_state.species_map.get(code)
-                    if idx is None:
-                        continue
-                    old_slice = t_state.pop[idx]
-                    total = float(old_slice.sum())
-                    if total <= 0:
-                        # 均匀分配到所有地块
-                        new_slice = np.full_like(old_slice, item.final_population / max(1, tile_count))
-                    else:
-                        weights = old_slice / total
-                        new_slice = weights * item.final_population
-                    t_state.pop[idx] = new_slice
+                    idx = species_map.get(item.species.lineage_code)
+                    if idx is not None and idx < final_totals.shape[0]:
+                        final_totals[idx] = float(item.final_population)
                 
-                # 使用 HybridCompute 裁剪种群数值
+                # 使用 HybridCompute 的 Taichi 内核（可用时）进行重分配 + 裁剪
+                t_state.pop = compute.redistribute_population(t_state.pop, final_totals)
                 t_state.pop = compute.clip_population(t_state.pop, min_val=0)
                 ctx.tensor_state = t_state
                 logger.debug(f"[种群更新] 已将新种群写回张量影子状态 (后端={compute.backend})")
@@ -1372,7 +1377,7 @@ class PostMigrationNicheStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"初步死亡率评估"},  # 张量系统已处理迁徙
+            requires_stages=set(),  # 无强制依赖
             optional_stages={"统一张量生态计算"},
             requires_fields={"species_batch"},
             writes_fields={"niche_metrics"},
@@ -1479,7 +1484,8 @@ class GeneActivationStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"种群更新"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"统一张量生态计算"},  # 张量计算可选
             requires_fields={"species_batch", "modifiers"},
             writes_fields={"activation_events"},
         )
@@ -1515,8 +1521,9 @@ class GeneDiversityStage(BaseStage):
 
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"种群更新"},
-            requires_fields={"species_batch", "combined_results"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"统一张量生态计算"},  # 张量计算可选
+            requires_fields={"species_batch"},
             writes_fields={"gene_diversity_events"},
         )
 
@@ -1566,8 +1573,9 @@ class GeneFlowStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"基因激活"},
-            requires_fields={"species_batch", "all_habitats"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"基因激活"},
+            requires_fields={"species_batch"},
             writes_fields={"gene_flow_count"},
         )
     
@@ -1617,7 +1625,8 @@ class GeneticDriftStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"基因流动"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"基因流动"},
             requires_fields={"species_batch"},
             writes_fields={"genetic_drift_count"},
         )
@@ -1678,8 +1687,9 @@ class AutoHybridizationStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"遗传漂变"},
-            requires_fields={"species_batch", "all_habitats"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"遗传漂变"},
+            requires_fields={"species_batch"},
             writes_fields={"auto_hybrids"},
         )
     
@@ -2017,8 +2027,8 @@ class SubspeciesPromotionStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"遗传漂变"},  # 依赖遗传漂变而非自动杂交
-            optional_stages={"自动杂交"},  # 自动杂交可选
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"遗传漂变", "自动杂交"},
             requires_fields={"species_batch"},
             writes_fields={"promotion_count"},
         )
@@ -2066,9 +2076,9 @@ class SpeciationStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"种群更新"},  # 【修复】改为依赖种群更新，而非适应性演化（后者可能被禁用）
-            optional_stages=set(),
-            requires_fields={"species_batch", "combined_results", "critical_results", "focus_results", "modifiers"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"统一张量生态计算"},  # 张量计算可选
+            requires_fields={"species_batch", "modifiers"},
             writes_fields={"branching_events"},
         )
     
@@ -2302,9 +2312,9 @@ class BackgroundManagementStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"亚种晋升"},  # 依赖亚种晋升
-            optional_stages={"物种分化"},  # 物种分化可选
-            requires_fields={"background_results", "combined_results"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"物种分化", "统一张量生态计算"},  # 可选阶段
+            requires_fields=set(),  # 字段可能未初始化
             writes_fields={"background_summary", "mass_extinction", "reemergence_events"},
         )
     
@@ -2335,8 +2345,9 @@ class BuildReportStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"背景物种管理"},
-            requires_fields={"combined_results", "pressures", "branching_events"},
+            requires_stages=set(),  # 无强制依赖，按 order 执行
+            optional_stages={"背景物种管理", "统一张量生态计算"},
+            requires_fields={"pressures"},
             writes_fields={"report", "species_snapshots"},
         )
     
@@ -2555,8 +2566,9 @@ class SaveMapSnapshotStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"构建报告"},
-            requires_fields={"species_batch", "all_tiles"},
+            requires_stages=set(),  # 无强制依赖，按 order 执行
+            optional_stages={"构建报告"},
+            requires_fields={"species_batch"},
             writes_fields=set(),
         )
     
@@ -2591,7 +2603,8 @@ class VegetationCoverStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"保存地图快照"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"保存地图快照"},
             requires_fields=set(),
             writes_fields=set(),
         )
@@ -2628,7 +2641,8 @@ class SavePopulationSnapshotStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"植被覆盖更新"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"张量状态同步"},  # 可选：等待张量同步完成
             requires_fields=set(),
             writes_fields=set(),
         )
@@ -2649,12 +2663,13 @@ class EmbeddingStage(BaseStage):
     """Embedding 集成阶段"""
     
     def __init__(self):
-        super().__init__(StageOrder.EMBEDDING_HOOKS.value, "Embedding集成")
+        super().__init__(StageOrder.EMBEDDING_INTEGRATION.value, "Embedding集成")
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"保存种群快照"},
-            requires_fields={"species_batch", "combined_results"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"保存种群快照"},
+            requires_fields={"species_batch"},
             writes_fields={"embedding_turn_data"},
         )
     
@@ -2717,9 +2732,9 @@ class EmbeddingPluginsStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"Embedding集成"},  # 在 Embedding 集成之后
-            optional_stages=set(),
-            requires_fields={"all_species"},  # 所有插件都需要物种列表
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"Embedding集成", "保存种群快照"},
+            requires_fields=set(),
             writes_fields=set(),  # 插件数据存储在各自的索引中
         )
     
@@ -2844,9 +2859,9 @@ class SaveHistoryStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"保存种群快照"},  # 依赖保存种群快照
-            optional_stages={"Embedding集成"},  # Embedding可选
-            requires_fields={"report"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"保存种群快照", "Embedding集成"},
+            requires_fields=set(),  # report 可能不存在
             writes_fields=set(),
         )
     
@@ -2888,8 +2903,9 @@ class ExportDataStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"保存历史记录"},
-            requires_fields={"report", "species_batch"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"保存历史记录"},
+            requires_fields=set(),
             writes_fields=set(),
         )
     
@@ -2912,8 +2928,9 @@ class FinalizeStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"导出数据"},
-            requires_fields={"report"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"导出数据", "保存历史记录"},
+            requires_fields=set(),
             writes_fields=set(),
         )
     
@@ -2966,7 +2983,8 @@ class DatabaseMaintenanceStage(BaseStage):
     
     def get_dependency(self) -> StageDependency:
         return StageDependency(
-            requires_stages={"最终化"},
+            requires_stages=set(),  # 无强制依赖
+            optional_stages={"最终化"},
             requires_fields=set(),
             writes_fields=set(),
         )
@@ -3037,48 +3055,34 @@ class DatabaseMaintenanceStage(BaseStage):
 # ============================================================================
 
 def get_default_stages(include_tensor: bool = True) -> list[BaseStage]:
-    """获取默认的阶段列表（按顺序排列）
+    """返回默认阶段列表：核心数据阶段 + GPU张量计算阶段
     
-    Args:
-        include_tensor: 是否包含张量计算阶段（默认启用）
-    
-    Returns:
-        按执行顺序排列的阶段列表
+    核心阶段负责数据加载、持久化、报告生成。
+    GPU张量阶段负责死亡率、迁徙、繁殖等生态计算。
     """
-    stages = [
+    from .tensor_stages import get_tensor_stages
+    
+    # 核心数据阶段
+    core_stages = [
         InitStage(),
         ParsePressuresStage(),
         MapEvolutionStage(),
-        TectonicMovementStage(),
         FetchSpeciesStage(),
-        ResourceCalcStage(),  # 资源计算（NPP/承载力）
         FoodWebStage(),
         TieringAndNicheStage(),
-        PreliminaryMortalityStage(),
-        MigrationStage(),
-        FinalMortalityStage(),
-        PopulationUpdateStage(),
         GeneDiversityStage(),
-        SpeciationDataTransferStage(),  # 【关键修复】分化数据传递阶段
+        GeneActivationStage(),
         SpeciationStage(),
         BackgroundManagementStage(),
         BuildReportStage(),
         SaveMapSnapshotStage(),
-        VegetationCoverStage(),
         SavePopulationSnapshotStage(),
-        EmbeddingStage(),
         SaveHistoryStage(),
-        ExportDataStage(),
-        FinalizeStage(),
-        DatabaseMaintenanceStage(),  # 【性能优化】自动数据库维护
     ]
     
-    # 【张量化重构】添加张量计算阶段
+    # GPU张量计算阶段
     if include_tensor:
-        from .tensor_stages import get_tensor_stages
-        tensor_stages = get_tensor_stages()
-        stages.extend(tensor_stages)
-        logger.debug(f"[管线] 已添加 {len(tensor_stages)} 个张量阶段")
+        core_stages.extend(get_tensor_stages())
     
-    return sorted(stages, key=lambda s: s.order)
+    return sorted(core_stages, key=lambda s: s.order)
 

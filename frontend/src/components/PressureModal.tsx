@@ -128,9 +128,11 @@ export function PressureModal({
   // 常量
   const PRESSURE_TIER_1_LIMIT = 3;
   const PRESSURE_TIER_2_LIMIT = 7;
-  const PRESSURE_TIER_1_MULT = intensityConfig?.intensity_low_multiplier ?? 1.0;
-  const PRESSURE_TIER_2_MULT = intensityConfig?.intensity_mid_multiplier ?? 2.0;
-  const PRESSURE_TIER_3_MULT = intensityConfig?.intensity_high_multiplier ?? 5.0;
+  // 使用消耗倍率（cost_*_multiplier）而非效果倍率（intensity_*_multiplier）
+  // 与后端 constants.py 的 INTENSITY_MULT_* 保持一致：1.0 / 2.0 / 5.0
+  const PRESSURE_TIER_1_MULT = intensityConfig?.cost_low_multiplier ?? 1.0;
+  const PRESSURE_TIER_2_MULT = intensityConfig?.cost_mid_multiplier ?? 2.0;
+  const PRESSURE_TIER_3_MULT = intensityConfig?.cost_high_multiplier ?? 5.0;
 
   // 过滤当前 Tier 的模板
   const currentTierTemplates = useMemo(() => {

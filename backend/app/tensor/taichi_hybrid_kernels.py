@@ -2,14 +2,80 @@
 Taichi 内核定义模块
 
 此模块在导入时初始化 Taichi 并定义所有内核。
+支持多种 GPU 后端：
+- NVIDIA: CUDA (首选)
+- AMD: Vulkan
+- Intel: Vulkan
+- Apple: Metal (macOS)
+
 如果 Taichi 不可用，则此模块的导入会失败。
 """
 
+import logging
 import taichi as ti
 
-# 初始化 Taichi（在模块级别）
-# 使用 offline_cache 加速后续运行
-ti.init(arch=ti.gpu, default_fp=ti.f32, offline_cache=True)
+logger = logging.getLogger(__name__)
+
+# 初始化 Taichi（在模块级别，但只初始化一次）
+_taichi_initialized = False
+_taichi_backend = None
+
+def _ensure_taichi_init():
+    """确保 Taichi 只初始化一次，支持多 GPU 厂商
+    
+    尝试顺序：
+    1. CUDA (NVIDIA 最优)
+    2. Vulkan (AMD/Intel/NVIDIA 通用)
+    3. Metal (macOS)
+    4. OpenGL (兼容层)
+    5. CPU (最后回退)
+    """
+    global _taichi_initialized, _taichi_backend
+    
+    if _taichi_initialized:
+        return _taichi_backend
+    
+    # 按优先级尝试各后端
+    backends = [
+        ("cuda", ti.cuda, "NVIDIA CUDA"),
+        ("vulkan", ti.vulkan, "Vulkan (AMD/Intel/NVIDIA)"),
+        ("metal", ti.metal, "Apple Metal"),
+        ("opengl", ti.opengl, "OpenGL"),
+    ]
+    
+    for backend_name, backend_arch, backend_desc in backends:
+        try:
+            ti.init(
+                arch=backend_arch, 
+                default_fp=ti.f32, 
+                offline_cache=True,
+                # 对于 Vulkan，设置更宽松的内存限制
+                device_memory_fraction=0.7 if backend_name == "vulkan" else 0.8,
+            )
+            _taichi_initialized = True
+            _taichi_backend = backend_name
+            logger.info(f"[Taichi] 初始化成功: {backend_desc}")
+            return backend_name
+        except Exception as e:
+            logger.debug(f"[Taichi] {backend_desc} 初始化失败: {e}")
+            continue
+    
+    # 所有 GPU 后端失败，抛出错误（GPU-only 模式）
+    _taichi_initialized = True  # 防止重复尝试
+    _taichi_backend = None
+    raise RuntimeError(
+        "Taichi GPU 初始化失败。支持的 GPU:\n"
+        "  - NVIDIA: 需要 CUDA 驱动\n"
+        "  - AMD: 需要 Vulkan 驱动 (AMD Software/ROCm)\n"
+        "  - Intel: 需要 Vulkan 驱动 (Intel Graphics Driver)\n"
+        "请确保已安装对应的 GPU 驱动程序。"
+    )
+
+def get_taichi_backend() -> str | None:
+    """获取当前 Taichi 后端名称"""
+    return _taichi_backend
+
+_ensure_taichi_init()
 
 
 @ti.kernel
@@ -122,6 +188,28 @@ def kernel_competition(
                 result[s, i, j] = pop[s, i, j] * 0.9
         else:
             result[s, i, j] = 0.0
+
+
+@ti.kernel
+def kernel_redistribute_population(
+    pop: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    current_totals: ti.types.ndarray(dtype=ti.f32, ndim=1),
+    new_totals: ti.types.ndarray(dtype=ti.f32, ndim=1),
+    out_pop: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    tile_count: ti.i32,
+):
+    """按权重或均匀分配新的种群总数 - Taichi 并行"""
+    for s, i, j in ti.ndrange(pop.shape[0], pop.shape[1], pop.shape[2]):
+        target = new_totals[s]
+        if target <= 0:
+            out_pop[s, i, j] = 0.0
+        else:
+            total = current_totals[s]
+            if total > 0:
+                weight = pop[s, i, j] / total
+                out_pop[s, i, j] = weight * target
+            else:
+                out_pop[s, i, j] = target / tile_count
 
 
 # ============================================================================
@@ -534,6 +622,76 @@ def kernel_multifactor_mortality(
         result[s, i, j] = ti.max(0.01, ti.min(0.95, total_mortality))
 
 
+# ============================================================================
+# 预编译所有内核（在主线程中）
+# ============================================================================
+
+def _precompile_all_kernels():
+    """在模块加载时预编译所有 Taichi 内核
+    
+    Taichi 内核在首次调用时才会编译，如果首次调用发生在非主线程，
+    会触发 "Assertion failure: std::this_thread::get_id() == main_thread_id_" 错误。
+    
+    通过在模块加载时（主线程）用小数组调用所有内核，可以提前完成编译。
+    """
+    global _taichi_backend
+    
+    if _taichi_backend is None:
+        logger.warning("[Taichi] 跳过预编译：GPU 后端未初始化")
+        return
+    
+    import numpy as np
+    
+    # 使用最小的测试数组
+    S, H, W = 1, 2, 2
+    
+    try:
+        # 创建测试数组
+        pop = np.ones((S, H, W), dtype=np.float32)
+        env = np.ones((7, H, W), dtype=np.float32)
+        params = np.ones((S, 4), dtype=np.float32)
+        prefs = np.ones((S, 6), dtype=np.float32)
+        trophic = np.ones((S,), dtype=np.float32)
+        pressure = np.zeros((3, H, W), dtype=np.float32)
+        result_3d = np.zeros((S, H, W), dtype=np.float32)
+        suitability = np.ones((S, H, W), dtype=np.float32)
+        capacity = np.ones((H, W), dtype=np.float32)
+        habitat_mask = np.ones((S, H, W), dtype=np.float32)
+        death_rates = np.zeros((S,), dtype=np.float32)
+        migration_rates = np.ones((S,), dtype=np.float32)
+        distance_weights = np.ones((S, H, W), dtype=np.float32)
+        migration_scores = np.zeros((S, H, W), dtype=np.float32)
+        
+        # 预编译各内核（小数组调用，仅触发编译）
+        kernel_mortality(pop, env, params, result_3d, 0, 20.0, 15.0)
+        kernel_apply_mortality(pop, result_3d, result_3d)
+        kernel_compute_suitability(env, prefs, habitat_mask, result_3d)
+        kernel_advanced_diffusion(pop, suitability, result_3d, 0.1)
+        kernel_reproduction(pop, suitability, capacity, 0.1, result_3d)
+        kernel_competition(pop, suitability, result_3d, 0.1)
+        kernel_compute_distance_weights(pop, result_3d, 3.0)
+        # kernel_migration_decision 需要 7 个参数
+        kernel_migration_decision(
+            pop, suitability, distance_weights, death_rates, 
+            migration_scores, 0.12, 0.8  # pressure_threshold, saturation_threshold
+        )
+        kernel_execute_migration(pop, migration_scores, result_3d, migration_rates, 0.1)
+        kernel_multifactor_mortality(
+            pop, env, prefs, params, trophic, pressure, result_3d,
+            0.05, 0.3, 0.2, 0.15, 1.0, 1.0
+        )
+        
+        # 同步 Taichi 运行时
+        ti.sync()
+        
+        logger.info("[Taichi] 所有内核预编译完成")
+        
+    except Exception as e:
+        logger.warning(f"[Taichi] 内核预编译失败（将在首次使用时编译）: {e}")
+
+
+# 在模块加载时预编译
+_precompile_all_kernels()
 
 
 

@@ -91,8 +91,9 @@ class NicheTensorCompute:
                 "lineage_prefix": kernel_lineage_prefix_match,
             }
             logger.debug("[NicheTensor] Taichi 内核加载成功")
-        except ImportError:
-            logger.debug("[NicheTensor] Taichi 不可用，使用 NumPy")
+        except Exception as e:
+            # 捕获所有异常（包括 ImportError, RuntimeError 等）
+            logger.debug(f"[NicheTensor] Taichi 不可用，使用 NumPy: {e}")
     
     def compute_tile_overlap_matrix(
         self,

@@ -771,9 +771,19 @@ class StageLoader:
 # ============================================================================
 
 def _register_default_stages() -> None:
-    """注册默认阶段到注册表"""
+    """注册所有阶段：核心数据阶段 + GPU张量计算阶段
+    
+    核心阶段（数据加载/持久化）：
+    - init, parse_pressures, map_evolution, fetch_species
+    - tiering_and_niche, food_web, gene_*, speciation
+    - build_report, save_*, export_data
+    
+    GPU张量阶段（替代遗留CPU计算）：
+    - pressure_tensor, tensor_state_init, tensor_ecology
+    - tensor_state_sync, tensor_metrics
+    """
+    # === 核心数据阶段（从 stages.py 导入）===
     from .stages import (
-        # 核心阶段
         InitStage,
         ParsePressuresStage,
         MapEvolutionStage,
@@ -781,21 +791,14 @@ def _register_default_stages() -> None:
         FetchSpeciesStage,
         FoodWebStage,
         TieringAndNicheStage,
-        PreliminaryMortalityStage,
-        PostMigrationNicheStage,
-        FinalMortalityStage,
         PopulationUpdateStage,
         GeneDiversityStage,
-        # 遗传与演化阶段
-        SpeciationDataTransferStage,
         GeneActivationStage,
         GeneFlowStage,
         GeneticDriftStage,
         AutoHybridizationStage,
         SubspeciesPromotionStage,
-        # AI 阶段
         SpeciationStage,
-        # 后处理阶段
         BackgroundManagementStage,
         BuildReportStage,
         SaveMapSnapshotStage,
@@ -806,13 +809,18 @@ def _register_default_stages() -> None:
         SaveHistoryStage,
         ExportDataStage,
         FinalizeStage,
-        DatabaseMaintenanceStage,
     )
     
-    # 导入生态拟真阶段
-    from .ecological_realism_stage import EcologicalRealismStage
+    # === GPU张量计算阶段 ===
+    from .tensor_stages import (
+        PressureTensorStage,
+        TensorStateInitStage,
+        TensorEcologyStage,
+        TensorStateSyncStage,
+        TensorMetricsStage,
+    )
     
-    # 核心阶段
+    # 注册核心数据阶段
     stage_registry.register("init", InitStage)
     stage_registry.register("parse_pressures", ParsePressuresStage)
     stage_registry.register("map_evolution", MapEvolutionStage)
@@ -820,38 +828,31 @@ def _register_default_stages() -> None:
     stage_registry.register("fetch_species", FetchSpeciesStage)
     stage_registry.register("food_web", FoodWebStage)
     stage_registry.register("tiering_and_niche", TieringAndNicheStage)
-    stage_registry.register("ecological_realism", EcologicalRealismStage)  # 生态拟真
-    stage_registry.register("preliminary_mortality", PreliminaryMortalityStage)
-    # prey_distribution, migration, dispersal, hunger_migration 已被 TensorEcologyStage 替代
-    stage_registry.register("post_migration_niche", PostMigrationNicheStage)
-    stage_registry.register("final_mortality", FinalMortalityStage)
-    # ecological_intelligence 已被张量系统替代，不再注册
     stage_registry.register("population_update", PopulationUpdateStage)
     stage_registry.register("gene_diversity", GeneDiversityStage)
-    
-    # 遗传与演化阶段
-    stage_registry.register("speciation_data_transfer", SpeciationDataTransferStage)
     stage_registry.register("gene_activation", GeneActivationStage)
     stage_registry.register("gene_flow", GeneFlowStage)
     stage_registry.register("genetic_drift", GeneticDriftStage)
     stage_registry.register("auto_hybridization", AutoHybridizationStage)
     stage_registry.register("subspecies_promotion", SubspeciesPromotionStage)
-    
-    # AI 阶段
     stage_registry.register("speciation", SpeciationStage)
-    
-    # 后处理阶段
     stage_registry.register("background_management", BackgroundManagementStage)
     stage_registry.register("build_report", BuildReportStage)
     stage_registry.register("save_map_snapshot", SaveMapSnapshotStage)
     stage_registry.register("vegetation_cover", VegetationCoverStage)
     stage_registry.register("save_population_snapshot", SavePopulationSnapshotStage)
-    stage_registry.register("embedding_hooks", EmbeddingStage)
-    stage_registry.register("embedding_plugins", EmbeddingPluginsStage)
+    stage_registry.register("embedding_integration", EmbeddingStage)  # Embedding 集成
+    stage_registry.register("embedding_hooks", EmbeddingPluginsStage)
     stage_registry.register("save_history", SaveHistoryStage)
     stage_registry.register("export_data", ExportDataStage)
     stage_registry.register("finalize", FinalizeStage)
-    stage_registry.register("database_maintenance", DatabaseMaintenanceStage)
+    
+    # 注册GPU张量阶段
+    stage_registry.register("pressure_tensor", PressureTensorStage)
+    stage_registry.register("tensor_state_init", TensorStateInitStage)
+    stage_registry.register("tensor_ecology", TensorEcologyStage)
+    stage_registry.register("tensor_state_sync", TensorStateSyncStage)
+    stage_registry.register("tensor_metrics", TensorMetricsStage)
     
     logger.debug(f"[StageRegistry] 注册了 {len(stage_registry.list_stages())} 个阶段")
 
