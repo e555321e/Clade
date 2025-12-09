@@ -316,6 +316,7 @@ class TensorEcologyStage(BaseStage):
             get_ecology_engine,
             extract_species_params,
             extract_species_prefs,
+            extract_species_traits,
             extract_trophic_levels,
         )
         from ..services.species.habitat_manager import habitat_manager
@@ -348,6 +349,7 @@ class TensorEcologyStage(BaseStage):
         # 提取物种参数
         species_params = extract_species_params(species_batch, species_map)
         species_prefs = extract_species_prefs(species_batch, species_map)
+        species_traits = extract_species_traits(species_batch, species_map)
         trophic_levels = extract_trophic_levels(species_batch, species_map)
         
         # 获取压力叠加层
@@ -420,6 +422,7 @@ class TensorEcologyStage(BaseStage):
             env=env,
             species_params=species_params,
             species_prefs=species_prefs,
+            species_traits=species_traits,  # 【新】传递精确特质矩阵
             turn_index=turn_index,
             trophic_levels=trophic_levels,
             pressure_overlay=pressure_overlay,

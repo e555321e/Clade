@@ -129,10 +129,11 @@ export function PressureModal({
   const PRESSURE_TIER_1_LIMIT = 3;
   const PRESSURE_TIER_2_LIMIT = 7;
   // 使用消耗倍率（cost_*_multiplier）而非效果倍率（intensity_*_multiplier）
-  // 与后端 constants.py 的 INTENSITY_MULT_* 保持一致：1.0 / 2.0 / 5.0
+  // 与后端 constants.py 的 INTENSITY_MULT_* 保持一致：1.0 / 1.5 / 2.5
+  // 【v2.5】下调倍率，确保高等级压力可用
   const PRESSURE_TIER_1_MULT = intensityConfig?.cost_low_multiplier ?? 1.0;
-  const PRESSURE_TIER_2_MULT = intensityConfig?.cost_mid_multiplier ?? 2.0;
-  const PRESSURE_TIER_3_MULT = intensityConfig?.cost_high_multiplier ?? 5.0;
+  const PRESSURE_TIER_2_MULT = intensityConfig?.cost_mid_multiplier ?? 1.5;
+  const PRESSURE_TIER_3_MULT = intensityConfig?.cost_high_multiplier ?? 2.5;
 
   // 过滤当前 Tier 的模板
   const currentTierTemplates = useMemo(() => {

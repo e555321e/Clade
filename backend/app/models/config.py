@@ -1152,12 +1152,13 @@ class PressureIntensityConfig(BaseModel):
     # ========== 神力消耗倍率 ==========
     # 与 constants.py 中的 INTENSITY_MULT_* 保持一致
     # 用于计算施加压力时的神力消耗（显示和扣费统一使用）
+    # 【v2.5】下调倍率，确保高等级压力可用
     # 强度 1-3：基础消耗
     cost_low_multiplier: float = 1.0
-    # 强度 4-7：双倍消耗
-    cost_mid_multiplier: float = 2.0
-    # 强度 8-10：五倍消耗
-    cost_high_multiplier: float = 5.0
+    # 强度 4-7：1.5倍消耗
+    cost_mid_multiplier: float = 1.5
+    # 强度 8-10：2.5倍消耗
+    cost_high_multiplier: float = 2.5
     
     # ========== 温度修饰系数 ==========
     # 每单位温度修饰的效果（°C）

@@ -85,6 +85,7 @@ from .ecology import (
     reset_ecology_engine,
     extract_species_params,
     extract_species_prefs,
+    extract_species_traits,
     extract_trophic_levels,
 )
 
@@ -157,6 +158,7 @@ __all__ = [
     "reset_ecology_engine",
     "extract_species_params",
     "extract_species_prefs",
+    "extract_species_traits",
     "extract_trophic_levels",
     # 张量化竞争计算
     "TensorCompetitionCalculator",

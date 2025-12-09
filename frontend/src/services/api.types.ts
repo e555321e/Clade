@@ -503,9 +503,10 @@ export interface PressureIntensityConfig {
   intensity_high_multiplier?: number;  // 强度 8-10（毁灭性）效果倍率，默认 1.2
   
   // 神力消耗倍率 (Cost Multipliers) - 与后端扣费一致
+  // 【v2.5】下调倍率，确保高等级压力可用
   cost_low_multiplier?: number;        // 强度 1-3 消耗倍率，默认 1.0
-  cost_mid_multiplier?: number;        // 强度 4-7 消耗倍率，默认 2.0
-  cost_high_multiplier?: number;       // 强度 8-10 消耗倍率，默认 5.0
+  cost_mid_multiplier?: number;        // 强度 4-7 消耗倍率，默认 1.5
+  cost_high_multiplier?: number;       // 强度 8-10 消耗倍率，默认 2.5
   
   // 温度修饰系数
   temperature_effect_per_unit?: number;  // 每单位温度修饰的效果（°C），默认 0.8

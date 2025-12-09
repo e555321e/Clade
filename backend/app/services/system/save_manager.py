@@ -622,11 +622,12 @@ class SaveManager:
                 energy_data = json.loads(energy_path.read_text(encoding="utf-8"))
                 
                 # 恢复能量状态
+                # 【修复】默认值与 EnergyState 保持一致 (3000/3000/300)
                 state = energy_data.get("state", {})
                 self._energy_service.set_energy(
-                    current=state.get("current", 100),
-                    maximum=state.get("maximum", 100),
-                    regen=state.get("regen_per_turn", 15),
+                    current=state.get("current", 3000),
+                    maximum=state.get("maximum", 3000),
+                    regen=state.get("regen_per_turn", 300),
                 )
                 
                 # 恢复启用状态

@@ -83,36 +83,37 @@ def _load_ecology_kernels():
 class EcologyConfig:
     """生态计算配置
     
-    【v2.2】参数参考 EcologyConfig (models/config.py) 中的原有设置
-    调整死亡率参数，确保低宜居度导致真实的死亡
+    【v2.3】全面平衡调整：
+    - 死亡率：确保低宜居度导致真实死亡
+    - 扩散：密度驱动 + 宜居度引导
+    - 迁徙：低阈值 + 强压力驱动
     """
     # === 死亡率参数 ===
-    base_mortality: float = 0.08          # 基础死亡率 【提高】从0.05到0.08
-    temp_mortality_weight: float = 0.3    # 温度死亡率权重
-    competition_weight: float = 0.25      # 竞争死亡率权重 【提高】
-    resource_weight: float = 0.25         # 资源死亡率权重 【提高】
-    trophic_weight: float = 0.3           # 营养级死亡率权重
-    suitability_weight: float = 0.35      # 【新增】宜居度死亡权重
+    base_mortality: float = 0.06          # 基础死亡率（略微降低，让宜居度惩罚更突出）
+    temp_mortality_weight: float = 0.25   # 温度死亡率权重
+    competition_weight: float = 0.20      # 竞争死亡率权重
+    resource_weight: float = 0.25         # 资源死亡率权重
+    trophic_weight: float = 0.25          # 营养级死亡率权重
+    suitability_weight: float = 0.35      # 宜居度死亡权重
     
     # === 扩散参数 ===
-    # 参考 config.py: diffusion_rate = 0.1, dispersal_cost_base = 0.1
-    base_diffusion_rate: float = 0.12     # 基础扩散率 【提高】支持逃逸
-    max_diffusion_rate: float = 0.35      # 最大扩散率（限制早期时代）
+    # 【v2.3】增强扩散以支持密度驱动
+    base_diffusion_rate: float = 0.15     # 基础扩散率（提高）
+    max_diffusion_rate: float = 0.40      # 最大扩散率（提高上限）
+    density_pressure_threshold: float = 50.0  # 【新增】触发密度驱动扩散的阈值
     
     # === 迁徙参数 ===
-    pressure_threshold: float = 0.10      # 压力迁徙阈值 【降低】更容易触发迁徙
-    saturation_threshold: float = 0.55    # 饱和度阈值 【降低】
-    # 参考 config.py: terrestrial_top_k=4, marine_top_k=3 等
-    # 物种分布地块数有限，迁徙应该是逐步的
-    max_migration_distance: float = 2.5   # 最大迁徙距离 【提高】
-    base_migration_rate: float = 0.12     # 基础迁徙率 【提高】
-    # 参考 config.py: suitability_cutoff = 0.25
-    score_threshold: float = 0.20         # 迁徙分数阈值 【降低】允许更多迁徙
+    # 【v2.3】显著降低阈值，增强压力驱动
+    pressure_threshold: float = 0.08      # 压力迁徙阈值（进一步降低）
+    saturation_threshold: float = 0.50    # 饱和度阈值
+    max_migration_distance: float = 3.0   # 最大迁徙距离（提高）
+    base_migration_rate: float = 0.15     # 基础迁徙率（提高）
+    score_threshold: float = 0.15         # 迁徙分数阈值（显著降低）
     
     # === 繁殖参数 ===
-    base_birth_rate: float = 0.10         # 基础出生率
+    base_birth_rate: float = 0.12         # 基础出生率（略微提高）
     capacity_multiplier: float = 100.0    # 承载力乘数
-    min_suitability_for_reproduction: float = 0.20  # 【新增】繁殖的最低宜居度
+    min_suitability_for_reproduction: float = 0.15  # 繁殖的最低宜居度（降低）
     
     # === 时代缩放 ===
     era_scaling_enabled: bool = True      # 是否启用时代缩放
@@ -220,10 +221,12 @@ class TensorEcologyEngine:
         cooldown_mask: np.ndarray | None = None,
         external_bonus: np.ndarray | None = None,
         decline_streaks: np.ndarray | None = None,
+        species_traits: np.ndarray | None = None,
     ) -> EcologyResult:
         """统一生态计算入口 - 一次调用完成全部计算
         
         【零循环】所有计算使用张量并行，无 Python for 循环
+        【v2.4】支持新的特质系统，当提供 species_traits 时使用精确特质匹配
         
         Args:
             pop: 种群张量 (S, H, W)
@@ -234,8 +237,9 @@ class TensorEcologyEngine:
             trophic_levels: 营养级 (S,) - 用于猎物追踪
             pressure_overlay: 压力叠加层 (C_pressure, H, W)
             cooldown_mask: 迁徙冷却掩码 (S,) True=允许迁徙
-        external_bonus: 外部加成 (S, H, W) - 来自重大事件/embedding 的迁徙引导
-        decline_streaks: 慢性衰退计数 (S,) - 可选，未提供则按当前死亡率判定回退
+            external_bonus: 外部加成 (S, H, W) - 来自重大事件/embedding 的迁徙引导
+            decline_streaks: 慢性衰退计数 (S,) - 可选
+            species_traits: 【新】物种特质 (S, 14) - 完整特质矩阵，用于精确宜居度计算
         
         Returns:
             EcologyResult 包含更新后的种群和各阶段结果
@@ -274,10 +278,15 @@ class TensorEcologyEngine:
         else:
             decline_streaks = decline_streaks.astype(np.int32, copy=False)
         
+        # 【新】处理特质矩阵
+        use_trait_system = species_traits is not None
+        if use_trait_system:
+            species_traits = species_traits.astype(np.float32)
+        
         # 获取时代缩放因子
         era_scaling = self._get_era_scaling(turn_index)
         
-        # 资源压力 & 机动性 & 预估增长率（回退）
+        # 资源压力 & 机动性 & 预估增长率
         resource_pressure = pop.sum(axis=(1, 2))
         if env.shape[0] > 3:
             total_resource = float(np.maximum(env[3].sum(), 1e-6))
@@ -286,19 +295,36 @@ class TensorEcologyEngine:
             resource_pressure = np.zeros((S,), dtype=np.float32)
         
         species_mobility = np.ones((S,), dtype=np.float32)
-        if species_params.shape[1] >= 3:
+        if use_trait_system:
+            species_mobility = np.clip(species_traits[:, 7], 1.0, 10.0).astype(np.float32)
+        elif species_params.shape[1] >= 3:
             species_mobility = np.clip(species_params[:, 2], 0.5, 3.0).astype(np.float32)
         
         growth_rates = np.zeros((S,), dtype=np.float32)
-        if species_params.shape[1] >= 4:
+        if use_trait_system:
+            growth_rates = np.clip(species_traits[:, 5] / 5.0, 0.0, 2.0).astype(np.float32)
+        elif species_params.shape[1] >= 4:
             growth_rates = np.clip(species_params[:, 3], 0.0, 5.0).astype(np.float32)
         
-        # === 阶段1：死亡率计算 ===
+        # === 阶段1：宜居度计算（先于死亡率）===
         t0 = time.perf_counter()
-        mortality_rates = self._compute_mortality_tensor(
-            pop, env, species_params, species_prefs, 
-            trophic_levels, pressure_overlay, era_scaling
-        )
+        if use_trait_system:
+            # 使用精确特质匹配
+            suitability = self._compute_trait_suitability_tensor(env, species_traits)
+        else:
+            # 使用旧的简化匹配
+            suitability = self._compute_suitability_tensor(env, species_prefs)
+        
+        # === 阶段2：死亡率计算 ===
+        if use_trait_system:
+            mortality_rates = self._compute_trait_mortality_tensor(
+                pop, env, species_traits, suitability, pressure_overlay, era_scaling
+            )
+        else:
+            mortality_rates = self._compute_mortality_tensor(
+                pop, env, species_params, species_prefs, 
+                trophic_levels, pressure_overlay, era_scaling
+            )
         metrics.mortality_time_ms = (time.perf_counter() - t0) * 1000
         
         # 应用死亡率
@@ -309,15 +335,20 @@ class TensorEcologyEngine:
         survivor_counts = pop_after_death.sum(axis=(1, 2))
         metrics.avg_mortality_rate = float(mortality_rates[pop > 0].mean()) if (pop > 0).any() else 0.0
         
-        # === 阶段2：扩散计算 ===
+        # === 阶段3：扩散计算 ===
         t0 = time.perf_counter()
-        suitability = self._compute_suitability_tensor(env, species_prefs)
-        pop_after_dispersal = self._compute_dispersal_tensor(
-            pop_after_death, suitability, era_scaling
-        )
+        if use_trait_system:
+            # 使用特质扩散（机动性影响 + 栖息地连通性检查）
+            pop_after_dispersal = self._compute_trait_dispersal_tensor(
+                pop_after_death, suitability, species_traits, env, era_scaling
+            )
+        else:
+            pop_after_dispersal = self._compute_dispersal_tensor(
+                pop_after_death, suitability, era_scaling
+            )
         metrics.dispersal_time_ms = (time.perf_counter() - t0) * 1000
         
-        # === 阶段3：迁徙计算 ===
+        # === 阶段4：迁徙计算 ===
         t0 = time.perf_counter()
         # 提取每个物种的平均死亡率作为迁徙压力信号 - 向量化
         pop_mask = pop > 0
@@ -328,7 +359,7 @@ class TensorEcologyEngine:
         species_death_rates = species_death_rates.astype(np.float32)
         
         pop_after_migration, migrated = self._compute_migration_tensor(
-            pop_after_dispersal, env, species_prefs, suitability,
+            pop_after_dispersal, env, species_prefs, species_traits, suitability,
             species_death_rates, trophic_levels, cooldown_mask, era_scaling,
             resource_pressure, growth_rates, species_mobility,
             mortality_rates, external_bonus, decline_streaks
@@ -336,18 +367,24 @@ class TensorEcologyEngine:
         metrics.migration_time_ms = (time.perf_counter() - t0) * 1000
         metrics.migrating_species = len(migrated)
         
-        # === 阶段4：繁殖计算 ===
+        # === 阶段5：繁殖计算 ===
         t0 = time.perf_counter()
         pop_after_reproduction = self._compute_reproduction_tensor(
             pop_after_migration, env, suitability, era_scaling
         )
         metrics.reproduction_time_ms = (time.perf_counter() - t0) * 1000
         
-        # === 阶段5：竞争计算 ===
+        # === 阶段6：竞争计算 ===
         t0 = time.perf_counter()
-        final_pop = self._compute_competition_tensor(
-            pop_after_reproduction, suitability, era_scaling
-        )
+        if use_trait_system:
+            # 使用基于特质的竞争系统
+            final_pop = self._compute_trait_competition_tensor(
+                pop_after_reproduction, suitability, species_traits, era_scaling
+            )
+        else:
+            final_pop = self._compute_competition_tensor(
+                pop_after_reproduction, suitability, era_scaling
+            )
         metrics.competition_time_ms = (time.perf_counter() - t0) * 1000
         
         metrics.total_population_after = float(final_pop.sum())
@@ -360,7 +397,8 @@ class TensorEcologyEngine:
         logger.info(
             f"[TensorEcology] 完成: {S}物种, {H}x{W}地图, "
             f"耗时={metrics.total_time_ms:.1f}ms, 后端={metrics.backend}, "
-            f"平均死亡率={metrics.avg_mortality_rate:.1%}"
+            f"平均死亡率={metrics.avg_mortality_rate:.1%}, "
+            f"特质系统={'启用' if use_trait_system else '禁用'}"
         )
         
         return EcologyResult(
@@ -480,6 +518,161 @@ class TensorEcologyEngine:
         )
         return result
     
+    def _compute_trait_suitability_tensor(
+        self,
+        env: np.ndarray,
+        species_traits: np.ndarray,
+    ) -> np.ndarray:
+        """计算基于特质的精确适宜度矩阵 [Taichi GPU]
+        
+        【新】使用完整特质矩阵进行精确环境-特质匹配
+        """
+        S = species_traits.shape[0]
+        C, H, W = env.shape
+        
+        # 确保环境张量有足够的通道
+        if C < 7:
+            padded_env = np.zeros((7, H, W), dtype=np.float32)
+            padded_env[:C] = env
+            if C <= 4:
+                padded_env[4] = 1.0  # 默认陆地
+            env = padded_env
+        
+        result = np.zeros((S, H, W), dtype=np.float32)
+        _taichi_kernels.kernel_compute_trait_suitability(
+            env.astype(np.float32),
+            species_traits.astype(np.float32),
+            result,
+        )
+        return result
+    
+    def _compute_trait_mortality_tensor(
+        self,
+        pop: np.ndarray,
+        env: np.ndarray,
+        species_traits: np.ndarray,
+        suitability: np.ndarray,
+        pressure_overlay: np.ndarray | None,
+        era_scaling: float,
+    ) -> np.ndarray:
+        """基于特质的精确死亡率计算 [Taichi GPU]
+        
+        【新】每个环境因素的死亡率由对应特质决定
+        """
+        S, H, W = pop.shape
+        cfg = self.config
+        
+        # 确保压力叠加层存在
+        if pressure_overlay is None:
+            pressure_overlay = np.zeros((1, H, W), dtype=np.float32)
+        
+        # 确保环境张量有足够的通道
+        C = env.shape[0]
+        if C < 7:
+            padded_env = np.zeros((7, H, W), dtype=np.float32)
+            padded_env[:C] = env
+            if C <= 4:
+                padded_env[4] = 1.0
+            env = padded_env
+        
+        result = np.zeros((S, H, W), dtype=np.float32)
+        _taichi_kernels.kernel_trait_mortality(
+            pop.astype(np.float32),
+            env.astype(np.float32),
+            species_traits.astype(np.float32),
+            suitability.astype(np.float32),
+            pressure_overlay.astype(np.float32),
+            result,
+            float(cfg.base_mortality),
+            float(era_scaling),
+        )
+        
+        return np.clip(result, 0.01, 0.95).astype(np.float32)
+    
+    def _compute_trait_dispersal_tensor(
+        self,
+        pop: np.ndarray,
+        suitability: np.ndarray,
+        species_traits: np.ndarray,
+        env: np.ndarray,
+        era_scaling: float,
+    ) -> np.ndarray:
+        """基于特质的扩散计算 [Taichi GPU]
+        
+        【v3.0】加入栖息地连通性检查，防止跨栖息地扩散
+        """
+        cfg = self.config
+        
+        # 时代缩放
+        effective_scaling = max(1.0, era_scaling ** 0.5)
+        diffusion_rate = min(cfg.max_diffusion_rate, cfg.base_diffusion_rate * effective_scaling)
+        
+        # 确保环境张量有足够的通道
+        C, H, W = env.shape
+        if C < 7:
+            padded_env = np.zeros((7, H, W), dtype=np.float32)
+            padded_env[:C] = env
+            if C <= 4:
+                padded_env[4] = 1.0  # 默认陆地
+            env = padded_env
+        
+        result = np.zeros_like(pop, dtype=np.float32)
+        _taichi_kernels.kernel_trait_diffusion(
+            pop.astype(np.float32),
+            suitability.astype(np.float32),
+            species_traits.astype(np.float32),
+            env.astype(np.float32),
+            result,
+            float(diffusion_rate),
+        )
+        return result
+    
+    def _compute_trait_competition_tensor(
+        self,
+        pop: np.ndarray,
+        suitability: np.ndarray,
+        species_traits: np.ndarray,
+        era_scaling: float,
+    ) -> np.ndarray:
+        """基于特质的竞争计算 [Taichi GPU]
+        
+        【新】使用局部适应度和生态位重叠决定竞争结果
+        """
+        S, H, W = pop.shape
+        
+        # 竞争强度（随时代调整）
+        base_strength = 0.08
+        if era_scaling > 1.5:
+            base_strength *= max(0.6, 1.0 / (era_scaling ** 0.15))
+        
+        # 1. 计算局部适应度
+        local_fitness = np.zeros((S, H, W), dtype=np.float32)
+        _taichi_kernels.kernel_compute_local_fitness(
+            suitability.astype(np.float32),
+            species_traits.astype(np.float32),
+            pop.astype(np.float32),
+            local_fitness,
+        )
+        
+        # 2. 计算生态位重叠矩阵
+        niche_overlap = np.zeros((S, S), dtype=np.float32)
+        _taichi_kernels.kernel_compute_niche_overlap_matrix(
+            species_traits.astype(np.float32),
+            niche_overlap,
+        )
+        
+        # 3. 应用基于特质的竞争
+        result = np.zeros_like(pop, dtype=np.float32)
+        _taichi_kernels.kernel_apply_trait_competition(
+            pop.astype(np.float32),
+            local_fitness,
+            niche_overlap,
+            result,
+            float(base_strength),
+        )
+        
+        return result
+    
     def _compute_dispersal_tensor(
         self,
         pop: np.ndarray,
@@ -514,6 +707,7 @@ class TensorEcologyEngine:
         pop: np.ndarray,
         env: np.ndarray,
         species_prefs: np.ndarray,
+        species_traits: np.ndarray | None,
         suitability: np.ndarray,
         death_rates: np.ndarray,
         trophic_levels: np.ndarray,
@@ -526,7 +720,7 @@ class TensorEcologyEngine:
         external_bonus: np.ndarray | None,
         decline_streaks: np.ndarray,
     ) -> tuple[np.ndarray, list[int]]:
-        """张量化迁徙计算 - 无循环
+        """张量化迁徙计算 v3.0 - 加入栖息地连通性检查
         
         Returns:
             (迁徙后种群, 已迁徙物种索引列表)
@@ -565,9 +759,9 @@ class TensorEcologyEngine:
         # 2. 计算猎物密度（用于消费者）(S, H, W)
         prey_density = self._compute_prey_density_tensor(pop, trophic_levels)
         
-        # 3. 计算迁徙分数 (S, H, W)
+        # 3. 计算迁徙分数 (S, H, W) - 【v3.0】传递species_traits用于栖息地检查
         migration_scores = self._compute_migration_scores_tensor(
-            pop, env, species_prefs, suitability, distance_weights, death_rates, 
+            pop, env, species_prefs, species_traits, suitability, distance_weights, death_rates, 
             prey_density, trophic_levels,
             resource_pressure, growth_rates, species_mobility,
             mortality_rates, external_bonus, decline_streaks
@@ -608,7 +802,7 @@ class TensorEcologyEngine:
         if era_scaling > 1.5:
             migration_rates *= min(2.0, era_scaling ** 0.3)
         
-        # 6. 执行迁徙 [Taichi GPU]
+        # 6. 执行迁徙 [Taichi GPU] - 【v3.0】加入栖息地连通性检查
         new_pop = np.zeros_like(pop, dtype=np.float32)
         base_long_jump = 0.01 if era_scaling <= 1.5 else 0.02
         if env.shape[0] >= 6 and species_prefs.shape[1] >= 6:
@@ -618,10 +812,38 @@ class TensorEcologyEngine:
             flying = (land_pref > 0.3) & (sea_pref > 0.3) & (coast_pref > 0.3)
             if flying.any():
                 base_long_jump = min(0.05, base_long_jump * 2.0)
+        
+        # 确保 species_traits 存在（如果没有，从 species_prefs 构造）
+        if species_traits is None:
+            # 构造默认特质矩阵
+            traits_for_migration = np.zeros((S, 14), dtype=np.float32)
+            traits_for_migration[:, 7] = 5.0  # 默认机动性
+            if species_prefs.shape[1] >= 7:
+                traits_for_migration[:, 8] = species_prefs[:, 4]  # land_pref
+                traits_for_migration[:, 9] = species_prefs[:, 5]  # ocean_pref
+                traits_for_migration[:, 10] = species_prefs[:, 6]  # coast_pref
+            else:
+                traits_for_migration[:, 8] = 1.0  # 默认陆地
+        else:
+            traits_for_migration = species_traits.astype(np.float32)
+        
+        # 确保环境张量有足够的通道
+        C = env.shape[0]
+        if C < 7:
+            padded_env = np.zeros((7, H, W), dtype=np.float32)
+            padded_env[:C] = env
+            if C <= 4:
+                padded_env[4] = 1.0  # 默认陆地
+            env_for_migration = padded_env
+        else:
+            env_for_migration = env.astype(np.float32)
+        
         _taichi_kernels.kernel_execute_migration(
             pop.astype(np.float32),
             migration_scores.astype(np.float32),
             distance_weights.astype(np.float32),
+            traits_for_migration,
+            env_for_migration,
             new_pop,
             migration_rates.astype(np.float32),
             float(cfg.score_threshold),
@@ -684,6 +906,7 @@ class TensorEcologyEngine:
         pop: np.ndarray,
         env: np.ndarray,
         species_prefs: np.ndarray,
+        species_traits: np.ndarray | None,
         suitability: np.ndarray,
         distance_weights: np.ndarray,
         death_rates: np.ndarray,
@@ -696,11 +919,36 @@ class TensorEcologyEngine:
         external_bonus: np.ndarray | None,
         decline_streaks: np.ndarray,
     ) -> np.ndarray:
-        """计算迁徙分数 [Taichi GPU]"""
+        """计算迁徙分数 [Taichi GPU] - 【v3.0】加入栖息地类型约束"""
         cfg = self.config
+        S, H, W = pop.shape
         
         # 确保距离权重维度正确 (S, H, W)
-        distance_weights = distance_weights.reshape(pop.shape[0], pop.shape[1], pop.shape[2])
+        distance_weights = distance_weights.reshape(S, H, W)
+        
+        # 确保 species_traits 存在
+        if species_traits is None:
+            traits_for_scores = np.zeros((S, 14), dtype=np.float32)
+            traits_for_scores[:, 7] = 5.0  # 默认机动性
+            if species_prefs.shape[1] >= 7:
+                traits_for_scores[:, 8] = species_prefs[:, 4]
+                traits_for_scores[:, 9] = species_prefs[:, 5]
+                traits_for_scores[:, 10] = species_prefs[:, 6]
+            else:
+                traits_for_scores[:, 8] = 1.0
+        else:
+            traits_for_scores = species_traits.astype(np.float32)
+        
+        # 确保环境张量有足够的通道
+        C = env.shape[0]
+        if C < 7:
+            padded_env = np.zeros((7, H, W), dtype=np.float32)
+            padded_env[:C] = env
+            if C <= 4:
+                padded_env[4] = 1.0
+            env_for_scores = padded_env
+        else:
+            env_for_scores = env.astype(np.float32)
         
         result = np.zeros_like(pop, dtype=np.float32)
         if hasattr(_taichi_kernels, "kernel_migration_decision_v2"):
@@ -712,6 +960,8 @@ class TensorEcologyEngine:
                 resource_pressure.astype(np.float32),
                 prey_density.astype(np.float32),
                 trophic_levels.astype(np.float32),
+                traits_for_scores,
+                env_for_scores,
                 result,
                 float(cfg.pressure_threshold),
                 float(cfg.saturation_threshold),
@@ -1012,6 +1262,83 @@ def extract_species_prefs(
         prefs[idx, 6] = 1.0 if is_coastal else 0.0
     
     return prefs
+
+
+def extract_species_traits(
+    species_list: list,
+    species_map: dict[str, int],
+) -> np.ndarray:
+    """从物种列表提取完整特质矩阵（用于精确宜居度计算）
+    
+    Args:
+        species_list: Species 对象列表
+        species_map: {lineage_code: tensor_index}
+    
+    Returns:
+        物种特质矩阵 (S, 14)
+        [0] 耐热性 1-10
+        [1] 耐寒性 1-10
+        [2] 耐旱性 1-10
+        [3] 耐盐性 1-10
+        [4] 光照需求 1-10
+        [5] 繁殖速度 1-10
+        [6] 体型 1-10
+        [7] 机动性 1-10
+        [8] 陆地偏好 0-1
+        [9] 海洋偏好 0-1
+        [10] 海岸偏好 0-1
+        [11] 营养级 1-5
+        [12] 年龄(回合) 0+
+        [13] 专化度 0-1 (由特质方差计算)
+    """
+    S = len(species_map)
+    traits = np.zeros((S, 14), dtype=np.float32)
+    
+    for species in species_list:
+        lineage = species.lineage_code
+        if lineage not in species_map:
+            continue
+        
+        idx = species_map[lineage]
+        abs_traits = species.abstract_traits or {}
+        morph = species.morphology_stats or {}
+        habitat_type = (getattr(species, 'habitat_type', 'terrestrial') or 'terrestrial').lower()
+        
+        # 环境耐受特质 (0-4)
+        traits[idx, 0] = float(abs_traits.get("耐热性", 5))
+        traits[idx, 1] = float(abs_traits.get("耐寒性", 5))
+        traits[idx, 2] = float(abs_traits.get("耐旱性", 5))
+        traits[idx, 3] = float(abs_traits.get("耐盐性", 5))
+        traits[idx, 4] = float(abs_traits.get("光照需求", 5))
+        
+        # 生命史特质 (5-7)
+        traits[idx, 5] = float(abs_traits.get("繁殖速度", 5))
+        traits[idx, 6] = float(abs_traits.get("体型", 5))
+        traits[idx, 7] = float(abs_traits.get("机动性", 5))
+        
+        # 栖息地偏好 (8-10)
+        is_aquatic = habitat_type in ('marine', 'deep_sea', 'freshwater', 'hydrothermal')
+        is_terrestrial = habitat_type in ('terrestrial', 'aerial')
+        is_coastal = habitat_type in ('coastal', 'amphibious')
+        
+        traits[idx, 8] = 1.0 if is_terrestrial else (0.3 if is_coastal else 0.0)
+        traits[idx, 9] = 1.0 if is_aquatic else (0.3 if is_coastal else 0.0)
+        traits[idx, 10] = 1.0 if is_coastal else 0.0
+        
+        # 营养级 (11)
+        traits[idx, 11] = float(getattr(species, 'trophic_level', 1.0) or 1.0)
+        
+        # 年龄 (12)
+        traits[idx, 12] = float(morph.get("age_turns", 0) or 0)
+        
+        # 专化度 (13) - 由环境特质的方差计算
+        env_traits = traits[idx, 0:5]
+        mean_trait = env_traits.mean()
+        variance = ((env_traits - mean_trait) ** 2).mean()
+        # 方差越大 = 越专化（某些特质高，某些低）
+        traits[idx, 13] = min(1.0, 1.0 - np.exp(-variance / 8.0))
+    
+    return traits
 
 
 def extract_trophic_levels(
