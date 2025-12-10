@@ -415,6 +415,11 @@ class TensorEcologyStage(BaseStage):
         except Exception:
             external_bonus = None
         
+        # 【v3.0】获取回合年数（从配置或 ctx）
+        from ..core.config import get_settings
+        settings = get_settings()
+        turn_years = getattr(ctx, "turn_years", None) or settings.turn_years
+        
         # 【核心】直接执行 Taichi 计算（CUDA 上下文不能跨线程）
         # 注意：Taichi/CUDA 上下文是线程绑定的，不能用 asyncio.to_thread()
         result = ecology_engine.process_ecology(
@@ -429,6 +434,7 @@ class TensorEcologyStage(BaseStage):
             cooldown_mask=cooldown_mask,
             external_bonus=external_bonus,
             decline_streaks=decline_streaks,
+            turn_years=turn_years,  # 【v3.0】传递回合年数用于世代缩放
         )
         logger.info(
             f"[统一张量生态] 后端={result.metrics.backend}, "

@@ -1836,82 +1836,76 @@ def kernel_trait_diffusion(
                 n_ocean = env[5, ni, nj] if C > 5 else 0.0
                 n_coast = env[6, ni, nj] if C > 6 else 0.0
                 
-                # 【栖息地连通性检查】
-                # 计算物种是否可以进入该邻居地块
+                # 【栖息地连通性检查】计算物种是否可以进入该邻居地块
                 can_enter = True
-                
                 if is_terrestrial and not is_amphibious:
-                    # 陆地物种：不能进入纯海洋（海洋>0.6且不是海岸）
                     if n_ocean > 0.6 and n_coast < 0.3:
                         can_enter = False
-                elif is_aquatic and not is_amphibious:
-                    # 海洋物种：不能进入纯陆地（陆地>0.6且不是海岸）
+                if is_aquatic and not is_amphibious:
                     if n_land > 0.6 and n_coast < 0.3:
                         can_enter = False
                 
-                # 如果不能进入，跳过此邻居
-                if not can_enter:
-                    continue
-                
-                valid_neighbor_count += 1
-                
-                if neighbor_suit > my_suit:
-                    any_better = True
-                if neighbor_pop < current * 0.5:
-                    any_lower_density = True
-                
-                # 流出计算
-                if current > 0:
-                    # 适宜度梯度扩散
-                    if neighbor_suit > SUIT_THRESHOLD:
-                        if gradient > 0:
-                            rate = effective_rate * (1.0 + gradient * 0.6)
-                            outflow += current * rate * 0.25
-                        elif gradient > -0.25:
-                            rate = effective_rate * 0.4
-                            outflow += current * rate * 0.25
+                # 【Taichi兼容】用条件包裹代替continue
+                if can_enter:
+                    valid_neighbor_count += 1
                     
-                    # 密度驱动扩散
-                    if current > DENSITY_THRESHOLD and neighbor_suit > SUIT_LOW_THRESHOLD:
-                        if density_gradient > 0:
-                            pressure_factor = ti.min(2.5, current / DENSITY_THRESHOLD)
-                            rate = effective_rate * 1.8 * pressure_factor * (density_gradient / (current + 1.0))
-                            density_outflow += current * rate * 0.25
+                    if neighbor_suit > my_suit:
+                        any_better = True
+                    if neighbor_pop < current * 0.5:
+                        any_lower_density = True
                     
-                    # 极端拥挤强制扩散
-                    if current > CROWDING_THRESHOLD and neighbor_suit > SUIT_LOW_THRESHOLD:
-                        crowding_rate = effective_rate * 2.5 * (current / CROWDING_THRESHOLD)
-                        density_outflow += current * crowding_rate * 0.12
-                    
-                    # 低宜居度逃逸
-                    if neighbor_suit > SUIT_LOW_THRESHOLD and my_suit < 0.15:
-                        if gradient > 0:
-                            escape_rate = effective_rate * 2.2 * gradient
-                            escape_outflow += current * escape_rate * 0.25
-                
-                # 流入计算
-                if neighbor_pop > 0:
-                    # 【流入也需要检查】邻居物种能否流入当前地块
-                    can_receive = True
-                    if is_terrestrial and not is_amphibious:
-                        if my_ocean > 0.6 and my_coast < 0.3:
-                            can_receive = False
-                    elif is_aquatic and not is_amphibious:
-                        if my_land > 0.6 and my_coast < 0.3:
-                            can_receive = False
-                    
-                    if can_receive:
-                        if my_suit > SUIT_THRESHOLD:
-                            if gradient < 0:
-                                rate = effective_rate * (1.0 - gradient * 0.6)
-                                inflow += neighbor_pop * rate * 0.25
-                            elif gradient < 0.25:
+                    # 流出计算
+                    if current > 0:
+                        # 适宜度梯度扩散
+                        if neighbor_suit > SUIT_THRESHOLD:
+                            if gradient > 0:
+                                rate = effective_rate * (1.0 + gradient * 0.6)
+                                outflow += current * rate * 0.25
+                            elif gradient > -0.25:
                                 rate = effective_rate * 0.4
-                                inflow += neighbor_pop * rate * 0.25
-                        elif my_suit > SUIT_LOW_THRESHOLD:
-                            if neighbor_pop > DENSITY_THRESHOLD and current < neighbor_pop * 0.5:
-                                rate = effective_rate * 0.9 * (neighbor_pop / CROWDING_THRESHOLD)
-                                inflow += neighbor_pop * rate * 0.25
+                                outflow += current * rate * 0.25
+                        
+                        # 密度驱动扩散
+                        if current > DENSITY_THRESHOLD and neighbor_suit > SUIT_LOW_THRESHOLD:
+                            if density_gradient > 0:
+                                pressure_factor = ti.min(2.5, current / DENSITY_THRESHOLD)
+                                rate = effective_rate * 1.8 * pressure_factor * (density_gradient / (current + 1.0))
+                                density_outflow += current * rate * 0.25
+                        
+                        # 极端拥挤强制扩散
+                        if current > CROWDING_THRESHOLD and neighbor_suit > SUIT_LOW_THRESHOLD:
+                            crowding_rate = effective_rate * 2.5 * (current / CROWDING_THRESHOLD)
+                            density_outflow += current * crowding_rate * 0.12
+                        
+                        # 低宜居度逃逸
+                        if neighbor_suit > SUIT_LOW_THRESHOLD and my_suit < 0.15:
+                            if gradient > 0:
+                                escape_rate = effective_rate * 2.2 * gradient
+                                escape_outflow += current * escape_rate * 0.25
+                    
+                    # 流入计算
+                    if neighbor_pop > 0:
+                        # 【流入也需要检查】邻居物种能否流入当前地块
+                        can_receive = True
+                        if is_terrestrial and not is_amphibious:
+                            if my_ocean > 0.6 and my_coast < 0.3:
+                                can_receive = False
+                        if is_aquatic and not is_amphibious:
+                            if my_land > 0.6 and my_coast < 0.3:
+                                can_receive = False
+                        
+                        if can_receive:
+                            if my_suit > SUIT_THRESHOLD:
+                                if gradient < 0:
+                                    rate = effective_rate * (1.0 - gradient * 0.6)
+                                    inflow += neighbor_pop * rate * 0.25
+                                elif gradient < 0.25:
+                                    rate = effective_rate * 0.4
+                                    inflow += neighbor_pop * rate * 0.25
+                            elif my_suit > SUIT_LOW_THRESHOLD:
+                                if neighbor_pop > DENSITY_THRESHOLD and current < neighbor_pop * 0.5:
+                                    rate = effective_rate * 0.9 * (neighbor_pop / CROWDING_THRESHOLD)
+                                    inflow += neighbor_pop * rate * 0.25
         
         # 随机逃逸（只在有有效邻居时）
         random_escape = 0.0
@@ -1973,6 +1967,8 @@ def _precompile_all_kernels():
         migration_rates = np.ones((S,), dtype=np.float32)
         distance_weights = np.ones((S, H, W), dtype=np.float32)
         migration_scores = np.zeros((S, H, W), dtype=np.float32)
+        traits = np.ones((S, 14), dtype=np.float32)  # 【修复】提前定义 traits
+        scale_arr = np.ones((S,), dtype=np.float32)  # 【新增】缩放因子数组
         
         # 预编译各内核（小数组调用，仅触发编译）
         kernel_mortality(pop, env, params, result_3d, 0, 20.0, 15.0)
@@ -2010,7 +2006,6 @@ def _precompile_all_kernels():
         )
         
         # 【新】预编译特质系统内核
-        traits = np.ones((S, 14), dtype=np.float32)
         niche_overlap = np.zeros((S, S), dtype=np.float32)
         local_fitness = np.ones((S, H, W), dtype=np.float32)
         
@@ -2021,10 +2016,20 @@ def _precompile_all_kernels():
         kernel_trait_mortality(pop, env, traits, suitability, pressure, result_3d, 0.05, 1.0)
         kernel_trait_diffusion(pop, suitability, traits, env, result_3d, 0.1)
         
+        # 【v3.1】预编译 v2 内核（带缩放因子）
+        kernel_advanced_diffusion_v2(pop, suitability, scale_arr, result_3d, 0.1, 0.05, 15.0, 0.2)
+        kernel_trait_diffusion_v2(pop, suitability, traits, env, scale_arr, result_3d, 0.1, 0.05, 15.0, 0.2)
+        kernel_reproduction_v2(pop, suitability, capacity, scale_arr, 0.1, result_3d)
+        kernel_multifactor_mortality_v2(
+            pop, env, prefs, params, trophic, pressure, scale_arr, result_3d,
+            0.05, 0.3, 0.2, 0.15, 1.0, 1.0
+        )
+        kernel_trait_mortality_v2(pop, env, traits, suitability, pressure, scale_arr, result_3d, 0.05, 1.0)
+        
         # 同步 Taichi 运行时
         ti.sync()
         
-        logger.info("[Taichi] 所有内核预编译完成（含特质系统）")
+        logger.info("[Taichi] 所有内核预编译完成（含特质系统和v2内核）")
         
     except Exception as e:
         logger.warning(f"[Taichi] 内核预编译失败（将在首次使用时编译）: {e}")
@@ -2747,5 +2752,637 @@ def kernel_combined_suitability(
         # ========== 10. 最终适宜度 ==========
         final_suit = base_suitability * crowding_factor * split_factor
         result[s, i, j] = ti.max(0.0, ti.min(1.0, final_suit))
+
+
+# ============================================================================
+# v3.0 世代缩放内核 - 支持 effective_steps 和背景扩散
+# ============================================================================
+
+@ti.kernel
+def kernel_advanced_diffusion_v2(
+    pop: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    suitability: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    diffusion_scale: ti.types.ndarray(dtype=ti.f32, ndim=1),
+    new_pop: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    base_rate: ti.f32,
+    background_rate: ti.f32,
+    density_threshold: ti.f32,
+    escape_threshold: ti.f32,
+):
+    """带世代缩放和背景扩散的高级扩散 - Taichi GPU 并行
+    
+    【v3.1 修改】
+    1. diffusion_scale 已在 Python 层预计算（带上限和缓冲）
+    2. 背景扩散：即使没有梯度/低密度，也以 background_rate 的比例输出
+    3. 降低密度阈值：更容易触发密度驱动扩散
+    """
+    S, H, W = pop.shape[0], pop.shape[1], pop.shape[2]
+    
+    # 阈值
+    SUIT_THRESHOLD = 0.18
+    SUIT_LOW_THRESHOLD = 0.08
+    CROWDING_THRESHOLD = 60.0
+    
+    for s, i, j in ti.ndrange(S, H, W):
+        current = pop[s, i, j]
+        my_suit = suitability[s, i, j]
+        scale = diffusion_scale[s]  # 已预处理的缩放因子（1.0 ~ 2.5）
+        
+        # 直接使用预计算的缩放因子
+        scaled_rate = base_rate * scale
+        
+        outflow = 0.0
+        inflow = 0.0
+        density_outflow = 0.0
+        escape_outflow = 0.0
+        background_outflow = 0.0
+        
+        neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        any_better_neighbor = False
+        any_lower_density_neighbor = False
+        valid_neighbors = 0
+        
+        for di, dj in ti.static(neighbors):
+            ni = i + di
+            nj = j + dj
+            
+            if 0 <= ni < H and 0 <= nj < W:
+                neighbor_suit = suitability[s, ni, nj]
+                neighbor_pop = pop[s, ni, nj]
+                valid_neighbors += 1
+                
+                if neighbor_suit > my_suit:
+                    any_better_neighbor = True
+                if neighbor_pop < current * 0.5:
+                    any_lower_density_neighbor = True
+                
+                gradient = neighbor_suit - my_suit
+                density_gradient = current - neighbor_pop
+                
+                # === 流出计算 ===
+                if current > 0:
+                    # 【机制1】适宜度梯度扩散
+                    if neighbor_suit > SUIT_THRESHOLD:
+                        if gradient > 0:
+                            rate = scaled_rate * (1.0 + gradient * 0.6)
+                            outflow += current * rate * 0.25
+                        elif gradient > -0.25:
+                            rate = scaled_rate * 0.45
+                            outflow += current * rate * 0.25
+                    
+                    # 【机制2】密度压力扩散（降低阈值）
+                    if current > density_threshold and neighbor_suit > SUIT_LOW_THRESHOLD:
+                        if density_gradient > 0:
+                            pressure_factor = ti.min(2.5, current / density_threshold)
+                            rate = scaled_rate * 1.8 * pressure_factor * (density_gradient / (current + 1.0))
+                            density_outflow += current * rate * 0.25
+                    
+                    # 【机制2b】极端拥挤强制扩散
+                    if current > CROWDING_THRESHOLD and neighbor_suit > SUIT_LOW_THRESHOLD:
+                        crowding_rate = scaled_rate * 2.5 * (current / CROWDING_THRESHOLD)
+                        density_outflow += current * crowding_rate * 0.12
+                    
+                    # 【机制3】低宜居度逃逸
+                    if neighbor_suit > SUIT_LOW_THRESHOLD and my_suit < escape_threshold:
+                        if gradient > 0:
+                            escape_rate = scaled_rate * 2.5 * gradient
+                            escape_outflow += current * escape_rate * 0.25
+                    
+                    # 【机制4 - 新增】背景扩散（即使梯度为零）
+                    if neighbor_suit > SUIT_LOW_THRESHOLD:
+                        background_outflow += current * background_rate * 0.25
+                
+                # === 流入计算 ===
+                if neighbor_pop > 0:
+                    neighbor_scale = diffusion_scale[s]  # 同物种，使用预计算的缩放
+                    neighbor_scaled = base_rate * neighbor_scale
+                    
+                    if my_suit > SUIT_THRESHOLD:
+                        if gradient < 0:
+                            rate = neighbor_scaled * (1.0 - gradient * 0.6)
+                            inflow += neighbor_pop * rate * 0.25
+                        elif gradient < 0.25:
+                            rate = neighbor_scaled * 0.45
+                            inflow += neighbor_pop * rate * 0.25
+                    elif my_suit > SUIT_LOW_THRESHOLD:
+                        if neighbor_pop > density_threshold and current < neighbor_pop * 0.5:
+                            rate = neighbor_scaled * 0.9 * (neighbor_pop / CROWDING_THRESHOLD)
+                            inflow += neighbor_pop * rate * 0.25
+                        # 背景流入
+                        inflow += neighbor_pop * background_rate * 0.15
+        
+        # 随机逃逸
+        random_escape = 0.0
+        if current > 0:
+            if my_suit < escape_threshold and not any_better_neighbor and valid_neighbors > 0:
+                noise = 0.5 + 0.5 * ti.sin(ti.cast(i * 13 + j * 17 + s * 7, ti.f32))
+                if noise > 0.55:
+                    random_escape = current * scaled_rate * 0.18
+            elif current > CROWDING_THRESHOLD * 1.5 and not any_lower_density_neighbor:
+                random_escape = current * scaled_rate * 0.12
+        
+        # 限制最大流出（使用预计算的缩放，已带上限）
+        max_outflow_ratio = ti.min(0.70, 0.50 + 0.08 * scale)  # scale 已是 1.0~2.5
+        total_outflow = outflow + density_outflow + escape_outflow + background_outflow + random_escape
+        if current > 0:
+            total_outflow = ti.min(total_outflow, current * max_outflow_ratio)
+        else:
+            total_outflow = 0.0
+        
+        new_pop[s, i, j] = current - total_outflow + inflow
+
+
+@ti.kernel
+def kernel_trait_diffusion_v2(
+    pop: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    suitability: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    species_traits: ti.types.ndarray(dtype=ti.f32, ndim=2),
+    env: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    diffusion_scale: ti.types.ndarray(dtype=ti.f32, ndim=1),
+    new_pop: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    base_rate: ti.f32,
+    background_rate: ti.f32,
+    density_threshold: ti.f32,
+    escape_threshold: ti.f32,
+):
+    """基于特质的扩散计算 v2 - 使用预计算的 diffusion_scale"""
+    S, H, W = pop.shape[0], pop.shape[1], pop.shape[2]
+    C = env.shape[0]
+    
+    SUIT_THRESHOLD = 0.16
+    SUIT_LOW_THRESHOLD = 0.08
+    CROWDING_THRESHOLD = 50.0
+    
+    for s, i, j in ti.ndrange(S, H, W):
+        current = pop[s, i, j]
+        my_suit = suitability[s, i, j]
+        scale = diffusion_scale[s]  # 预计算的缩放因子（1.0 ~ 2.5）
+        
+        # 获取物种特质
+        mobility = species_traits[s, 7]
+        body_size = species_traits[s, 6]
+        land_pref = species_traits[s, 8]
+        ocean_pref = species_traits[s, 9]
+        coast_pref = species_traits[s, 10]
+        
+        # 判断物种类型
+        is_terrestrial = land_pref > 0.5 and ocean_pref < 0.4
+        is_aquatic = ocean_pref > 0.5 and land_pref < 0.4
+        is_amphibious = coast_pref > 0.4 or (land_pref > 0.3 and ocean_pref > 0.3)
+        
+        # 当前地块栖息地类型
+        my_land = env[4, i, j] if C > 4 else 1.0
+        my_ocean = env[5, i, j] if C > 5 else 0.0
+        
+        # 机动性调整扩散率 + 使用预计算的缩放
+        mobility_factor = 0.6 + mobility * 0.12
+        size_penalty = 1.0 - (body_size - 5) * 0.025
+        effective_rate = base_rate * mobility_factor * size_penalty * scale
+        
+        outflow = 0.0
+        inflow = 0.0
+        density_outflow = 0.0
+        escape_outflow = 0.0
+        background_outflow = 0.0
+        
+        neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        any_better = False
+        any_lower_density = False
+        valid_neighbors = 0
+        
+        for di, dj in ti.static(neighbors):
+            ni = i + di
+            nj = j + dj
+            
+            if 0 <= ni < H and 0 <= nj < W:
+                neighbor_suit = suitability[s, ni, nj]
+                neighbor_pop = pop[s, ni, nj]
+                gradient = neighbor_suit - my_suit
+                density_gradient = current - neighbor_pop
+                
+                # 获取邻居栖息地类型
+                n_land = env[4, ni, nj] if C > 4 else 1.0
+                n_ocean = env[5, ni, nj] if C > 5 else 0.0
+                n_coast = env[6, ni, nj] if C > 6 else 0.0
+                
+                # 栖息地连通性检查（衰减式）
+                habitat_factor = 1.0
+                if is_terrestrial and not is_amphibious:
+                    if n_ocean > 0.6 and n_coast < 0.3:
+                        habitat_factor = 0.3  # 衰减而非完全阻止
+                if is_aquatic and not is_amphibious:
+                    if n_land > 0.6 and n_coast < 0.3:
+                        habitat_factor = 0.3
+                
+                if habitat_factor > 0.1:
+                    valid_neighbors += 1
+                    
+                    if neighbor_suit > my_suit:
+                        any_better = True
+                    if neighbor_pop < current * 0.5:
+                        any_lower_density = True
+                    
+                    # 流出计算
+                    if current > 0:
+                        # 适宜度梯度扩散
+                        if neighbor_suit > SUIT_THRESHOLD:
+                            if gradient > 0:
+                                rate = effective_rate * (1.0 + gradient * 0.7) * habitat_factor
+                                outflow += current * rate * 0.25
+                            elif gradient > -0.22:
+                                rate = effective_rate * 0.45 * habitat_factor
+                                outflow += current * rate * 0.25
+                        
+                        # 密度驱动扩散
+                        if current > density_threshold and neighbor_suit > SUIT_LOW_THRESHOLD:
+                            if density_gradient > 0:
+                                pressure_factor = ti.min(3.0, current / density_threshold)
+                                rate = effective_rate * 2.0 * pressure_factor * (density_gradient / (current + 1.0)) * habitat_factor
+                                density_outflow += current * rate * 0.25
+                        
+                        # 极端拥挤强制扩散
+                        if current > CROWDING_THRESHOLD and neighbor_suit > SUIT_LOW_THRESHOLD:
+                            crowding_rate = effective_rate * 3.0 * (current / CROWDING_THRESHOLD) * habitat_factor
+                            density_outflow += current * crowding_rate * 0.10
+                        
+                        # 低宜居度逃逸
+                        if neighbor_suit > SUIT_LOW_THRESHOLD and my_suit < escape_threshold:
+                            if gradient > 0:
+                                escape_rate = effective_rate * 2.8 * gradient * habitat_factor
+                                escape_outflow += current * escape_rate * 0.25
+                        
+                        # 背景扩散
+                        if neighbor_suit > SUIT_LOW_THRESHOLD:
+                            background_outflow += current * background_rate * habitat_factor * 0.25
+                    
+                    # 流入计算
+                    if neighbor_pop > 0:
+                        can_receive = True
+                        receive_factor = 1.0
+                        if is_terrestrial and not is_amphibious:
+                            if my_ocean > 0.6:
+                                receive_factor = 0.3
+                        if is_aquatic and not is_amphibious:
+                            if my_land > 0.6:
+                                receive_factor = 0.3
+                        
+                        if receive_factor > 0.1:
+                            if my_suit > SUIT_THRESHOLD:
+                                if gradient < 0:
+                                    rate = effective_rate * (1.0 - gradient * 0.7) * receive_factor
+                                    inflow += neighbor_pop * rate * 0.25
+                                elif gradient < 0.22:
+                                    rate = effective_rate * 0.45 * receive_factor
+                                    inflow += neighbor_pop * rate * 0.25
+                            elif my_suit > SUIT_LOW_THRESHOLD:
+                                if neighbor_pop > density_threshold and current < neighbor_pop * 0.5:
+                                    rate = effective_rate * 1.0 * (neighbor_pop / CROWDING_THRESHOLD) * receive_factor
+                                    inflow += neighbor_pop * rate * 0.25
+                                inflow += neighbor_pop * background_rate * receive_factor * 0.15
+        
+        # 随机逃逸
+        random_escape = 0.0
+        if current > 0 and valid_neighbors > 0:
+            if my_suit < escape_threshold and not any_better:
+                noise = 0.5 + 0.5 * ti.sin(ti.cast(i * 13 + j * 17 + s * 7, ti.f32))
+                if noise > 0.50:
+                    random_escape = current * effective_rate * 0.20
+            elif current > CROWDING_THRESHOLD * 1.5 and not any_lower_density:
+                random_escape = current * effective_rate * 0.15
+        
+        # 限制最大流出（使用预计算的 scale，已带上限）
+        max_outflow_ratio = ti.min(0.70, 0.48 + mobility * 0.02 + scale * 0.05)
+        total_outflow = outflow + density_outflow + escape_outflow + background_outflow + random_escape
+        if current > 0:
+            total_outflow = ti.min(total_outflow, current * max_outflow_ratio)
+        else:
+            total_outflow = 0.0
+        
+        new_pop[s, i, j] = current - total_outflow + inflow
+
+
+@ti.kernel
+def kernel_reproduction_v2(
+    pop: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    fitness: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    capacity: ti.types.ndarray(dtype=ti.f32, ndim=2),
+    birth_scale: ti.types.ndarray(dtype=ti.f32, ndim=1),
+    birth_rate: ti.f32,
+    result: ti.types.ndarray(dtype=ti.f32, ndim=3),
+):
+    """繁殖计算 v2 - 使用预计算的 birth_scale
+    
+    【v3.1】birth_scale 已在 Python 层预计算（带上限、压力折扣、容量归一）
+    """
+    S, H, W = pop.shape[0], pop.shape[1], pop.shape[2]
+    
+    REPRO_MIN_SUIT = 0.08
+    REPRO_LOW_SUIT = 0.22
+    
+    for s, i, j in ti.ndrange(S, H, W):
+        if pop[s, i, j] > 0:
+            total_pop = 0.0
+            for sp in range(S):
+                total_pop += pop[sp, i, j]
+            
+            cap = capacity[i, j]
+            suit = fitness[s, i, j]
+            scale = birth_scale[s]  # 预计算的缩放因子（1.0 ~ 3.0，已含压力折扣）
+            
+            if cap > 0 and total_pop > 0:
+                crowding = ti.min(1.0, total_pop / cap)
+                
+                # 宜居度繁殖调节因子
+                suit_factor = 1.0
+                if suit < REPRO_MIN_SUIT:
+                    suit_factor = 0.03
+                elif suit < REPRO_LOW_SUIT:
+                    suit_factor = 0.03 + (suit - REPRO_MIN_SUIT) / (REPRO_LOW_SUIT - REPRO_MIN_SUIT) * 0.67
+                else:
+                    suit_factor = ti.min(1.0, suit * 1.25)
+                
+                # 【v3.1】直接使用预计算的 birth_scale
+                effective_rate = birth_rate * suit_factor * (1.0 - crowding) * scale
+                
+                # 高宜居度+低拥挤时允许更高增长（但限制幅度）
+                if suit > 0.6 and crowding < 0.3:
+                    effective_rate *= 1.2
+                
+                result[s, i, j] = pop[s, i, j] * (1.0 + effective_rate)
+            else:
+                result[s, i, j] = pop[s, i, j]
+        else:
+            result[s, i, j] = 0.0
+
+
+@ti.kernel
+def kernel_multifactor_mortality_v2(
+    pop: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    env: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    species_prefs: ti.types.ndarray(dtype=ti.f32, ndim=2),
+    species_params: ti.types.ndarray(dtype=ti.f32, ndim=2),
+    trophic_levels: ti.types.ndarray(dtype=ti.f32, ndim=1),
+    pressure_overlay: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    mortality_scale: ti.types.ndarray(dtype=ti.f32, ndim=1),
+    result: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    base_mortality: ti.f32,
+    temp_weight: ti.f32,
+    competition_weight: ti.f32,
+    resource_weight: ti.f32,
+    capacity_multiplier: ti.f32,
+    era_scaling: ti.f32,
+):
+    """多因子死亡率计算 v2 - 使用预计算的 mortality_scale
+    
+    【v3.1】mortality_scale 已在 Python 层预计算（带上限和缓冲）
+    """
+    S, H, W = pop.shape[0], pop.shape[1], pop.shape[2]
+    C_env = env.shape[0]
+    C_pressure = pressure_overlay.shape[0]
+    
+    SUIT_LOW_THRESHOLD = 0.22
+    SUIT_CRITICAL_THRESHOLD = 0.10
+    SUIT_DEATH_WEIGHT = 0.38
+    HABITAT_MISMATCH_PENALTY = 0.55
+    
+    for s, i, j in ti.ndrange(S, H, W):
+        if pop[s, i, j] <= 0:
+            result[s, i, j] = 0.0
+            continue
+        
+        scale = mortality_scale[s]  # 预计算的缩放因子（1.0 ~ 2.5）
+        
+        # === 1. 温度死亡率 ===
+        temp = env[0, i, j]
+        temp_pref = species_prefs[s, 0] * 50.0
+        temp_deviation = ti.abs(temp - temp_pref)
+        temp_tolerance = 15.0
+        if species_params.shape[1] >= 2:
+            temp_tolerance = ti.max(5.0, species_params[s, 1])
+        temp_mortality = 1.0 - ti.exp(-temp_deviation / temp_tolerance)
+        temp_mortality = ti.max(0.01, ti.min(0.8, temp_mortality))
+        
+        # === 2. 湿度死亡率 ===
+        humidity = env[1, i, j] if C_env > 1 else 0.5
+        humidity_pref = species_prefs[s, 1]
+        humidity_deviation = ti.abs(humidity - humidity_pref)
+        humidity_mortality = ti.min(0.4, humidity_deviation * 0.5)
+        
+        # === 3. 竞争死亡率 ===
+        total_pop_tile = 0.0
+        for sp in range(S):
+            total_pop_tile += pop[sp, i, j]
+        my_pop = ti.max(pop[s, i, j], 1e-6)
+        competitor_pop = total_pop_tile - pop[s, i, j]
+        competition_ratio = competitor_pop / (my_pop + 100.0)
+        competition_mortality = ti.min(0.35, competition_ratio * 0.12)
+        
+        # === 4. 资源死亡率 ===
+        resources = env[3, i, j] if C_env > 3 else 100.0
+        capacity = resources * capacity_multiplier
+        saturation = total_pop_tile / (capacity + 1e-6)
+        resource_mortality = ti.max(0.0, ti.min(0.45, (saturation - 0.5) * 0.45))
+        
+        # === 5. 营养级死亡率 ===
+        my_trophic = trophic_levels[s]
+        prey_scarcity_mortality = 0.0
+        if my_trophic >= 2.0:
+            prey_density = 0.0
+            for sp in range(S):
+                prey_trophic = trophic_levels[sp]
+                if prey_trophic < my_trophic and prey_trophic >= my_trophic - 1.5:
+                    prey_density += pop[sp, i, j]
+            prey_density_norm = prey_density / (total_pop_tile + 1e-6)
+            if prey_density_norm < 0.20:
+                prey_scarcity_mortality = (0.20 - prey_density_norm) * 1.6 + 0.12
+            else:
+                prey_scarcity_mortality = (1.0 - prey_density_norm) * 0.15
+        
+        # === 6. 外部压力死亡率 ===
+        external_pressure = 0.0
+        for c in range(C_pressure):
+            external_pressure += pressure_overlay[c, i, j]
+        external_mortality = ti.min(0.5, external_pressure * 0.1)
+        
+        # === 7. 宜居度死亡率（计算简化版）===
+        temp_diff = ti.abs(env[0, i, j] - species_prefs[s, 0])
+        temp_match = ti.max(0.0, 1.0 - temp_diff * 2.0)
+        humidity_match = ti.max(0.0, 1.0 - humidity_deviation * 2.0)
+        habitat_match = 0.5
+        if C_env >= 7:
+            habitat_match = (
+                env[4, i, j] * species_prefs[s, 4] +
+                env[5, i, j] * species_prefs[s, 5] +
+                env[6, i, j] * species_prefs[s, 6]
+            )
+        suitability = temp_match * 0.35 + humidity_match * 0.25 + habitat_match * 0.40
+        suitability = ti.max(0.0, ti.min(1.0, suitability))
+        
+        suit_mortality = 0.0
+        if suitability < SUIT_CRITICAL_THRESHOLD:
+            suit_mortality = 0.75
+        elif suitability < SUIT_LOW_THRESHOLD:
+            suit_mortality = 0.55 - (suitability - SUIT_CRITICAL_THRESHOLD) / (SUIT_LOW_THRESHOLD - SUIT_CRITICAL_THRESHOLD) * 0.40
+        else:
+            suit_mortality = (1.0 - suitability) * 0.10
+        
+        # === 8. 栖息地不匹配死亡率 ===
+        habitat_mismatch_mortality = 0.0
+        if C_env >= 6 and species_prefs.shape[1] >= 6:
+            is_land = env[4, i, j] > 0.5
+            is_sea = env[5, i, j] > 0.5
+            land_pref = species_prefs[s, 4]
+            sea_pref = species_prefs[s, 5]
+            if is_sea and land_pref > sea_pref + 0.3:
+                habitat_mismatch_mortality = HABITAT_MISMATCH_PENALTY
+            elif is_land and sea_pref > land_pref + 0.3:
+                habitat_mismatch_mortality = HABITAT_MISMATCH_PENALTY
+        
+        # === 综合死亡率 ===
+        total_mortality = (
+            temp_mortality * temp_weight +
+            humidity_mortality * 0.1 +
+            competition_mortality * competition_weight +
+            resource_mortality * resource_weight +
+            prey_scarcity_mortality +
+            external_mortality +
+            suit_mortality * SUIT_DEATH_WEIGHT +
+            habitat_mismatch_mortality +
+            base_mortality
+        )
+        
+        # 【v3.1】世代缩放：使用预计算的 mortality_scale
+        # 只在不适环境下应用缩放，避免过度杀伤
+        if suitability < 0.3 or habitat_mismatch_mortality > 0:
+            # scale 已是 1.0~2.5，再做温和放大
+            gen_death_factor = ti.min(1.6, 1.0 + (scale - 1.0) * 0.3)
+            total_mortality *= gen_death_factor
+        
+        # 时代缩放
+        if era_scaling > 1.5:
+            scale_factor = ti.max(0.82, 1.0 / ti.pow(era_scaling, 0.15))
+            total_mortality *= scale_factor
+        
+        result[s, i, j] = ti.max(0.02, ti.min(0.95, total_mortality))
+
+
+@ti.kernel
+def kernel_trait_mortality_v2(
+    pop: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    env: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    species_traits: ti.types.ndarray(dtype=ti.f32, ndim=2),
+    suitability: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    pressure_overlay: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    mortality_scale: ti.types.ndarray(dtype=ti.f32, ndim=1),
+    result: ti.types.ndarray(dtype=ti.f32, ndim=3),
+    base_mortality: ti.f32,
+    era_scaling: ti.f32,
+):
+    """基于特质的精确死亡率计算 v2 - 使用预计算的 mortality_scale
+    
+    【v3.1】mortality_scale 已在 Python 层预计算（带上限和缓冲）
+    """
+    S, H, W = pop.shape[0], pop.shape[1], pop.shape[2]
+    C_env = env.shape[0]
+    C_pressure = pressure_overlay.shape[0]
+    
+    SUIT_LOW = 0.22
+    SUIT_CRITICAL = 0.10
+    
+    for s, i, j in ti.ndrange(S, H, W):
+        if pop[s, i, j] <= 0:
+            result[s, i, j] = 0.0
+            continue
+        
+        suit = suitability[s, i, j]
+        scale = mortality_scale[s]  # 预计算的缩放因子（1.0 ~ 2.5）
+        
+        # 获取物种特质
+        heat_res = species_traits[s, 0]
+        cold_res = species_traits[s, 1]
+        drought_res = species_traits[s, 2]
+        body_size = species_traits[s, 6]
+        land_pref = species_traits[s, 8]
+        ocean_pref = species_traits[s, 9]
+        
+        # === 1. 温度死亡率（基于耐受特质）===
+        temp = env[0, i, j]
+        # 根据耐热/耐寒特质计算最适温度
+        optimal_temp = (heat_res - cold_res) * 5.0  # 范围 -50 到 +50
+        temp_range = (heat_res + cold_res) * 3.0 + 10.0  # 耐受范围
+        temp_dev = ti.abs(temp * 50.0 - optimal_temp)  # 转换到相同尺度
+        temp_mortality = ti.min(0.7, ti.max(0.0, (temp_dev - temp_range) / 30.0))
+        
+        # === 2. 湿度死亡率 ===
+        humidity = env[1, i, j] if C_env > 1 else 0.5
+        optimal_humidity = 1.0 - drought_res * 0.08
+        humidity_mortality = ti.min(0.4, ti.abs(humidity - optimal_humidity) * 0.6)
+        
+        # === 3. 竞争死亡率（体型影响）===
+        total_pop = 0.0
+        for sp in range(S):
+            total_pop += pop[sp, i, j]
+        my_pop = pop[s, i, j]
+        competitor_pop = total_pop - my_pop
+        # 大体型竞争优势
+        size_advantage = 1.0 - (body_size - 5.0) * 0.05
+        competition_mortality = ti.min(0.35, competitor_pop / (my_pop + 100.0) * 0.12 * size_advantage)
+        
+        # === 4. 资源死亡率 ===
+        resources = env[3, i, j] if C_env > 3 else 100.0
+        capacity = resources * 100.0
+        saturation = total_pop / (capacity + 1e-6)
+        resource_mortality = ti.max(0.0, ti.min(0.45, (saturation - 0.5) * 0.45))
+        
+        # === 5. 外部压力 ===
+        external_mortality = 0.0
+        for c in range(C_pressure):
+            external_mortality += pressure_overlay[c, i, j] * 0.1
+        external_mortality = ti.min(0.5, external_mortality)
+        
+        # === 6. 宜居度死亡率 ===
+        suit_mortality = 0.0
+        if suit < SUIT_CRITICAL:
+            suit_mortality = 0.75
+        elif suit < SUIT_LOW:
+            suit_mortality = 0.55 - (suit - SUIT_CRITICAL) / (SUIT_LOW - SUIT_CRITICAL) * 0.40
+        else:
+            suit_mortality = (1.0 - suit) * 0.10
+        
+        # === 7. 栖息地不匹配 ===
+        habitat_mortality = 0.0
+        if C_env >= 6:
+            is_land = env[4, i, j] > 0.5
+            is_sea = env[5, i, j] > 0.5
+            if is_sea and land_pref > ocean_pref + 0.3:
+                habitat_mortality = 0.55
+            elif is_land and ocean_pref > land_pref + 0.3:
+                habitat_mortality = 0.55
+        
+        # === 综合死亡率 ===
+        total_mortality = (
+            temp_mortality * 0.25 +
+            humidity_mortality * 0.10 +
+            competition_mortality * 0.20 +
+            resource_mortality * 0.20 +
+            external_mortality +
+            suit_mortality * 0.35 +
+            habitat_mortality +
+            base_mortality
+        )
+        
+        # 【v3.1】世代缩放：使用预计算的 mortality_scale
+        # 只在不适环境下应用缩放
+        if suit < 0.25 or habitat_mortality > 0:
+            # scale 已是 1.0~2.5，再做温和放大
+            gen_factor = ti.min(1.6, 1.0 + (scale - 1.0) * 0.35)
+            total_mortality *= gen_factor
+        
+        # 时代缩放
+        if era_scaling > 1.5:
+            scale_factor = ti.max(0.80, 1.0 / ti.pow(era_scaling, 0.15))
+            total_mortality *= scale_factor
+        
+        result[s, i, j] = ti.max(0.02, ti.min(0.95, total_mortality))
 
 

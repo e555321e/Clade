@@ -1036,7 +1036,9 @@ class SpeciationService:
                 logger.info(f"[分化] {species.common_name} 将分化出 {num_offspring} 个子种")
             
             # 种群分配（仅从候选地块的种群中分配）
-            retention_ratio = random.uniform(0.60, 0.80)
+            # 【v3.1改进】降低父代保留比例，让子代获得更多初始种群
+            # 从 60-80% 降低到 40-55%，子代将获得 45-60% 的种群
+            retention_ratio = random.uniform(0.40, 0.55)
             proposed_parent_from_candidates = max(50, int(speciation_pool * retention_ratio))
             max_parent_allowed = speciation_pool - num_offspring
             if max_parent_allowed <= 0:
@@ -1503,11 +1505,18 @@ class SpeciationService:
             # ⚠️ 关键修复：子代只继承分配给它的地块（基于地理隔离分化）
             # 如果没有分配地块，则继承全部（回退到旧行为）
             assigned_tiles = ctx.get("assigned_tiles", set())
+            
+            # 【v3.1】计算繁殖补偿因子
+            # 分化发生在繁殖之后，新物种没有参与当前回合的繁殖
+            # 给予 30%-50% 的繁殖增长补偿，模拟"如果新物种早就存在"的情况
+            reproduction_bonus = random.uniform(0.30, 0.50)
+            
             self._inherit_habitat_distribution(
                 parent=ctx["parent"], 
                 child=new_species, 
                 turn_index=turn_index,
-                assigned_tiles=assigned_tiles  # 【新增】只继承这些地块
+                assigned_tiles=assigned_tiles,  # 【新增】只继承这些地块
+                reproduction_bonus=reproduction_bonus  # 【v3.1】繁殖补偿
             )
             
             self._update_genetic_distances(new_species, ctx["parent"], turn_index)
@@ -1559,6 +1568,32 @@ class SpeciationService:
                     f"[植物里程碑] {new_species.common_name} 触发里程碑: "
                     f"{milestone_result.get('milestone_name', 'unknown')}"
                 )
+            
+            # 【v3.0】新物种生存筛选：评估新种的适宜度和可行性
+            if self._tensor_state is not None:
+                # 构建物种映射
+                species_map = {}
+                if hasattr(self._tensor_state, 'species_map'):
+                    species_map = self._tensor_state.species_map
+                
+                viability = self.evaluate_new_species_viability(
+                    new_species, 
+                    self._tensor_state,
+                    species_map,
+                    turn_index
+                )
+                
+                if viability["recommendation"] == "extinct":
+                    # 标记为快速灭绝候选，但仍然创建（让后续回合自然灭绝）
+                    new_species.morphology_stats["viability_risk"] = "critical"
+                    species_repository.upsert(new_species)
+                    logger.warning(
+                        f"[新种筛选] {new_species.common_name} 被标记为高灭绝风险: "
+                        f"适宜度={viability['avg_suitability']:.3f}, 分布={viability['tile_count']}格"
+                    )
+                elif viability["recommendation"] == "penalize":
+                    new_species.morphology_stats["viability_risk"] = "low"
+                    species_repository.upsert(new_species)
             
             species_repository.log_event(
                 LineageEvent(
@@ -1629,11 +1664,16 @@ class SpeciationService:
             
             # 处理分配地块
             assigned_tiles = ctx.get("assigned_tiles", set())
+            
+            # 【v3.1】背景物种也给予繁殖补偿
+            reproduction_bonus = random.uniform(0.30, 0.50)
+            
             self._inherit_habitat_distribution(
                 parent=ctx["parent"],
                 child=new_species,
                 turn_index=turn_index,
-                assigned_tiles=assigned_tiles
+                assigned_tiles=assigned_tiles,
+                reproduction_bonus=reproduction_bonus  # 【v3.1】繁殖补偿
             )
             
             # 【修复】即使没有 genus 也调用继承方法（处理新突变和额外基因）
@@ -2699,6 +2739,12 @@ class SpeciationService:
         morphology["speciation_type"] = speciation_type
         morphology["speciation_turn"] = turn_index
         
+        # 【v3.1】父子强竞争标记
+        # 新分化的物种与父代有极高的生态位重叠，竞争激烈
+        # 这个因子会在扩散到同一区域时放大竞争效应
+        morphology["parent_competition_factor"] = 0.85  # 85% 生态位重叠（高竞争）
+        morphology["competition_parent_code"] = parent.lineage_code
+        
         hidden = dict(parent.hidden_traits)
         hidden["gene_diversity"] = min(1.0, hidden.get("gene_diversity", 0.5) + 0.05)
         
@@ -3147,24 +3193,179 @@ class SpeciationService:
         
         return new_species
     
+    def evaluate_new_species_viability(
+        self,
+        species: Species,
+        tensor_state,
+        species_map: dict[str, int],
+        turn_index: int,
+    ) -> dict:
+        """评估新物种的生存可行性
+        
+        【v3.0 新增】分化后的"生存筛选"机制：
+        - 使用 TensorEcology 的适宜度/死亡率快速估算
+        - 若平均适宜度 < 0.12 或净增长为负且分布 < 3 格，标记为高风险
+        - 给新种设置惩罚系数（高死亡/低出生）
+        
+        Args:
+            species: 新分化的物种
+            tensor_state: 张量状态对象
+            species_map: {lineage_code: tensor_index}
+            turn_index: 当前回合
+        
+        Returns:
+            dict: {
+                "viable": bool,  # 是否可行
+                "avg_suitability": float,  # 平均适宜度
+                "tile_count": int,  # 分布地块数
+                "mortality_penalty": float,  # 死亡率惩罚系数
+                "birth_penalty": float,  # 出生率惩罚系数
+                "recommendation": str,  # 建议（"pass", "penalize", "extinct"）
+            }
+        """
+        result = {
+            "viable": True,
+            "avg_suitability": 0.5,
+            "tile_count": 0,
+            "mortality_penalty": 1.0,
+            "birth_penalty": 1.0,
+            "recommendation": "pass",
+        }
+        
+        if tensor_state is None:
+            logger.debug(f"[新种评估] {species.lineage_code}: 无张量状态，跳过评估")
+            return result
+        
+        lineage = species.lineage_code
+        idx = species_map.get(lineage)
+        if idx is None:
+            logger.debug(f"[新种评估] {species.lineage_code}: 不在张量映射中，跳过评估")
+            return result
+        
+        try:
+            import numpy as np
+            
+            # 获取该物种的种群和适宜度
+            pop = tensor_state.pop[idx]  # (H, W)
+            
+            # 计算分布地块数
+            tile_count = int((pop > 0).sum())
+            result["tile_count"] = tile_count
+            
+            if tile_count == 0:
+                logger.warning(f"[新种评估] {species.lineage_code}: 无分布地块，标记为高风险")
+                result["viable"] = False
+                result["recommendation"] = "extinct"
+                return result
+            
+            # 尝试计算适宜度
+            from ...tensor.ecology import extract_species_traits
+            
+            # 构造单物种的特质矩阵
+            traits = extract_species_traits([species], {lineage: 0})
+            
+            # 使用已有的适宜度数据（如果可用）
+            if hasattr(tensor_state, 'suitability') and tensor_state.suitability is not None:
+                suit = tensor_state.suitability[idx]
+            else:
+                # 简化适宜度估算：使用环境匹配
+                env = tensor_state.env
+                # 温度匹配
+                temp_trait = traits[0, 0] if traits.shape[1] > 0 else 5.0
+                temp_pref = (temp_trait - 5.0) / 5.0  # 归一化到 [-1, 1]
+                temp = env[0] if env.shape[0] > 0 else np.zeros((pop.shape[0], pop.shape[1]))
+                temp_match = np.maximum(0.0, 1.0 - np.abs(temp - temp_pref) * 2.0)
+                
+                # 栖息地匹配
+                land_pref = traits[0, 8] if traits.shape[1] > 8 else 0.5
+                ocean_pref = traits[0, 9] if traits.shape[1] > 9 else 0.5
+                if env.shape[0] >= 6:
+                    habitat_match = env[4] * land_pref + env[5] * ocean_pref
+                else:
+                    habitat_match = np.ones_like(temp_match) * 0.5
+                
+                suit = temp_match * 0.5 + habitat_match * 0.5
+            
+            # 只考虑有种群的地块
+            valid_mask = pop > 0
+            if valid_mask.any():
+                avg_suit = float(suit[valid_mask].mean())
+            else:
+                avg_suit = 0.0
+            result["avg_suitability"] = avg_suit
+            
+            # 评估逻辑
+            CRITICAL_SUITABILITY = 0.12
+            LOW_SUITABILITY = 0.20
+            MIN_TILES = 3
+            
+            if avg_suit < CRITICAL_SUITABILITY:
+                # 极低适宜度：标记为快速灭绝候选
+                result["viable"] = False
+                result["recommendation"] = "extinct"
+                result["mortality_penalty"] = 1.5
+                result["birth_penalty"] = 0.5
+                logger.warning(
+                    f"[新种评估] {species.common_name}: 极低适宜度={avg_suit:.3f}<{CRITICAL_SUITABILITY}，"
+                    f"标记为快速灭绝候选"
+                )
+            elif avg_suit < LOW_SUITABILITY or tile_count < MIN_TILES:
+                # 低适宜度或分布过窄：应用惩罚系数
+                result["viable"] = True
+                result["recommendation"] = "penalize"
+                # 惩罚系数：适宜度越低惩罚越重
+                penalty_factor = 1.0 - (avg_suit - CRITICAL_SUITABILITY) / (LOW_SUITABILITY - CRITICAL_SUITABILITY)
+                result["mortality_penalty"] = 1.0 + penalty_factor * 0.25  # 最高 1.25
+                result["birth_penalty"] = 1.0 - penalty_factor * 0.20  # 最低 0.80
+                logger.info(
+                    f"[新种评估] {species.common_name}: 低适宜度={avg_suit:.3f}或分布窄={tile_count}格，"
+                    f"应用惩罚(死亡x{result['mortality_penalty']:.2f}, 出生x{result['birth_penalty']:.2f})"
+                )
+            else:
+                # 正常通过
+                result["viable"] = True
+                result["recommendation"] = "pass"
+                logger.debug(
+                    f"[新种评估] {species.common_name}: 适宜度={avg_suit:.3f}, 分布={tile_count}格, 通过"
+                )
+            
+            # 将惩罚系数保存到物种的 morphology_stats
+            if result["recommendation"] in ("penalize", "extinct"):
+                if species.morphology_stats is None:
+                    species.morphology_stats = {}
+                species.morphology_stats["new_species_mortality_penalty"] = result["mortality_penalty"]
+                species.morphology_stats["new_species_birth_penalty"] = result["birth_penalty"]
+                species.morphology_stats["new_species_penalty_turns"] = 2  # 惩罚持续2回合
+                species.morphology_stats["new_species_penalty_start"] = turn_index
+            
+            return result
+            
+        except Exception as e:
+            logger.warning(f"[新种评估] {species.lineage_code}: 评估异常: {e}")
+            return result
+    
     def _inherit_habitat_distribution(
         self, 
         parent: Species, 
         child: Species, 
         turn_index: int,
-        assigned_tiles: set[int] | None = None
+        assigned_tiles: set[int] | None = None,
+        reproduction_bonus: float = 0.0
     ) -> None:
         """子代继承父代的栖息地分布
         
-        【核心改进】现在支持基于地块的分化：
-        - 如果指定了 assigned_tiles，子代只继承这些地块
-        - 如果未指定，则继承父代全部地块（旧行为）
+        【v3.1核心改进】基于地块的真实种群分配：
+        - 如果指定了 assigned_tiles，子代直接获得这些地块上父代的种群（地理隔离分化）
+        - 父代在这些地块上的种群会被减少
+        - 这模拟了"因地理隔离，某个区域的种群独立演化成新物种"
+        - 【v3.1新增】繁殖补偿：给新物种补偿当前回合的繁殖增长
         
         Args:
             parent: 父代物种
             child: 子代物种
             turn_index: 当前回合
             assigned_tiles: 分配给该子代的地块集合（可选）
+            reproduction_bonus: 繁殖补偿因子（0.0-1.0），用于补偿新物种在当前回合未能繁殖的损失
         """
         from ...repositories.environment_repository import environment_repository
         from ...models.environment import HabitatPopulation
@@ -3183,25 +3384,67 @@ class SpeciationService:
             logger.error(f"[栖息地继承] 严重错误：子代 {child.common_name} 没有 ID，无法继承栖息地")
             return
         
-        # 【核心改进】根据 assigned_tiles 过滤要继承的地块
+        # 【v3.1核心改进】根据 assigned_tiles 过滤并分配地块种群
         child_habitats = []
+        parent_updated_habitats = []
         inherited_count = 0
+        total_inherited_pop = 0
+        total_parent_reduced = 0
         
         for parent_hab in parent_habitats:
             # 如果指定了分配地块，只继承在分配范围内的地块
             if assigned_tiles and parent_hab.tile_id not in assigned_tiles:
                 continue
             
+            # 【v3.1改进】子代直接获得该地块上的种群（地理隔离分化）
+            # 地理隔离意味着这个区域的种群"属于"新物种了
+            tile_pop = parent_hab.population if parent_hab.population else 0
+            
+            if assigned_tiles:
+                # 地理隔离分化：子代获得该地块的全部种群，父代退出
+                base_child_pop = tile_pop
+                parent_remaining_pop = 0
+            else:
+                # 非地理隔离（回退到旧行为）：种群平分
+                base_child_pop = int(tile_pop * 0.5)
+                parent_remaining_pop = tile_pop - base_child_pop
+            
+            # 【v3.1新增】应用繁殖补偿
+            # 新物种分化时父代已经繁殖过了，给新物种补偿这个增长
+            if reproduction_bonus > 0 and base_child_pop > 0:
+                # 补偿因子应用：new_pop = base_pop * (1 + bonus * suitability)
+                # 考虑适宜度：适宜度高的地块繁殖补偿更多
+                suitability_factor = parent_hab.suitability if parent_hab.suitability else 0.5
+                effective_bonus = reproduction_bonus * suitability_factor
+                child_pop = int(base_child_pop * (1 + effective_bonus))
+            else:
+                child_pop = base_child_pop
+            
             child_habitats.append(
                 HabitatPopulation(
                     tile_id=parent_hab.tile_id,
                     species_id=child.id,
-                    population=0,  # 初始为0，会在回合结束时根据species.population更新
+                    population=child_pop,  # 【v3.1】直接获得该地块种群 + 繁殖补偿
                     suitability=parent_hab.suitability,  # 继承父代的适宜度
                     turn_index=turn_index,
                 )
             )
+            
+            # 【v3.1】同步减少父代在该地块的种群
+            if assigned_tiles and tile_pop > 0:
+                parent_updated_habitats.append(
+                    HabitatPopulation(
+                        tile_id=parent_hab.tile_id,
+                        species_id=parent.id,
+                        population=parent_remaining_pop,
+                        suitability=parent_hab.suitability,
+                        turn_index=turn_index,
+                    )
+                )
+                total_parent_reduced += tile_pop
+            
             inherited_count += 1
+            total_inherited_pop += child_pop
         
         # 如果分配了地块但一个都没继承到（可能父代不在这些地块），使用分配的地块
         if assigned_tiles and not child_habitats:
@@ -3209,12 +3452,16 @@ class SpeciationService:
                 f"[栖息地继承] {child.common_name} 分配的地块与父代不重叠，"
                 f"将使用分配的地块: {assigned_tiles}"
             )
+            # 从 child.morphology_stats 获取分配的种群，按地块均分
+            child_total_pop = int(child.morphology_stats.get("population", 0) or 0)
+            pop_per_tile = max(1, child_total_pop // len(assigned_tiles)) if assigned_tiles else 0
+            
             for tile_id in assigned_tiles:
                 child_habitats.append(
                     HabitatPopulation(
                         tile_id=tile_id,
                         species_id=child.id,
-                        population=0,
+                        population=pop_per_tile,  # 【v3.1】均分分配的种群
                         suitability=0.5,  # 默认适宜度
                         turn_index=turn_index,
                     )
@@ -3225,10 +3472,18 @@ class SpeciationService:
             if assigned_tiles:
                 logger.info(
                     f"[基于地块分化] {child.common_name} 继承了 {len(child_habitats)}/{len(parent_habitats)} 个地块 "
-                    f"(地理隔离分化)"
+                    f"(种群:{total_inherited_pop:,}, 地理隔离分化)"
                 )
             else:
                 logger.info(f"[栖息地继承] {child.common_name} 继承了 {len(child_habitats)} 个栖息地")
+        
+        # 【v3.1】更新父代在分配地块上的种群（清零）
+        if parent_updated_habitats:
+            environment_repository.write_habitats(parent_updated_habitats)
+            logger.debug(
+                f"[地块分化] 父代 {parent.common_name} 在 {len(parent_updated_habitats)} 个地块上"
+                f"减少种群 {total_parent_reduced:,}（已转移给子代）"
+            )
     
     def _calculate_initial_habitat_for_child(
         self, 
@@ -6355,7 +6610,7 @@ class SpeciationService:
         logger.info(f"[内共生尝试] 宿主 {host.common_name} 试图吞噬共生 {symbiont.common_name}")
         
         # 4. 调用 AI 生成内共生结果
-        from ...ai.streaming_helper import invoke_with_heartbeat
+        from ...ai.streaming_helper import acall_with_heartbeat
         
         prompt = SPECIES_PROMPTS["endosymbiosis"].format(
             host_name=f"{host.latin_name} ({host.common_name})",
@@ -6364,16 +6619,16 @@ class SpeciationService:
         )
         
         try:
-            response = await invoke_with_heartbeat(
+            response_text = await acall_with_heartbeat(
                 router=self.router,
-                capability="speciation", # 复用 capability
+                capability="speciation",  # 复用 capability
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
                 task_name=f"内共生[{host.common_name}+{symbiont.common_name}]",
                 timeout=45
             )
             
-            content = self.router._parse_content(response)
+            content = self.router._parse_content({"content": response_text})
             if not content:
                 return None
                 

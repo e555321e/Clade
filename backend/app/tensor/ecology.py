@@ -83,13 +83,13 @@ def _load_ecology_kernels():
 class EcologyConfig:
     """生态计算配置
     
-    【v2.3】全面平衡调整：
-    - 死亡率：确保低宜居度导致真实死亡
-    - 扩散：密度驱动 + 宜居度引导
-    - 迁徙：低阈值 + 强压力驱动
+    【v3.0】全面重构：
+    - 扩散：多轮迭代 + 背景扩散 + 世代缩放
+    - 迁徙：动态阈值 + 全局拥挤加成 + 栖息地衰减
+    - 繁殖/死亡：世代时间缩放（effective_steps）
     """
     # === 死亡率参数 ===
-    base_mortality: float = 0.06          # 基础死亡率（略微降低，让宜居度惩罚更突出）
+    base_mortality: float = 0.06          # 基础死亡率
     temp_mortality_weight: float = 0.25   # 温度死亡率权重
     competition_weight: float = 0.20      # 竞争死亡率权重
     resource_weight: float = 0.25         # 资源死亡率权重
@@ -97,26 +97,64 @@ class EcologyConfig:
     suitability_weight: float = 0.35      # 宜居度死亡权重
     
     # === 扩散参数 ===
-    # 【v2.3】增强扩散以支持密度驱动
-    base_diffusion_rate: float = 0.15     # 基础扩散率（提高）
-    max_diffusion_rate: float = 0.40      # 最大扩散率（提高上限）
-    density_pressure_threshold: float = 50.0  # 【新增】触发密度驱动扩散的阈值
+    # 【v3.0】增强扩散：多轮迭代 + 背景扩散
+    base_diffusion_rate: float = 0.18     # 基础扩散率（提高）
+    max_diffusion_rate: float = 0.50      # 最大扩散率（提高上限）
+    density_pressure_threshold: float = 15.0  # 【降低】触发密度驱动扩散的阈值
+    background_diffusion_rate: float = 0.08   # 【新增】背景扩散率（梯度为零时）
+    early_dispersal_iterations: int = 3       # 【新增】早期时代扩散迭代次数
+    suit_escape_threshold: float = 0.22       # 【新增】低宜居度逃逸阈值
     
     # === 迁徙参数 ===
-    # 【v2.3】显著降低阈值，增强压力驱动
-    pressure_threshold: float = 0.08      # 压力迁徙阈值（进一步降低）
+    # 【v3.0】动态阈值 + 全局拥挤 + 栖息地衰减
+    pressure_threshold: float = 0.08      # 压力迁徙阈值
     saturation_threshold: float = 0.50    # 饱和度阈值
-    max_migration_distance: float = 3.0   # 最大迁徙距离（提高）
-    base_migration_rate: float = 0.15     # 基础迁徙率（提高）
-    score_threshold: float = 0.15         # 迁徙分数阈值（显著降低）
+    max_migration_distance: float = 3.5   # 最大迁徙距离（提高）
+    base_migration_rate: float = 0.18     # 基础迁徙率（提高）
+    score_threshold: float = 0.15         # 迁徙分数阈值（默认）
+    early_score_threshold: float = 0.08   # 【新增】早期时代迁徙分数阈值
+    crowding_migration_bonus: float = 0.12  # 【新增】全局拥挤时迁徙加成
+    base_long_jump_rate: float = 0.02     # 【新增】基础长跳概率
+    early_long_jump_rate: float = 0.05    # 【新增】早期时代长跳概率
+    habitat_attenuation_factor: float = 0.5  # 【新增】栖息地衰减因子（非硬屏蔽）
     
     # === 繁殖参数 ===
-    base_birth_rate: float = 0.12         # 基础出生率（略微提高）
+    base_birth_rate: float = 0.12         # 基础出生率
     capacity_multiplier: float = 100.0    # 承载力乘数
-    min_suitability_for_reproduction: float = 0.15  # 繁殖的最低宜居度（降低）
+    min_suitability_for_reproduction: float = 0.15  # 繁殖的最低宜居度
     
-    # === 时代缩放 ===
+    # === 时代/世代缩放 ===
     era_scaling_enabled: bool = True      # 是否启用时代缩放
+    generation_scaling_enabled: bool = True  # 是否启用世代缩放
+    default_generation_time_days: float = 365.0  # 默认世代时间（天）
+    turn_years: int = 500_000             # 默认回合年数
+    
+    # 【v3.1】缓冲参数：防止微生物爆炸/瞬灭
+    effective_steps_clip_max: float = 20.0  # effective_steps 上限截断
+    effective_steps_clip_min: float = 1.0   # effective_steps 下限
+    
+    # 分层缩放幂指数（按体型/繁殖速度）
+    small_species_exponent: float = 0.25    # 小体型/快繁殖物种的幂指数
+    medium_species_exponent: float = 0.35   # 中等物种的幂指数
+    large_species_exponent: float = 0.50    # 大体型/慢繁殖物种的幂指数
+    
+    # 各阶段放大系数上限
+    birth_scale_max: float = 3.0            # 繁殖率放大系数上限
+    mortality_scale_max: float = 2.5        # 死亡率放大系数上限
+    diffusion_scale_max: float = 2.5        # 扩散率放大系数上限
+    migration_scale_max: float = 2.5        # 迁徙率放大系数上限
+    
+    # 多世代衰减参数
+    multi_gen_decay_threshold: float = 10.0 # 触发多世代衰减的阈值
+    multi_gen_decay_power: float = 0.15     # 衰减幂指数
+    
+    # 净变化钳制
+    max_net_growth_ratio: float = 0.60      # 单步最大净增长比例
+    max_net_decline_ratio: float = 0.60     # 单步最大净减少比例
+    
+    # 容量归一上限
+    overcapacity_birth_clamp: float = 0.5   # 超容量时繁殖放大系数钳制
+    overcapacity_threshold: float = 1.2     # 超容量触发阈值（容量的倍数）
 
 
 @dataclass
@@ -222,11 +260,12 @@ class TensorEcologyEngine:
         external_bonus: np.ndarray | None = None,
         decline_streaks: np.ndarray | None = None,
         species_traits: np.ndarray | None = None,
+        turn_years: int | None = None,
     ) -> EcologyResult:
         """统一生态计算入口 - 一次调用完成全部计算
         
         【零循环】所有计算使用张量并行，无 Python for 循环
-        【v2.4】支持新的特质系统，当提供 species_traits 时使用精确特质匹配
+        【v3.0】支持世代缩放：根据 turn_years 和 generation_time 计算 effective_steps
         
         Args:
             pop: 种群张量 (S, H, W)
@@ -239,13 +278,18 @@ class TensorEcologyEngine:
             cooldown_mask: 迁徙冷却掩码 (S,) True=允许迁徙
             external_bonus: 外部加成 (S, H, W) - 来自重大事件/embedding 的迁徙引导
             decline_streaks: 慢性衰退计数 (S,) - 可选
-            species_traits: 【新】物种特质 (S, 14) - 完整特质矩阵，用于精确宜居度计算
+            species_traits: 物种特质 (S, 14) - 完整特质矩阵，用于精确宜居度计算
+            turn_years: 【新】当前回合代表的年数（用于世代缩放）
         
         Returns:
             EcologyResult 包含更新后的种群和各阶段结果
         """
         start_time = time.perf_counter()
         S, H, W = pop.shape
+        
+        # 【v3.0】获取回合年数
+        if turn_years is None:
+            turn_years = self.config.turn_years
         
         # 同步 Taichi 运行时（确保与主线程编译的内核兼容）
         import taichi as ti
@@ -286,6 +330,74 @@ class TensorEcologyEngine:
         # 获取时代缩放因子
         era_scaling = self._get_era_scaling(turn_index)
         
+        # 【v3.1】计算 effective_steps（世代缩放 + 缓冲机制）
+        # 防止微生物过度膨胀或瞬灭
+        cfg = self.config
+        
+        # 获取世代时间
+        if use_trait_system and cfg.generation_scaling_enabled:
+            # 从 species_traits[:, 5] 获取繁殖速度（1-10），转换为世代时间
+            reproduction_speed = np.clip(species_traits[:, 5], 1.0, 10.0)
+            generation_time_days = 3650.0 / reproduction_speed  # 天
+            body_size = np.clip(species_traits[:, 6], 1.0, 10.0)  # 体型
+        elif species_params.shape[1] >= 6:
+            generation_time_days = np.maximum(species_params[:, 5], 1.0)
+            body_size = np.clip(species_params[:, 4], 1.0, 100.0) if species_params.shape[1] >= 5 else np.full(S, 10.0)
+            # 归一化体型到 1-10
+            body_size = np.clip(np.log1p(body_size) / np.log1p(100) * 10, 1.0, 10.0)
+        else:
+            generation_time_days = np.full(S, cfg.default_generation_time_days, dtype=np.float32)
+            body_size = np.full(S, 5.0, dtype=np.float32)
+        
+        # 计算原始 effective_steps（回合年数 / 世代年数）
+        generation_time_years = generation_time_days / 365.0
+        raw_effective_steps = np.maximum(1.0, turn_years / (generation_time_years * 365.0))
+        
+        # 【缓冲1】使用 p90 分位数截断极端值（跨物种平滑）
+        p90_steps = np.percentile(raw_effective_steps, 90)
+        smoothed_steps = np.minimum(raw_effective_steps, p90_steps * 1.5)
+        
+        # 【缓冲2】全局上限截断
+        smoothed_steps = np.clip(smoothed_steps, cfg.effective_steps_clip_min, cfg.effective_steps_clip_max)
+        
+        # 【缓冲3】按体型/繁殖速度分层缩放幂指数
+        # 小体型/快繁殖用更低的幂，大体型/慢繁殖用更高的幂
+        exponents = np.where(
+            body_size < 3.0, cfg.small_species_exponent,  # 小体型：0.25
+            np.where(body_size < 7.0, cfg.medium_species_exponent, cfg.large_species_exponent)  # 中/大体型
+        )
+        
+        # 应用分层幂函数
+        effective_steps = np.power(smoothed_steps, exponents)
+        
+        # 【缓冲4】多世代衰减：effective_steps > 10 时附加衰减
+        high_gen_mask = smoothed_steps > cfg.multi_gen_decay_threshold
+        decay_factor = np.where(
+            high_gen_mask,
+            np.power(smoothed_steps / cfg.multi_gen_decay_threshold, -cfg.multi_gen_decay_power),
+            1.0
+        )
+        effective_steps = effective_steps * decay_factor
+        
+        # 最终钳制
+        effective_steps = np.clip(effective_steps, 1.0, 15.0).astype(np.float32)
+        
+        # 平均 effective_steps（用于全局参数）
+        mean_effective_steps = float(np.mean(effective_steps))
+        
+        # 【新增】计算各阶段专用的缩放因子（带独立上限）
+        birth_scale = np.clip(1.0 + np.log1p(effective_steps - 1) * 0.8, 1.0, cfg.birth_scale_max)
+        mortality_scale = np.clip(1.0 + np.log1p(effective_steps - 1) * 0.5, 1.0, cfg.mortality_scale_max)
+        diffusion_scale = np.clip(1.0 + np.log1p(effective_steps - 1) * 0.6, 1.0, cfg.diffusion_scale_max)
+        migration_scale = np.clip(1.0 + np.log1p(effective_steps - 1) * 0.5, 1.0, cfg.migration_scale_max)
+        
+        logger.debug(
+            f"[TensorEcology] 世代缩放(v3.1): turn_years={turn_years}, "
+            f"mean_gen_time={generation_time_days.mean():.1f}天, "
+            f"raw_steps_p90={p90_steps:.1f}, mean_eff_steps={mean_effective_steps:.2f}, "
+            f"birth_scale=[{birth_scale.min():.2f}, {birth_scale.max():.2f}]"
+        )
+        
         # 资源压力 & 机动性 & 预估增长率
         resource_pressure = pop.sum(axis=(1, 2))
         if env.shape[0] > 3:
@@ -316,14 +428,17 @@ class TensorEcologyEngine:
             suitability = self._compute_suitability_tensor(env, species_prefs)
         
         # === 阶段2：死亡率计算 ===
+        # 【v3.1】使用独立的 mortality_scale（带上限）
         if use_trait_system:
             mortality_rates = self._compute_trait_mortality_tensor(
-                pop, env, species_traits, suitability, pressure_overlay, era_scaling
+                pop, env, species_traits, suitability, pressure_overlay, era_scaling, 
+                mortality_scale  # 使用缓冲后的 mortality_scale
             )
         else:
             mortality_rates = self._compute_mortality_tensor(
                 pop, env, species_params, species_prefs, 
-                trophic_levels, pressure_overlay, era_scaling
+                trophic_levels, pressure_overlay, era_scaling, 
+                mortality_scale  # 使用缓冲后的 mortality_scale
             )
         metrics.mortality_time_ms = (time.perf_counter() - t0) * 1000
         
@@ -336,16 +451,41 @@ class TensorEcologyEngine:
         metrics.avg_mortality_rate = float(mortality_rates[pop > 0].mean()) if (pop > 0).any() else 0.0
         
         # === 阶段3：扩散计算 ===
+        # 【v3.1】使用缓冲后的 diffusion_scale，迭代次数限制
         t0 = time.perf_counter()
-        if use_trait_system:
-            # 使用特质扩散（机动性影响 + 栖息地连通性检查）
-            pop_after_dispersal = self._compute_trait_dispersal_tensor(
-                pop_after_death, suitability, species_traits, env, era_scaling
+        
+        # 计算扩散迭代次数（限制最大次数）
+        if turn_index < 30 and cfg.era_scaling_enabled:
+            dispersal_iterations = min(
+                cfg.early_dispersal_iterations,
+                max(1, int(np.mean(diffusion_scale) ** 0.5))
             )
         else:
-            pop_after_dispersal = self._compute_dispersal_tensor(
-                pop_after_death, suitability, era_scaling
-            )
+            dispersal_iterations = 1
+        
+        # 调整基础扩散率（使用缓冲后的 diffusion_scale）
+        mean_diffusion_scale = float(np.mean(diffusion_scale))
+        adjusted_diffusion_rate = min(
+            cfg.max_diffusion_rate,
+            cfg.base_diffusion_rate * mean_diffusion_scale
+        )
+        
+        pop_after_dispersal = pop_after_death.copy()
+        for disp_iter in range(dispersal_iterations):
+            if use_trait_system:
+                pop_after_dispersal = self._compute_trait_dispersal_tensor(
+                    pop_after_dispersal, suitability, species_traits, env, 
+                    era_scaling, diffusion_scale, adjusted_diffusion_rate
+                )
+            else:
+                pop_after_dispersal = self._compute_dispersal_tensor(
+                    pop_after_dispersal, suitability, era_scaling,
+                    diffusion_scale, adjusted_diffusion_rate
+                )
+        
+        if dispersal_iterations > 1:
+            logger.debug(f"[TensorEcology] 扩散迭代 {dispersal_iterations} 次")
+        
         metrics.dispersal_time_ms = (time.perf_counter() - t0) * 1000
         
         # === 阶段4：迁徙计算 ===
@@ -362,15 +502,28 @@ class TensorEcologyEngine:
             pop_after_dispersal, env, species_prefs, species_traits, suitability,
             species_death_rates, trophic_levels, cooldown_mask, era_scaling,
             resource_pressure, growth_rates, species_mobility,
-            mortality_rates, external_bonus, decline_streaks
+            mortality_rates, external_bonus, decline_streaks,
+            turn_index, migration_scale  # 【v3.1】使用缓冲后的 migration_scale
         )
         metrics.migration_time_ms = (time.perf_counter() - t0) * 1000
         metrics.migrating_species = len(migrated)
         
         # === 阶段5：繁殖计算 ===
+        # 【v3.1】使用缓冲后的 birth_scale + 压力-繁殖反相扣 + 容量归一
         t0 = time.perf_counter()
+        
+        # 【缓冲5】压力-繁殖反相扣：高死亡时降低繁殖放大
+        avg_mortality_per_species = np.where(
+            (pop_after_migration > 0).sum(axis=(1, 2)) > 0,
+            np.where(pop_after_migration > 0, mortality_rates, 0).sum(axis=(1, 2)) / 
+            np.maximum((pop_after_migration > 0).sum(axis=(1, 2)), 1),
+            0.0
+        )
+        pressure_discount = np.clip(1.0 - avg_mortality_per_species, 0.3, 1.0)
+        adjusted_birth_scale = birth_scale * pressure_discount
+        
         pop_after_reproduction = self._compute_reproduction_tensor(
-            pop_after_migration, env, suitability, era_scaling
+            pop_after_migration, env, suitability, era_scaling, adjusted_birth_scale
         )
         metrics.reproduction_time_ms = (time.perf_counter() - t0) * 1000
         
@@ -386,6 +539,24 @@ class TensorEcologyEngine:
                 pop_after_reproduction, suitability, era_scaling
             )
         metrics.competition_time_ms = (time.perf_counter() - t0) * 1000
+        
+        # === 阶段7：净变化钳制 ===
+        # 【v3.1 缓冲6】防止单步爆炸或瞬灭
+        # 对每个格子的净变化设置 [-max_decline, +max_growth] 比例上限
+        net_change = final_pop - pop
+        max_growth = pop * cfg.max_net_growth_ratio
+        max_decline = pop * cfg.max_net_decline_ratio
+        
+        # 钳制净变化
+        clamped_change = np.clip(net_change, -max_decline, max_growth)
+        
+        # 应用钳制后的变化
+        final_pop = np.maximum(0.0, pop + clamped_change)
+        
+        # 统计被钳制的程度
+        clamp_ratio = np.abs(net_change - clamped_change).sum() / (np.abs(net_change).sum() + 1e-6)
+        if clamp_ratio > 0.05:
+            logger.debug(f"[TensorEcology] 净变化钳制: {clamp_ratio:.1%} 的变化被限制")
         
         metrics.total_population_after = float(final_pop.sum())
         metrics.total_time_ms = (time.perf_counter() - start_time) * 1000
@@ -423,16 +594,11 @@ class TensorEcologyEngine:
         trophic_levels: np.ndarray,
         pressure_overlay: np.ndarray | None,
         era_scaling: float,
+        mortality_scale: np.ndarray | None = None,
     ) -> np.ndarray:
         """张量化多因子死亡率计算 - GPU 加速
         
-        综合以下因子：
-        1. 温度压力
-        2. 湿度压力
-        3. 竞争压力（同地块物种竞争）
-        4. 资源压力（承载力）
-        5. 营养级压力（捕食/被捕食）
-        6. 外部压力（灾害等）
+        【v3.1】使用缓冲后的 mortality_scale（已带上限）
         """
         S, H, W = pop.shape
         cfg = self.config
@@ -440,6 +606,12 @@ class TensorEcologyEngine:
         # 确保压力叠加层存在
         if pressure_overlay is None:
             pressure_overlay = np.zeros((1, H, W), dtype=np.float32)
+        
+        # 准备 mortality_scale（已在上层计算时带上限）
+        if mortality_scale is None:
+            mortality_scale_arr = np.ones(S, dtype=np.float32)
+        else:
+            mortality_scale_arr = mortality_scale.astype(np.float32)
         
         # === Taichi GPU 计算 ===
         result = np.zeros((S, H, W), dtype=np.float32)
@@ -453,13 +625,14 @@ class TensorEcologyEngine:
                 padded_env[4] = 1.0  # 默认陆地
             env = padded_env
         
-        _taichi_kernels.kernel_multifactor_mortality(
+        _taichi_kernels.kernel_multifactor_mortality_v2(
             pop.astype(np.float32),
             env.astype(np.float32),
             species_prefs.astype(np.float32),
             species_params.astype(np.float32),
             trophic_levels.astype(np.float32),
             pressure_overlay.astype(np.float32),
+            mortality_scale_arr,  # 【v3.1】使用缓冲后的 mortality_scale
             result,
             float(cfg.base_mortality),
             float(cfg.temp_mortality_weight),
@@ -554,10 +727,11 @@ class TensorEcologyEngine:
         suitability: np.ndarray,
         pressure_overlay: np.ndarray | None,
         era_scaling: float,
+        mortality_scale: np.ndarray | None = None,
     ) -> np.ndarray:
         """基于特质的精确死亡率计算 [Taichi GPU]
         
-        【新】每个环境因素的死亡率由对应特质决定
+        【v3.1】使用缓冲后的 mortality_scale（已带上限）
         """
         S, H, W = pop.shape
         cfg = self.config
@@ -565,6 +739,12 @@ class TensorEcologyEngine:
         # 确保压力叠加层存在
         if pressure_overlay is None:
             pressure_overlay = np.zeros((1, H, W), dtype=np.float32)
+        
+        # 准备 mortality_scale
+        if mortality_scale is None:
+            mortality_scale_arr = np.ones(S, dtype=np.float32)
+        else:
+            mortality_scale_arr = mortality_scale.astype(np.float32)
         
         # 确保环境张量有足够的通道
         C = env.shape[0]
@@ -576,12 +756,13 @@ class TensorEcologyEngine:
             env = padded_env
         
         result = np.zeros((S, H, W), dtype=np.float32)
-        _taichi_kernels.kernel_trait_mortality(
+        _taichi_kernels.kernel_trait_mortality_v2(
             pop.astype(np.float32),
             env.astype(np.float32),
             species_traits.astype(np.float32),
             suitability.astype(np.float32),
             pressure_overlay.astype(np.float32),
+            mortality_scale_arr,  # 【v3.1】使用缓冲后的 mortality_scale
             result,
             float(cfg.base_mortality),
             float(era_scaling),
@@ -596,16 +777,23 @@ class TensorEcologyEngine:
         species_traits: np.ndarray,
         env: np.ndarray,
         era_scaling: float,
+        diffusion_scale: np.ndarray | None = None,
+        override_diffusion_rate: float | None = None,
     ) -> np.ndarray:
         """基于特质的扩散计算 [Taichi GPU]
         
-        【v3.0】加入栖息地连通性检查，防止跨栖息地扩散
+        【v3.1】使用缓冲后的 diffusion_scale + 背景扩散 + 栖息地连通性检查
         """
         cfg = self.config
+        S = pop.shape[0]
         
         # 时代缩放
         effective_scaling = max(1.0, era_scaling ** 0.5)
-        diffusion_rate = min(cfg.max_diffusion_rate, cfg.base_diffusion_rate * effective_scaling)
+        
+        if override_diffusion_rate is not None:
+            diffusion_rate = override_diffusion_rate
+        else:
+            diffusion_rate = min(cfg.max_diffusion_rate, cfg.base_diffusion_rate * effective_scaling)
         
         # 确保环境张量有足够的通道
         C, H, W = env.shape
@@ -616,14 +804,24 @@ class TensorEcologyEngine:
                 padded_env[4] = 1.0  # 默认陆地
             env = padded_env
         
+        # 准备 diffusion_scale（已在上层计算时带上限）
+        if diffusion_scale is None:
+            diffusion_scale_arr = np.ones(S, dtype=np.float32)
+        else:
+            diffusion_scale_arr = diffusion_scale.astype(np.float32)
+        
         result = np.zeros_like(pop, dtype=np.float32)
-        _taichi_kernels.kernel_trait_diffusion(
+        _taichi_kernels.kernel_trait_diffusion_v2(
             pop.astype(np.float32),
             suitability.astype(np.float32),
             species_traits.astype(np.float32),
             env.astype(np.float32),
+            diffusion_scale_arr,  # 【v3.1】使用缓冲后的 diffusion_scale
             result,
             float(diffusion_rate),
+            float(cfg.background_diffusion_rate),
+            float(cfg.density_pressure_threshold),
+            float(cfg.suit_escape_threshold),
         )
         return result
     
@@ -678,23 +876,43 @@ class TensorEcologyEngine:
         pop: np.ndarray,
         suitability: np.ndarray,
         era_scaling: float,
+        diffusion_scale: np.ndarray | None = None,
+        override_diffusion_rate: float | None = None,
     ) -> np.ndarray:
         """张量化扩散计算 [Taichi GPU]
         
-        使用带适宜度引导的扩散。
+        【v3.1】使用缓冲后的 diffusion_scale（已带上限）
         """
         cfg = self.config
+        S = pop.shape[0]
         
         # 时代缩放：早期时代扩散更快
         effective_scaling = max(1.0, era_scaling ** 0.5)
-        diffusion_rate = min(cfg.max_diffusion_rate, cfg.base_diffusion_rate * effective_scaling)
+        
+        if override_diffusion_rate is not None:
+            diffusion_rate = override_diffusion_rate
+        else:
+            diffusion_rate = min(cfg.max_diffusion_rate, cfg.base_diffusion_rate * effective_scaling)
+        
+        # 准备背景扩散率
+        background_rate = cfg.background_diffusion_rate
+        
+        # 准备 diffusion_scale（已在上层计算时带上限）
+        if diffusion_scale is None:
+            diffusion_scale_arr = np.ones(S, dtype=np.float32)
+        else:
+            diffusion_scale_arr = diffusion_scale.astype(np.float32)
         
         result = np.zeros_like(pop, dtype=np.float32)
-        _taichi_kernels.kernel_advanced_diffusion(
+        _taichi_kernels.kernel_advanced_diffusion_v2(
             pop.astype(np.float32),
             suitability.astype(np.float32),
+            diffusion_scale_arr,  # 【v3.1】使用缓冲后的 diffusion_scale
             result,
             float(diffusion_rate),
+            float(background_rate),
+            float(cfg.density_pressure_threshold),
+            float(cfg.suit_escape_threshold),
         )
         return result
     
@@ -719,8 +937,16 @@ class TensorEcologyEngine:
         mortality_rates: np.ndarray,
         external_bonus: np.ndarray | None,
         decline_streaks: np.ndarray,
+        turn_index: int = 0,
+        migration_scale: np.ndarray | None = None,
     ) -> tuple[np.ndarray, list[int]]:
-        """张量化迁徙计算 v3.0 - 加入栖息地连通性检查
+        """张量化迁徙计算 v3.1 - 使用缓冲后的 migration_scale
+        
+        【v3.0 新增】
+        - 早期时代降低 score_threshold
+        - 全局拥挤加成（total_pop / total_capacity > 0.6）
+        - 栖息地掩码改为衰减式
+        - 根据世代时间放大 max_distance
         
         Returns:
             (迁徙后种群, 已迁徙物种索引列表)
@@ -728,32 +954,70 @@ class TensorEcologyEngine:
         cfg = self.config
         S, H, W = pop.shape
         
-        # 1. 计算距离权重 (S, H, W)
+        # 【v3.0】计算全局拥挤度
+        total_pop = pop.sum()
+        if env.shape[0] > 3:
+            vegetation = env[3]
+            total_capacity = float(np.maximum(vegetation.sum() * cfg.capacity_multiplier, 1e-6))
+        else:
+            total_capacity = float(H * W * 100)
+        global_crowding = total_pop / total_capacity
+        
+        # 【v3.0】动态 score_threshold（早期时代更低）
+        if turn_index < 30:
+            current_score_threshold = cfg.early_score_threshold
+        else:
+            current_score_threshold = cfg.score_threshold
+        
+        # 【v3.1】根据世代缩放/机动性放大 max_distance
+        # 高机动性或快繁殖物种可以迁徙更远
+        mobility_factor = np.clip(species_mobility.max(), 0.5, 3.0)
+        if migration_scale is not None:
+            generation_factor = 1.0 + 0.15 * np.log1p(migration_scale.mean())
+        else:
+            generation_factor = 1.0
         max_distance = float(
-            np.clip(cfg.max_migration_distance * float(np.clip(species_mobility.max(), 0.5, 3.0)), 1.0, 20.0)
+            np.clip(cfg.max_migration_distance * mobility_factor * generation_factor, 1.0, 25.0)
         )
+        
+        # 1. 计算距离权重 (S, H, W)
         distance_weights = self._compute_distance_weights_tensor(pop, max_distance)
-        # 基于栖息地偏好做介质连通屏蔽/减权
+        
+        # 【v3.0】栖息地掩码改为衰减式而非硬屏蔽
         if env.shape[0] >= 6 and species_prefs.shape[1] >= 6:
             is_land = env[4] > 0.5  # (H, W)
             is_sea = env[5] > 0.5   # (H, W)
-            # 使用索引而非切片，确保得到 (S,) 而不是 (S, 1)
             land_pref = species_prefs[:, 4]  # (S,)
             sea_pref = species_prefs[:, 5]   # (S,)
-            coast_pref = species_prefs[:, 6] if species_prefs.shape[1] > 6 else np.zeros(S, dtype=np.float32)  # (S,)
-            # 现在 [:, None, None] 会将 (S,) 变成 (S, 1, 1)，正确广播
-            land_only = (land_pref > sea_pref + 0.2)[:, None, None]  # (S, 1, 1)
-            sea_only = (sea_pref > land_pref + 0.2)[:, None, None]   # (S, 1, 1)
-            amphibious = ((coast_pref > 0.3) & (~(land_pref > sea_pref + 0.2)) & (~(sea_pref > land_pref + 0.2)))[:, None, None]  # (S, 1, 1)
-            # flying 暂不使用，只声明
-            land_mask = is_land[None, ...]  # (1, H, W)
-            sea_mask = is_sea[None, ...]    # (1, H, W)
-            # np.where 广播: (S, 1, 1) 条件 + (S, H, W) 数据 -> (S, H, W)
-            distance_weights = np.where(land_only, distance_weights * land_mask, distance_weights)
-            distance_weights = np.where(sea_only, distance_weights * sea_mask, distance_weights)
-            amphibious_mask = amphibious.astype(np.float32)  # (S, 1, 1)
-            distance_weights = distance_weights * (1.0 - amphibious_mask + amphibious_mask * (land_mask * 1.0 + sea_mask * 0.6))
-        # 确保形状正确 (S, H, W)
+            coast_pref = species_prefs[:, 6] if species_prefs.shape[1] > 6 else np.zeros(S, dtype=np.float32)
+            
+            land_only = (land_pref > sea_pref + 0.2)[:, None, None]
+            sea_only = (sea_pref > land_pref + 0.2)[:, None, None]
+            amphibious = ((coast_pref > 0.3) | ((land_pref > 0.3) & (sea_pref > 0.3)))[:, None, None]
+            
+            land_mask = is_land[None, ...]
+            sea_mask = is_sea[None, ...]
+            
+            # 【v3.0】使用衰减而非硬屏蔽
+            attenuation = cfg.habitat_attenuation_factor  # 0.5
+            # 陆地物种在海洋：衰减而非 0
+            distance_weights = np.where(
+                land_only & ~land_mask,
+                distance_weights * attenuation,
+                distance_weights
+            )
+            # 海洋物种在陆地：衰减而非 0
+            distance_weights = np.where(
+                sea_only & ~sea_mask,
+                distance_weights * attenuation,
+                distance_weights
+            )
+            # 两栖物种：陆地 1.0，海洋 0.7
+            amphibious_mask = amphibious.astype(np.float32)
+            distance_weights = distance_weights * (
+                1.0 - amphibious_mask + amphibious_mask * (land_mask * 1.0 + sea_mask * 0.7)
+            )
+        
         distance_weights = distance_weights.reshape(S, H, W)
         
         # 2. 计算猎物密度（用于消费者）(S, H, W)
@@ -771,6 +1035,12 @@ class TensorEcologyEngine:
         cooldown_3d = cooldown_mask[:, np.newaxis, np.newaxis]
         migration_scores = np.where(cooldown_3d, migration_scores, 0.0)
         
+        # 【v3.0】全局拥挤加成
+        if global_crowding > 0.6:
+            crowding_bonus = cfg.crowding_migration_bonus * (global_crowding - 0.6) / 0.4
+            migration_scores = migration_scores + crowding_bonus
+            logger.debug(f"[迁徙] 全局拥挤={global_crowding:.2f}, 加成={crowding_bonus:.3f}")
+        
         # 5. 计算迁徙率（高压力时迁徙更多）
         migration_rates = np.full(S, cfg.base_migration_rate, dtype=np.float32)
         high_pressure = death_rates > cfg.pressure_threshold
@@ -779,39 +1049,46 @@ class TensorEcologyEngine:
         oversat = resource_pressure > cfg.saturation_threshold * 1.2
         migration_rates = np.where(
             overflow,
-            np.minimum(0.8, cfg.base_migration_rate * 2.0),
+            np.minimum(0.85, cfg.base_migration_rate * 2.2),
             migration_rates,
         )
         migration_rates = np.where(
             oversat & (~overflow),
-            np.minimum(0.6, cfg.base_migration_rate * 1.5),
+            np.minimum(0.65, cfg.base_migration_rate * 1.6),
             migration_rates,
         )
         migration_rates = np.where(
             high_pressure & (~oversat) & (~overflow),
-            np.minimum(0.7, cfg.base_migration_rate * 1.8),
-            migration_rates,
-        )
-        migration_rates = np.where(
-            (~high_pressure) & (~oversat) & (~overflow),
-            migration_rates,
+            np.minimum(0.75, cfg.base_migration_rate * 1.9),
             migration_rates,
         )
         
         # 时代缩放
         if era_scaling > 1.5:
-            migration_rates *= min(2.0, era_scaling ** 0.3)
+            migration_rates *= min(2.5, era_scaling ** 0.35)
         
-        # 6. 执行迁徙 [Taichi GPU] - 【v3.0】加入栖息地连通性检查
+        # 【v3.1】世代缩放：使用缓冲后的 migration_scale（已带上限）
+        if migration_scale is not None:
+            # migration_scale 已在上层计算时带了上限（cfg.migration_scale_max）
+            migration_rates = migration_rates * migration_scale.astype(np.float32)
+        
+        # 6. 执行迁徙 [Taichi GPU]
         new_pop = np.zeros_like(pop, dtype=np.float32)
-        base_long_jump = 0.01 if era_scaling <= 1.5 else 0.02
+        
+        # 【v3.0】动态 base_long_jump
+        if turn_index < 30:
+            base_long_jump = cfg.early_long_jump_rate  # 早期时代更高
+        else:
+            base_long_jump = cfg.base_long_jump_rate
+        
+        # 飞行物种进一步提升长跳概率
         if env.shape[0] >= 6 and species_prefs.shape[1] >= 6:
             land_pref = species_prefs[:, 4]
             sea_pref = species_prefs[:, 5]
             coast_pref = species_prefs[:, 6] if species_prefs.shape[1] > 6 else np.zeros_like(land_pref)
             flying = (land_pref > 0.3) & (sea_pref > 0.3) & (coast_pref > 0.3)
             if flying.any():
-                base_long_jump = min(0.05, base_long_jump * 2.0)
+                base_long_jump = min(0.08, base_long_jump * 1.8)
         
         # 确保 species_traits 存在（如果没有，从 species_prefs 构造）
         if species_traits is None:
@@ -846,7 +1123,7 @@ class TensorEcologyEngine:
             env_for_migration,
             new_pop,
             migration_rates.astype(np.float32),
-            float(cfg.score_threshold),
+            float(current_score_threshold),  # 【v3.0】使用动态阈值
             float(base_long_jump),
         )
         
@@ -1046,14 +1323,25 @@ class TensorEcologyEngine:
         env: np.ndarray,
         suitability: np.ndarray,
         era_scaling: float,
+        birth_scale: np.ndarray | None = None,
     ) -> np.ndarray:
-        """张量化繁殖计算 - 无循环"""
+        """张量化繁殖计算 - 世代缩放
+        
+        【v3.1】使用缓冲后的 birth_scale + 容量归一 + 压力-繁殖反相扣
+        """
         cfg = self.config
         S, H, W = pop.shape
         
         # 时代缩放
         effective_scaling = max(1.0, era_scaling ** 0.5)
-        birth_rate = min(2.0, cfg.base_birth_rate * effective_scaling)
+        base_birth = cfg.base_birth_rate * effective_scaling
+        
+        # 【v3.1】使用缓冲后的 birth_scale
+        if birth_scale is not None and cfg.generation_scaling_enabled:
+            mean_scale = float(np.mean(birth_scale))
+            birth_rate = min(cfg.birth_scale_max * base_birth, base_birth * mean_scale)
+        else:
+            birth_rate = min(2.0, base_birth)
         
         # 承载力
         if env.shape[0] > 3:
@@ -1067,18 +1355,38 @@ class TensorEcologyEngine:
         if era_scaling > 1.5:
             capacity *= max(1.0, era_scaling ** 0.3)
         
-        # 拥挤度
-        total_pop = pop.sum(axis=0)
-        crowding = np.minimum(1.0, total_pop / (capacity + 1e-6))
+        # 【v3.1 缓冲7】容量归一：超容量时钳制繁殖放大系数
+        total_pop_per_tile = pop.sum(axis=0)  # (H, W)
+        overcapacity_mask = total_pop_per_tile > capacity * cfg.overcapacity_threshold
+        
+        # 准备 birth_scale（已在上层计算时带上限和压力折扣）
+        if birth_scale is None:
+            birth_scale_arr = np.ones(S, dtype=np.float32)
+        else:
+            birth_scale_arr = birth_scale.astype(np.float32)
         
         result = np.zeros_like(pop, dtype=np.float32)
-        _taichi_kernels.kernel_reproduction(
+        _taichi_kernels.kernel_reproduction_v2(
             pop.astype(np.float32),
             suitability.astype(np.float32),
             capacity.astype(np.float32),
+            birth_scale_arr,  # 【v3.1】使用缓冲后的 birth_scale
             float(birth_rate),
             result,
         )
+        
+        # 【v3.1】超容量格子的繁殖结果额外钳制
+        if overcapacity_mask.any():
+            # 对超容量格子，限制净增长
+            clamp_factor = np.where(
+                overcapacity_mask[np.newaxis, ...],
+                cfg.overcapacity_birth_clamp,
+                1.0
+            )
+            net_growth = result - pop
+            clamped_growth = net_growth * clamp_factor
+            result = np.maximum(0.0, pop + clamped_growth)
+        
         return result
     
     # ========================================================================
