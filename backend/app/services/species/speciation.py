@@ -6628,8 +6628,29 @@ class SpeciationService:
                 timeout=45
             )
             
-            content = self.router._parse_content({"content": response_text})
-            if not content:
+            # 【修复】正确解析响应
+            if isinstance(response_text, dict):
+                content = response_text.get("content", {})
+            else:
+                content = response_text
+            
+            # 如果 content 是字符串，尝试解析 JSON
+            if isinstance(content, str):
+                try:
+                    import json
+                    content = json.loads(content)
+                except json.JSONDecodeError:
+                    logger.warning(f"[内共生] AI 返回非 JSON 格式: {content[:100]}")
+                    return None
+            
+            if not isinstance(content, dict):
+                logger.warning(f"[内共生] AI 返回格式错误: {type(content)}")
+                return None
+            
+            # 验证必要字段
+            required_fields = ["latin_name", "common_name", "description"]
+            if not all(content.get(f) for f in required_fields):
+                logger.warning(f"[内共生] AI 返回缺少必要字段")
                 return None
                 
             # 标记为内共生类型，以便后续处理
@@ -6643,7 +6664,10 @@ class SpeciationService:
             logger.info(f"[内共生成功] 生成了基于 {symbiont.common_name} 的新器官")
             
             return content
-            
+
+        except asyncio.TimeoutError:
+            logger.warning(f"[内共生超时] {host.common_name} + {symbiont.common_name}")
+            return None    
         except Exception as e:
             logger.error(f"[内共生失败] AI调用出错: {e}")
             return None
