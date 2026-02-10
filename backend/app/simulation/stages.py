@@ -2233,6 +2233,8 @@ class SpeciationStage(BaseStage):
         )
     
     async def execute(self, ctx: SimulationContext, engine: SimulationEngine) -> None:
+        from ..repositories.species_repository import species_repository
+        
         logger.info("开始物种分化...")
         ctx.emit_event("stage", "🌱 物种分化", "分化")
         
@@ -2303,17 +2305,23 @@ class SpeciationStage(BaseStage):
             def speciation_stream_callback(event_type: str, message: str, category: str = "AI"):
                 ctx.emit_event(event_type, message, category)
             
+            # 【修复】从数据库获取所有物种的真实编号
+            all_species_from_db = species_repository.list_species()
+            existing_codes = {sp.lineage_code for sp in all_species_from_db}
+            
+            logger.debug(f"[分化] 数据库中已有 {len(existing_codes)} 个物种编号")
+            
             ctx.branching_events = await asyncio.wait_for(
                 engine.speciation.process_async(
-                    mortality_results=ctx.combined_results,  # 【修复】使用所有物种
-                    existing_codes={s.lineage_code for s in ctx.species_batch},
+                    mortality_results=ctx.combined_results,
+                    existing_codes=existing_codes,  # 【修复】使用数据库的完整列表
                     average_pressure=sum(ctx.modifiers.values()) / (len(ctx.modifiers) or 1),
                     turn_index=ctx.turn_index,
                     map_changes=ctx.map_changes,
                     major_events=ctx.major_events,
                     pressures=ctx.pressures,
                     trophic_interactions=ctx.trophic_interactions,
-                    stream_callback=speciation_stream_callback,  # 【新增】传递心跳回调
+                    stream_callback=speciation_stream_callback,
                     speciation_candidates=speciation_candidates if speciation_candidates else None,
                 ),
                 timeout=600
@@ -2322,39 +2330,49 @@ class SpeciationStage(BaseStage):
             if ctx.branching_events:
                 logger.info(f"[物种分化] 发生了 {len(ctx.branching_events)} 次分化")
                 
-                # 将新物种加入列表
-                from ..repositories.species_repository import species_repository
+                # 【修复】立即刷新 species_batch 和缓存
                 all_species_updated = species_repository.list_species()
-                new_species = [
-                    sp for sp in all_species_updated
-                    if sp.status == "alive" and sp.lineage_code not in {s.lineage_code for s in ctx.species_batch}
-                ]
+                ctx.all_species = all_species_updated
                 
-                for sp in new_species:
-                    ctx.emit_event("speciation", f"🌱 新物种: {sp.common_name}", "分化")
-                    
-                    # Embedding 记录
-                    if engine._use_embedding_integration and hasattr(engine, 'embedding_integration'):
-                        try:
-                            parent_sp = next(
-                                (s for s in ctx.species_batch if s.lineage_code == sp.parent_code),
-                                None
-                            )
-                            if parent_sp:
-                                engine.embedding_integration.on_speciation(
-                                    ctx.turn_index, parent_sp, [sp], trigger_reason="环境压力分化"
+                # 更新缓存
+                from ..services.system.species_cache import get_species_cache
+                species_cache = get_species_cache()
+                species_cache.update(all_species_updated, ctx.turn_index)
+                
+                # 更新 species_batch（只包含存活物种）
+                new_species_batch = [sp for sp in all_species_updated if sp.status == "alive"]
+                ctx.species_batch = new_species_batch
+                
+                logger.info(
+                    f"[分化] 已更新 species_batch: {len(ctx.species_batch)} 个存活物种 "
+                    f"(总共 {len(all_species_updated)} 个物种)"
+                )
+                
+                # 识别并报告新物种
+                old_codes = {s.lineage_code for s in ctx.species_batch if s.lineage_code not in existing_codes}
+                for sp in new_species_batch:
+                    if sp.lineage_code not in existing_codes:
+                        ctx.emit_event("speciation", f"🌱 新物种: {sp.common_name}", "分化")
+                        
+                        # Embedding 记录
+                        if engine._use_embedding_integration and hasattr(engine, 'embedding_integration'):
+                            try:
+                                parent_sp = next(
+                                    (s for s in all_species_updated if s.lineage_code == sp.parent_code),
+                                    None
                                 )
-                        except Exception as e:
-                            logger.warning(f"[Embedding] 记录分化事件失败: {e}")
-                
-                ctx.species_batch.extend(new_species)
-                logger.info(f"新物种已加入，总数: {len(ctx.species_batch)}")
+                                if parent_sp:
+                                    engine.embedding_integration.on_speciation(
+                                        ctx.turn_index, parent_sp, [sp], trigger_reason="环境压力分化"
+                                    )
+                            except Exception as e:
+                                logger.warning(f"[Embedding] 记录分化事件失败: {e}")
                 
                 # 【新增】分化后触发局部食物网更新
-                # 将新生产者/初级消费者立即集成到食物网，不等下一回合全量扫描
-                if new_species:
+                if new_species_batch:
                     self._integrate_new_species_to_food_web(
-                        new_species, ctx, engine, species_repository
+                        [sp for sp in new_species_batch if sp.lineage_code not in existing_codes],
+                        ctx, engine, species_repository
                     )
         
         except asyncio.TimeoutError:
@@ -2957,7 +2975,7 @@ class EmbeddingPluginsStage(BaseStage):
             stats = self._manager.get_all_stats()
             plugin_count = stats.get("manager", {}).get("plugin_count", 0)
             
-            if plugin_count > 0:
+            if (plugin_count > 0):
                 logger.info(f"[EmbeddingPlugins] {plugin_count} 个插件已更新")
             
             # 【张量集成】记录桥接器统计
