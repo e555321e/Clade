@@ -470,6 +470,13 @@ class TensorEcologyEngine:
             cfg.base_diffusion_rate * mean_diffusion_scale
         )
         
+        logger.warning(
+            f"[DEBUG] turn={turn_index}, "
+            f"pop_nonzero_tiles={(pop > 0).any(axis=0).sum()}, "
+            f"dispersal_iterations={dispersal_iterations}, "
+            f"diffusion_rate={adjusted_diffusion_rate:.4f}"
+        )
+        
         pop_after_dispersal = pop_after_death.copy()
         for disp_iter in range(dispersal_iterations):
             if use_trait_system:
@@ -488,6 +495,10 @@ class TensorEcologyEngine:
         
         metrics.dispersal_time_ms = (time.perf_counter() - t0) * 1000
         
+        logger.warning(
+            f"[DEBUG] 扩散后新增地块: {((pop_after_dispersal > 0).any(axis=0).sum() - (pop_after_death > 0).any(axis=0).sum())}"
+        )
+
         # === 阶段4：迁徙计算 ===
         t0 = time.perf_counter()
         # 提取每个物种的平均死亡率作为迁徙压力信号 - 向量化
