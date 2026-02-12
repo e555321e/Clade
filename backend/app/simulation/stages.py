@@ -2293,12 +2293,6 @@ class SpeciationStage(BaseStage):
             # 原代码只处理 critical_results + focus_results，导致大量 background 物种无法分化
             # 物种分化不需要 AI 做筛选决策，只需要 AI 生成新物种描述，所以处理全部物种是安全的
             
-
-            # 【修复】从数据库获取所有已存在的物种编号，避免重复
-            from ..repositories.species_repository import species_repository
-            existing_codes = {sp.lineage_code for sp in species_repository.list_species()}
-            logger.debug(f"[分化] 数据库中已有 {len(existing_codes)} 个物种编号")
-
             # 【心跳回调】将 ctx.emit_event 包装为 stream_callback，用于 AI 调用心跳
             # 【修复】接收 event_type 和 category，正确传递事件类型
             def speciation_stream_callback(event_type: str, message: str, category: str = "AI"):
@@ -2307,7 +2301,7 @@ class SpeciationStage(BaseStage):
             ctx.branching_events = await asyncio.wait_for(
                 engine.speciation.process_async(
                     mortality_results=ctx.combined_results,  # 【修复】使用所有物种
-                    existing_codes=existing_codes,
+                    existing_codes={s.lineage_code for s in ctx.species_batch},
                     average_pressure=sum(ctx.modifiers.values()) / (len(ctx.modifiers) or 1),
                     turn_index=ctx.turn_index,
                     map_changes=ctx.map_changes,
